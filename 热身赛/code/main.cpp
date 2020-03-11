@@ -100,8 +100,8 @@ class Martix {
     }
   }
 
-  static Mat1D NewMat1D(int n, double value);
-  static Mat2D NewMat2D(int n, int m, double value);
+  inline static Mat1D NewMat1D(int n, double value);
+  inline static Mat2D NewMat2D(int n, int m, double value);
   static Mat2D T(const Mat2D &mat);
   static Mat1D Subtraction(const Mat1D &mat1, const Mat1D &mat2);
 
@@ -110,11 +110,11 @@ class Martix {
   static Mat2D Multipy(const Mat2D &mat1, const Mat2D &mat2);
 };
 
-Martix::Mat1D Martix::NewMat1D(int n, double value) {
+inline Martix::Mat1D Martix::NewMat1D(int n, double value) {
   Mat1D mat(n, value);
   return mat;
 }
-Martix::Mat2D Martix::NewMat2D(int n, int m, double value) {
+inline Martix::Mat2D Martix::NewMat2D(int n, int m, double value) {
   Mat2D mat(n, Mat1D(m, value));
   return mat;
 }
@@ -195,22 +195,22 @@ Martix::Mat2D Martix::Multipy(const Martix::Mat2D &mat1,
  * 6. splitTrainData() 按照设置的比率拆分训练集，训练集+验证集
  * 7. score() 对验证集进行评分
  **************************************************/
+bool LOCAL = false;
 class Model {
  public:
-  static const int SELECT_FEATURE_NUM = -1;  // 随机选取几个维度(-1全选)
   static const int MAX_ITER_TIME = 100;      // 迭代次数
-  static const int SELECT_TRAIN_NUM = 2500;  // 选择样本数(-1表示全选)
-  const double TRAIN_SCALE = 1;              // 训练集占比
-  const int SKIP_SAMPLES = 1;                // 随机梯度下降(样本x选1)
+  const int SKIP_SAMPLES = 5;                // 随机梯度下降(样本x选1)
+  static const int SELECT_TRAIN_NUM = 5500;  // 选择样本数(-1表示全选)
+  const double TRAIN_SCALE = 1;              // 分割训练集占比
   const double WEIGHT = 1.0;                 // 初始化weight
-  const int SHOW_TRAIN_STEP = 20;            // 每隔多少代打印log
+  const int SHOW_TRAIN_STEP = 50;            // 每隔多少代打印log
   const double PREDICT_TRUE_THRESH = 0.5;    // 划分答案
 
  public:
   Model(const Martix::Mat2D &trainSet, const Martix::Mat1D &label);
   void Train();
-  int Predict(const Martix::Mat1D &data);
-  void Print();
+  inline int Predict(const Martix::Mat1D &data);
+  inline void Print();
 
  private:
   inline double sigmod(const double &x);  // sigmod
@@ -239,7 +239,7 @@ Model::Model(const Martix::Mat2D &trainSet, const Martix::Mat1D &label) {
   m_features = m_TrainData[0].size();
 }
 
-void Model::Print() {
+inline void Model::Print() {
   std::cerr << "* 训练集: (" << m_samples << ", ";
   std::cerr << m_features << ")\n";
   std::cerr << "* 测试集: (" << m_testSamples << ", ";
@@ -250,6 +250,7 @@ void Model::Train() {
   this->splitTrainData();
   std::cerr << "--------------------------------------\n";
   std::cerr << "* 开始训练\n";
+  this->Print();
   ScopeTime t;
 
   std::vector<int> RandomIndex;
@@ -273,18 +274,16 @@ void Model::Train() {
       }
     }
 
-#ifdef LOCAL_TRAIN
     double score = this->score();
     if (i % SHOW_TRAIN_STEP == 0) {
       std::cerr << "* 代数" << i << ", 正确率: " << score << "\n";
     }
-#endif
   }
   t.LogTime();
   std::cerr << "--------------------------------------\n";
 }
 
-int Model::Predict(const Martix::Mat1D &data) {
+inline int Model::Predict(const Martix::Mat1D &data) {
   double sigValue = this->sigmod(Martix::Dot(data, m_Weight));
   return (sigValue >= PREDICT_TRUE_THRESH ? 1 : 0);
 }
@@ -388,7 +387,7 @@ class Simulation {
   void LoadData();
   void LoadAnswer();
   void Train();
-  void Predict();
+  inline void Predict();
   void Score();
   void SaveAnswer();
 
@@ -397,8 +396,6 @@ class Simulation {
   void loadFromCharVec(const std::vector<char> &vt, std::vector<Data> &data,
                        const bool &trainFile);
   void doLoadAnswer();
-  void calculateGain();
-  Martix::Mat1D getSelectFeatures(const Data &data);
 
  private:
   std::string m_trainFile;               // 训练集路径
@@ -416,17 +413,17 @@ class Simulation {
 };
 
 Simulation::Simulation() {
-#ifdef LOCAL_TRAIN
-  m_trainFile = LOCAL_TRAIN_FILE;
-  m_testFile = LOCAL_TEST_FILE;
-  m_predictFile = LOCAL_PREDICT_FILE;
-  m_answerFile = LOCAL_ANSWER_FILE;
-#else
-  m_trainFile = TRAIN_FILE;
-  m_testFile = TEST_FILE;
-  m_predictFile = PREDICT_FILE;
-  m_answerFile = ANSWER_FILE;
-#endif
+  if (LOCAL) {
+    m_trainFile = LOCAL_TRAIN_FILE;
+    m_testFile = LOCAL_TEST_FILE;
+    m_predictFile = LOCAL_PREDICT_FILE;
+    m_answerFile = LOCAL_ANSWER_FILE;
+  } else {
+    m_trainFile = TRAIN_FILE;
+    m_testFile = TEST_FILE;
+    m_predictFile = PREDICT_FILE;
+    m_answerFile = ANSWER_FILE;
+  }
 }
 Simulation::~Simulation() { delete m_model; }
 
@@ -513,7 +510,9 @@ void Simulation::doLoadData(const std::string &file, std::vector<Data> &vt) {
 }
 
 void Simulation::doLoadAnswer() {
-#ifdef LOCAL_TRAIN
+  if (!LOCAL) {
+    return;
+  }
   std::ifstream fin(m_answerFile);
   assert(fin);
   int x;
@@ -521,122 +520,30 @@ void Simulation::doLoadAnswer() {
     m_AnswerData.emplace_back(x);
   }
   fin.close();
-#endif
-}
-
-void Simulation::calculateGain() {
-  if (Model::SELECT_FEATURE_NUM == -1) {
-    return;
-  }
-
-  ScopeTime t;
-  int total = m_TrainData.size();
-  std::cerr << "--------------------------------------\n";
-  std::cerr << "* 计算Gain系数\n";
-  std::cerr << "* 总样本: " << total << "\n";
-  std::cerr << "* 正样本: " << m_positiveSamples << "\n";
-  std::cerr << "* 负样本: " << m_negativeSamples << "\n";
-
-  int n = m_TrainData.size(), m = m_TrainData[0].features.size();
-  for (int i = 0; i < m; ++i) {
-    std::vector<std::pair<double, int>> values;
-    for (auto &train : m_TrainData) {
-      values.emplace_back(std::make_pair(train.features[i], train.label));
-    }
-    std::sort(values.begin(), values.end());
-    m_Features.emplace_back(Feature{i, values, 0.0});
-  }
-
-  auto getEnt = [](double x, double y) {
-    double e1 = (x == 0 ? 0 : x * std::log2(x));
-    double e2 = (y == 0 ? 0 : y * std::log2(y));
-    return -(e1 + e2);
-  };
-
-  double posRate = (double)(m_positiveSamples) / total;
-  double negRate = 1.0 - posRate;
-  double Ent = getEnt(posRate, negRate);
-
-  for (auto &fea : m_Features) {
-    std::vector<int> prefix(total, 0);
-    int cnt = 0;
-    double maxGain = 0;
-    for (int i = 0; i < total; ++i) {
-      if (fea.values[i].second == 1) {
-        ++cnt;
-      }
-      prefix[i] = cnt;
-    }
-    for (int i = 1; i < total; ++i) {
-      double x1 = (double)prefix[i - 1] / i;
-      double y1 = 1.0 - x1;
-      double x2 = (double)(prefix[total - 1] - prefix[i - 1]) / (total - i);
-      double y2 = 1.0 - x2;
-      double ent1 = getEnt(x1, y1), ent2 = getEnt(x2, y2);
-      double rate = (double)i / total;
-      double gain = Ent - (rate * ent1 + (1 - rate) * ent2);
-      maxGain = std::max(maxGain, gain);
-    }
-    fea.gain = maxGain;
-  }
-  std::sort(m_Features.begin(), m_Features.end(),
-            [&](const Feature &fea1, const Feature &fea2) {
-              return fea1.gain > fea2.gain;
-            });
-
-  t.LogTime();
-  std::cerr << "--------------------------------------\n";
-}
-
-Martix::Mat1D Simulation::getSelectFeatures(const Data &data) {
-  static int sz = m_TrainData[0].features.size();
-  Martix::Mat1D fea;
-  int up = std::min(Model::SELECT_FEATURE_NUM, sz);
-  for (int i = 0; i < up; ++i) {
-    int index = m_Features[i].index;
-    fea.emplace_back(m_TrainData[i].features[index]);
-  }
-  return fea;
 }
 
 void Simulation::Train() {
-  this->calculateGain();
-
   Martix::Mat2D train;
   Martix::Mat1D label;
-
-  if (Model::SELECT_FEATURE_NUM != -1) {
-    for (auto &it : m_TrainData) {
-      Martix::Mat1D fea = this->getSelectFeatures(it);
-      train.emplace_back(fea);
-      label.emplace_back(it.label);
-    }
-  } else {
-    for (auto &it : m_TrainData) {
-      train.emplace_back(it.features);
-      label.emplace_back(it.label);
-    }
+  for (auto &it : m_TrainData) {
+    train.emplace_back(it.features);
+    label.emplace_back(it.label);
   }
-
   m_model = new Model(train, label);
   m_model->Train();
 }
 
-void Simulation::Predict() {
+inline void Simulation::Predict() {
   for (auto &test : m_PredictData) {
-    Martix::Mat1D fea;
-    if (Model::SELECT_FEATURE_NUM != -1) {
-      fea = this->getSelectFeatures(test);
-    } else {
-      fea = test.features;
-    }
-    fea.emplace_back(1.0);
-    test.label = m_model->Predict(fea);
+    test.features.emplace_back(1.0);
+    test.label = m_model->Predict(test.features);
   }
 }
 
 void Simulation::Score() {
-#ifdef LOCAL_TRAIN
+  if (!LOCAL) {
+    return;
+  }
   std::cerr << "--------------------------------------\n";
   std::cerr << "* 开始评分\n";
 
@@ -655,7 +562,6 @@ void Simulation::Score() {
   std::cerr << "* 错误: " << unsame << "\n";
   std::cerr << "* 正确率: " << (double)same / (double)sz << "\n";
   std::cerr << "--------------------------------------\n";
-#endif
 }
 
 void Simulation::LoadData() {
@@ -686,7 +592,9 @@ void Simulation::SaveAnswer() {
 }
 
 int main() {
-  std::cout << std::fixed << std::setprecision(4);
+#ifdef LOCAL_TRAIN
+  LOCAL = true;
+#endif
   std::cerr << std::fixed << std::setprecision(4);
 
   ScopeTime t;
