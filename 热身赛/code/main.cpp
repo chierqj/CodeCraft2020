@@ -198,9 +198,9 @@ Martix::Mat2D Martix::Multipy(const Martix::Mat2D &mat1,
 class Model {
  public:
   static const int SELECT_FEATURE_NUM = -1;  // 随机选取几个维度(-1全选)
-  static const int MAX_ITER_TIME = 300;      // 迭代次数
-  static const int SELECT_TRAIN_NUM = 2000;  // 选择样本数(-1表示全选)
-  const double TRAIN_SCALE = 0.9;            // 训练集占比
+  static const int MAX_ITER_TIME = 100;      // 迭代次数
+  static const int SELECT_TRAIN_NUM = 2500;  // 选择样本数(-1表示全选)
+  const double TRAIN_SCALE = 1;              // 训练集占比
   const int SKIP_SAMPLES = 1;                // 随机梯度下降(样本x选1)
   const double WEIGHT = 1.0;                 // 初始化weight
   const int SHOW_TRAIN_STEP = 20;            // 每隔多少代打印log
@@ -235,6 +235,8 @@ Model::Model(const Martix::Mat2D &trainSet, const Martix::Mat1D &label) {
   for (auto &row : m_TrainData) {
     row.emplace_back(1);
   }
+  m_samples = m_TrainData.size();
+  m_features = m_TrainData[0].size();
 }
 
 void Model::Print() {
@@ -292,9 +294,11 @@ inline double Model::sigmod(const double &x) {
 }
 
 void Model::splitTrainData() {
+  if (fabs(TRAIN_SCALE - 1.0) <= 1e-5) {
+    return;
+  }
   std::cerr << "--------------------------------------\n";
   std::cerr << "* 分割数据\n";
-
   std::vector<int> zeroVec;
   std::vector<int> oneVec;
   for (int i = 0; i < m_TrainData.size(); ++i) {
@@ -340,6 +344,9 @@ void Model::splitTrainData() {
 }
 
 double Model::score() {
+  if (std::fabs(TRAIN_SCALE - 1.0) <= 1e-5) {
+    return -1;
+  }
   int ac = 0, wa = 0;
   for (int i = 0; i < m_testSamples; ++i) {
     int predictLabel = this->Predict(m_TestData[i]);
