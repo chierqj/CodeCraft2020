@@ -8,6 +8,7 @@
 #include <numeric>
 #include <random>
 #include <sstream>
+#include <thread>
 #include <vector>
 
 const std::string TRAIN_FILE = "/data/train_data.txt";
@@ -199,8 +200,8 @@ bool LOCAL = false;
 class Model {
  public:
   static const int MAX_ITER_TIME = 100;      // 迭代次数
-  const int SKIP_SAMPLES = 5;                // 随机梯度下降(样本x选1)
-  static const int SELECT_TRAIN_NUM = 5500;  // 选择样本数(-1表示全选)
+  const int SKIP_SAMPLES = 4;                // 随机梯度下降(样本x选1)
+  static const int SELECT_TRAIN_NUM = 6000;  // 选择样本数(-1表示全选)
   const double TRAIN_SCALE = 1;              // 分割训练集占比
   const double WEIGHT = 1.0;                 // 初始化weight
   const int SHOW_TRAIN_STEP = 50;            // 每隔多少代打印log
@@ -263,7 +264,7 @@ void Model::Train() {
   for (int i = 0; i < MAX_ITER_TIME; ++i) {
     Tools::ShuffleVector(RandomIndex);
     for (int j = 0; j < m_samples; ++j) {
-      if (j % SKIP_SAMPLES == 0) {  // 随机每10个里面选一个进行迭代
+      if (j % SKIP_SAMPLES == 0) {  // SKIP_SAMPLES选一个
         int index = RandomIndex[j];
         double alpha = 4.0 / (i + j + 1) + 0.01;
         double sgd = this->sigmod(Martix::Dot(m_TrainData[index], m_Weight));
@@ -392,10 +393,11 @@ class Simulation {
   void SaveAnswer();
 
  private:
-  void doLoadData(const std::string &file, std::vector<Data> &vt);
-  void loadFromCharVec(const std::vector<char> &vt, std::vector<Data> &data,
-                       const bool &trainFile);
-  void doLoadAnswer();
+  void loadDataFromCharVec(const std::vector<char> &chars,
+                           std::vector<Data> &ans, bool trainfile);
+  void loadTrainByCharVec();
+  void loadTrainBySkipNumber(int skip);
+  void loadTestByCharVec();
 
  private:
   std::string m_trainFile;               // 训练集路径
@@ -427,89 +429,128 @@ Simulation::Simulation() {
 }
 Simulation::~Simulation() { delete m_model; }
 
-void Simulation::loadFromCharVec(const std::vector<char> &chars,
-                                 std::vector<Data> &data,
-                                 const bool &trainFile) {
-  bool negative = false;
-  bool dot = false;
-  double x1 = 0, x2 = 0, r = 10;
-  Martix::Mat1D features;
+void Simulation::loadDataFromCharVec(const std::vector<char> &chars,
+                                     std::vector<Data> &ans, bool trainfile) {
+  bool negative = false, dot = false;
   double minx = 0, maxx = 1.0;
-  int cnt = 0;
+  double integer = 0, decimal = 0, multiple = 10;
+  Martix::Mat1D features;
   for (auto &v : chars) {
     if (v == ',' || v == '\n') {
-      double num = x1 + x2;
-      if (negative) {
-        num = -num;
-      }
-      negative = false;
-      dot = false;
-      x1 = 0;
-      x2 = 0;
-      r = 10;
-
+      double num = integer + decimal;
+      if (negative) num = -num;
+      if (num < 0) num = 0;
+      if (num > 1) num = 1;
+      negative = dot = false;
+      integer = decimal = 0;
+      multiple = 10;
       if (v == ',') {
         minx = std::min(minx, num);
         maxx = std::max(maxx, num);
         features.emplace_back(num);
       } else {
-        if (trainFile) {
-          if (minx >= 0 && maxx <= 1.0) {
+        if (trainfile) {
+          if (minx >= 0 && maxx <= 1) {
             int label = num;
-            if (label == 1) {
+            ans.emplace_back(Data{features, label});
+            if (label) {
               ++m_positiveSamples;
             } else {
               ++m_negativeSamples;
             }
-            data.emplace_back(Data{features, label});
-            ++cnt;
-            if (Model::SELECT_TRAIN_NUM != -1 &&
-                cnt >= Model::SELECT_TRAIN_NUM) {
-              return;
-            }
           }
         } else {
           features.emplace_back(num);
-          data.emplace_back(Data{features, -1});
+          ans.emplace_back(Data{features, -1});
         }
         features.clear();
         minx = 0;
         maxx = 1.0;
       }
-      continue;
-    }
-
-    if (v == '-') {
+    } else if (v == '-') {
       negative = true;
-      continue;
-    }
-    if (v == '.') {
+    } else if (v == '.') {
       dot = true;
-      continue;
-    }
-    double x = v - '0';
-    if (!dot) {
-      x1 = x1 * 10 + x;
     } else {
-      x2 = x2 + x / r;
-      r *= 10;
+      double x = v - '0';
+      if (!dot) {
+        integer = integer * 10 + x;
+      } else {
+        decimal = decimal + x / multiple;
+        multiple *= 10;
+      }
     }
   }
 }
 
-void Simulation::doLoadData(const std::string &file, std::vector<Data> &vt) {
-  std::ifstream fin(file, std::ios::binary);
+void Simulation::loadTrainByCharVec() {
+  std::ifstream fin(m_trainFile, std::ios::binary);
   assert(fin);
   std::vector<char> buf(
       static_cast<unsigned int>(fin.seekg(0, std::ios::end).tellg()));
   fin.seekg(0, std::ios::beg)
       .read(&buf[0], static_cast<std::streamsize>(buf.size()));
   fin.close();
-  bool sign = (file == m_trainFile);
-  this->loadFromCharVec(buf, vt, sign);
+  this->loadDataFromCharVec(buf, m_TrainData, true);
 }
 
-void Simulation::doLoadAnswer() {
+void Simulation::loadTestByCharVec() {
+  std::ifstream fin(m_testFile, std::ios::binary);
+  assert(fin);
+  std::vector<char> buf(
+      static_cast<unsigned int>(fin.seekg(0, std::ios::end).tellg()));
+  fin.seekg(0, std::ios::beg)
+      .read(&buf[0], static_cast<std::streamsize>(buf.size()));
+  fin.close();
+  this->loadDataFromCharVec(buf, m_PredictData, false);
+}
+
+void Simulation::loadTrainBySkipNumber(int skip) {
+  std::ifstream fin(m_trainFile, std::ios::binary);
+  assert(fin);
+
+  auto delfilectx = [&](int start, int length) {
+    if (skip != -1 && m_TrainData.size() >= skip) {
+      return;
+    }
+    // int blocksize = 1000000;
+    int blocksize = std::sqrt(length);
+    for (int i = start; i < start + length; i += blocksize) {
+      if (skip != -1 && m_TrainData.size() >= skip) {
+        return;
+      }
+      int sz = std::min(blocksize, start + length - i);
+      std::vector<char> tmpbuf(sz);
+      fin.seekg(i, std::ios::beg).read(&tmpbuf[0], sz);
+
+      int l = 0, r = sz - 1;
+      while (l < sz && tmpbuf[l] != '\n') l++;
+      while (r >= l && tmpbuf[r] != '\n') r--;
+
+      std::vector<char> chars;
+      for (int j = l + 1; j <= r; ++j) chars.emplace_back(tmpbuf[j]);
+      if (!chars.empty()) {
+        this->loadDataFromCharVec(chars, m_TrainData, true);
+      }
+    }
+  };
+
+  int filesize = fin.seekg(0, std::ios::end).tellg();
+  // delfilectx(0, filesize);
+  int nthread = 6;
+  int bufsize = fin.seekg(0, std::ios::end).tellg();
+  int length = bufsize / nthread;
+  int start = 0;
+  for (int i = 0; i < nthread; ++i) {
+    int l = length;
+    if (i == nthread - 1) l = filesize - start;
+    std::thread th(delfilectx, start, l);
+    th.join();
+    start += length;
+  }
+}
+
+void Simulation::LoadAnswer() {
   if (!LOCAL) {
     return;
   }
@@ -560,7 +601,7 @@ void Simulation::Score() {
   std::cerr << "* 迭代: " << Model::MAX_ITER_TIME << "\n";
   std::cerr << "* 正确: " << same << "\n";
   std::cerr << "* 错误: " << unsame << "\n";
-  std::cerr << "* 正确率: " << (double)same / (double)sz << "\n";
+  std::cerr << "* 正确率: " << (double)same / (double)sz * 100 << "%\n";
   std::cerr << "--------------------------------------\n";
 }
 
@@ -568,9 +609,10 @@ void Simulation::LoadData() {
   std::cerr << "--------------------------------------\n";
   std::cerr << "* 加载数据\n";
   ScopeTime t;
-  this->doLoadData(m_trainFile, m_TrainData);
-  this->doLoadData(m_testFile, m_PredictData);
-  this->doLoadAnswer();
+  // this->loadTrainByCharVec();
+  this->loadTrainBySkipNumber(Model::SELECT_TRAIN_NUM);
+  this->loadTestByCharVec();
+  this->LoadAnswer();
 
   std::cerr << "* TrainData: (" << m_TrainData.size() << ", "
             << m_TrainData[0].features.size() << ")\n";
@@ -595,7 +637,7 @@ int main() {
 #ifdef LOCAL_TRAIN
   LOCAL = true;
 #endif
-  std::cerr << std::fixed << std::setprecision(4);
+  std::cerr << std::fixed << std::setprecision(3);
 
   ScopeTime t;
   Simulation *simulation = new Simulation();

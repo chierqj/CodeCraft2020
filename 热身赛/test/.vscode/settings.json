@@ -1,0 +1,10 @@
+{
+  "files.associations": {
+    "*.py": "python",
+    "unistd.h": "c",
+    "string.h": "c",
+    "stdlib.h": "c",
+    "*.tex": "latex",
+    "vector": "cpp"
+  }
+}
