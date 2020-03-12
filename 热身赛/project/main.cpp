@@ -173,8 +173,7 @@ Matrix::Mat1D Dot(const Matrix::Mat1D &mat1, const Matrix::Mat2D &mat2) {
   }
   return ans;
 }
-static Matrix::Mat2D operator*(const Matrix::Mat2D &mat1,
-                               const Matrix::Mat2D &mat2) {
+Matrix::Mat2D operator*(const Matrix::Mat2D &mat1, const Matrix::Mat2D &mat2) {
   Matrix::Mat2D mat2T = T(mat2);
   int n = mat1.size(), m = mat2[0].size();
   Matrix::Mat2D mat(n, Matrix::Mat1D(m));
@@ -185,8 +184,7 @@ static Matrix::Mat2D operator*(const Matrix::Mat2D &mat1,
   }
   return mat;
 };
-static Matrix::Mat1D operator*(const Matrix::Mat2D &mat1,
-                               const Matrix::Mat1D &mat2) {
+Matrix::Mat1D operator*(const Matrix::Mat2D &mat1, const Matrix::Mat1D &mat2) {
   int n = mat1.size();
   Matrix::Mat1D mat;
   for (const auto &x : mat1) {
@@ -567,11 +565,9 @@ void Simulation::Score() {
       ++unsame;
     }
   }
-  // std::cerr << "* 正样本: " << m_positiveSamples << "\n";
-  // std::cerr << "* 负样本: " << m_negativeSamples << "\n";
-  // std::cerr << "* 迭代数: " << Model::MAX_ITER_TIME << "\n";
-  // std::cerr << "* 正确数: " << same << "\n";
-  // std::cerr << "* 错误数: " << unsame << "\n";
+  std::cerr << "* 正样本: " << m_positiveSamples << "\n";
+  std::cerr << "* 负样本: " << m_negativeSamples << "\n";
+  std::cerr << "* 迭代数: " << Model::MAX_ITER_TIME << "\n";
   std::cerr << "* 正确率: " << (double)same / (double)sz * 100 << "%\n";
   std::cerr << "--------------------------------------\n";
 }
