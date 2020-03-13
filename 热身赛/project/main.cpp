@@ -209,15 +209,9 @@ Matrix::Mat1D operator*(const Matrix::Mat2D &mat1, const Matrix::Mat1D &mat2) {
   }
   return mat;
 }
-/***************************************************
- * Config
- **************************************************/
-class Config {
-
-};
 
 /***************************************************
- * Model
+ * Logistics
  * 1. 构造函数Model(Matrix::Mat2D, Matrix::Mat1D) 传入train和label
  * 2. Train() 训练模型
  * 3. Predict(Matrix::Mat1D) 预测数据必须经过预处理，特征新加一列1
@@ -226,18 +220,18 @@ class Config {
  * 6. splitTrainData() 按照设置的比率拆分训练集，训练集+验证集
  * 7. score() 对验证集进行评分
  **************************************************/
-class Model {
+class Logistics {
  public:
-  static const int MAX_ITER_TIME = 500;      // 迭代次数
-  const int SKIP_SAMPLES = 2;                // 随机梯度下降(样本x选1)
-  static const int SELECT_TRAIN_NUM = -1;  // 选择样本数(-1表示全选)
-  const double WEIGHT = 1.0;                 // 初始化weight
-  const int SHOW_TRAIN_STEP = 50;            // 每隔多少代打印log
-  const double PREDICT_TRUE_THRESH = 0.5;    // 划分答案
+  static const int MAX_ITER_TIME = 120;     // 迭代次数
+  const int SKIP_SAMPLES = 4;               // 随机梯度下降(样本x选1)
+  static const int SELECT_TRAIN_NUM = 800;  // 选择样本数(-1表示全选)
+  const double WEIGHT = 1.0;                // 初始化weight
+  const int SHOW_TRAIN_STEP = 50;           // 每隔多少代打印log
+  const double PREDICT_TRUE_THRESH = 0.5;   // 划分答案
 
  public:
   void Train(const Matrix::Mat2D &Train, const Matrix::Mat1D &Label);
-  inline int Predict(const Matrix::Mat1D &data);
+  int Predict(const Matrix::Mat1D &data);
 
  private:
   inline double sigmod(const double &x);  // sigmod
@@ -251,15 +245,15 @@ class Model {
   int m_samples = 0;
   int m_features = 0;
 };
-inline int Model::Predict(const Matrix::Mat1D &data) {
+int Logistics::Predict(const Matrix::Mat1D &data) {
   double sigValue = this->sigmod(Dot(data, m_Weight));
   return (sigValue >= PREDICT_TRUE_THRESH ? 1 : 0);
 }
-inline double Model::sigmod(const double &x) {
+inline double Logistics::sigmod(const double &x) {
   return 1.0 / (1.0 + std::exp(-x));
 }
-void Model::gd(const Matrix::Mat2D &Train, const Matrix::Mat1D &Label,
-               const int &epoch) {
+void Logistics::gd(const Matrix::Mat2D &Train, const Matrix::Mat1D &Label,
+                   const int &epoch) {
   static Matrix::Mat2D trainT = T(Train);
   double learningRate = 5.0 / (epoch + 1) + 0.001;
   auto mat = Train * m_Weight;
@@ -272,8 +266,8 @@ void Model::gd(const Matrix::Mat2D &Train, const Matrix::Mat1D &Label,
     m_Weight[i] -= sig[i] * learningRate;
   }
 }
-void Model::sgd(const Matrix::Mat2D &Train, const Matrix::Mat1D &Label,
-                std::vector<int> &RandomIndex, const int &epoch) {
+void Logistics::sgd(const Matrix::Mat2D &Train, const Matrix::Mat1D &Label,
+                    std::vector<int> &RandomIndex, const int &epoch) {
   Tools::ShuffleVector(RandomIndex);
   for (int j = 0; j < m_samples; ++j) {
     if (j % SKIP_SAMPLES == 0) {  // SKIP_SAMPLES选一个
@@ -287,7 +281,7 @@ void Model::sgd(const Matrix::Mat2D &Train, const Matrix::Mat1D &Label,
     }
   }
 }
-void Model::Train(const Matrix::Mat2D &Train, const Matrix::Mat1D &Label) {
+void Logistics::Train(const Matrix::Mat2D &Train, const Matrix::Mat1D &Label) {
   std::cerr << "--------------------------------------\n";
   std::cerr << "* 开始训练\n";
   ScopeTime t;
@@ -316,94 +310,6 @@ void Model::Train(const Matrix::Mat2D &Train, const Matrix::Mat1D &Label) {
 }
 
 /***************************************************
- * Adama优化器
- **************************************************/
-class Adam {
- public:
-  const int MAX_ITER_TIME = 1000;
-
- public:
-  void Train(const Matrix::Mat2D &Train, const Matrix::Mat1D &Label);
-  double Predict(const Matrix::Mat1D &data);
-
- private:
-  inline double sigmod(double z);
-  Matrix::Mat1D m_Weight;
-  double m_B = 0.0;
-};
-inline double Adam::sigmod(double z) { return 1.0 / (1.0 + std::exp(-z)); }
-
-void Adam::Train(const Matrix::Mat2D &Train, const Matrix::Mat1D &Label) {
-  ScopeTime t;
-  int m_m = Train.size(), m_nx = Train[0].size();
-  int m_batch = 20;
-  int m_epoch = 500;
-  double m_beta1 = 0.9;
-  double m_beta2 = 0.999;
-  double m_epsilon = 1e-8;
-  double m_alpha = 0.01;
-
-  for (int i = 0; i < m_nx; ++i) {
-    double rd = Tools::RandomDouble(0, 1.0) * 0.1;
-    m_Weight.emplace_back(rd);
-  }
-  Matrix::Mat1D Vdw(m_nx, 0.0), Sdw(m_nx, 0.0);
-  double Vdb = 0.0, Sdb = 0.0;
-  int batchNum = m_m / m_batch + 1;
-  for (int epoch = 0; epoch < m_epoch; ++epoch) {
-    for (int k = 0; k < batchNum; ++k) {
-      int start = k * m_batch;
-      if (start >= m_m) break;
-      int end = std::min(m_m, start + m_batch);
-      Matrix::Mat2D x(Train.begin() + start, Train.begin() + end);
-      Matrix::Mat1D y(Label.begin() + start, Label.begin() + end);
-      Matrix::Mat1D dz;
-      double sum_dz = 0.0;
-      int index = 0;
-      for (auto &it : x) {
-        double x = sigmod(Dot(it, m_Weight) + m_B) - y[index++];
-        dz.emplace_back(x);
-        sum_dz += x;
-      }
-      Matrix::Mat1D dw;
-      x = T(x);
-      for (auto &it : x) {
-        dw.emplace_back(1.0 / y.size() * Dot(it, dz));
-      }
-      double db = 1.0 / y.size() * sum_dz;
-
-      for (int p = 0; p < Vdw.size(); ++p) {
-        Vdw[p] = Vdw[p] * m_beta1 + (1.0 - m_beta1) * dw[p];
-      }
-      Vdb = m_beta1 * Vdb + (1 - m_beta1) * db;
-
-      for (int p = 0; p < Vdw.size(); ++p) {
-        Sdw[p] = Sdw[p] * m_beta2 + (1.0 - m_beta2) * (dw[p] * dw[p]);
-      }
-      Sdb = m_beta2 * Sdb + (1 - m_beta2) * (db * db);
-
-      double correct_Vdb = Vdb / (1.0 - std::pow(m_beta1, epoch + 1));
-      double correct_Sdb = Sdb / (1.0 - std::pow(m_beta2, epoch + 1));
-      for (int p = 0; p < m_nx; ++p) {
-        double correct_Vdw = Vdw[p] / (1.0 - std::pow(m_beta1, epoch + 1));
-        double correct_Sdw = Sdw[p] / (1.0 - std::pow(m_beta2, epoch + 1));
-        m_Weight[p] -=
-            m_alpha * (correct_Vdw / std::sqrt(correct_Sdw) + m_epsilon);
-      }
-      m_B -= m_alpha * (correct_Vdb / std::sqrt(correct_Sdb) + m_epsilon);
-    }
-    if (epoch % 50 == 0) {
-      std::cerr << "* epoch: " << epoch << "\n";
-    }
-  }
-  t.LogTime();
-}
-double Adam::Predict(const Matrix::Mat1D &data) {
-  double value = this->sigmod(Dot(data, m_Weight) + m_B);
-  return value > 0.5 ? 1 : 0;
-}
-
-/***************************************************
  * Simulation
  * 1. LoadData() 加载训练集和预测集
  * 2. LoadAnswer() 如果是本地的话，加载answer
@@ -415,12 +321,10 @@ double Adam::Predict(const Matrix::Mat1D &data) {
  **************************************************/
 class Simulation {
  private:
-  Model *m_model;
-  Adam *m_adam;
+  Logistics m_model;
 
  public:
   Simulation();
-  ~Simulation();
   void LoadData();
   void LoadAnswer();
   void Train();
@@ -445,7 +349,7 @@ class Simulation {
   std::vector<int> m_AnswerData;  // 正确答案
   int m_positiveSamples = 0;      // 正样本个数
   int m_negativeSamples = 0;      // 负样本个数
-  std::string m_answer;           // 答案
+  std::vector<int> m_answer;      // 答案
 };
 
 Simulation::Simulation() {
@@ -461,7 +365,6 @@ Simulation::Simulation() {
   m_answerFile = ANSWER_FILE;
 #endif
 }
-Simulation::~Simulation() { delete m_model; }
 
 void Simulation::loadDataFromCharVec(const std::vector<char> &chars,
                                      Matrix::Mat2D &ans, bool trainfile) {
@@ -482,12 +385,11 @@ void Simulation::loadDataFromCharVec(const std::vector<char> &chars,
   };
   for (auto &v : chars) {
     if (v == '\n') {
-      // features.emplace_back(number());
+      features.emplace_back(number());
       ans.emplace_back(features);
       features.clear();
       init();
     } else if (v == ',') {
-      if (features.size() >= 500) continue;
       features.emplace_back(number());
       init();
     } else if (v == '-') {
@@ -544,6 +446,10 @@ double ToDouble(std::string &s) {
   }
 }
 void Simulation::loadTrainBySkipNumber(int skip) {
+  if (skip == -1) {
+    this->loadTrainByCharVec();
+    return;
+  }
   std::ifstream fin(m_trainFile);
   std::string line, temp;
   int cnt = 0;
@@ -559,10 +465,8 @@ void Simulation::loadTrainBySkipNumber(int skip) {
     double num;
     while (getline(iss, temp, ',')) {
       num = ToDouble(temp);
-      if (features.size() >= 500) continue;
       features.emplace_back(num);
     }
-    features.emplace_back(num);
     if (sign) {
       m_TrainData.emplace_back(features);
       ++cnt;
@@ -588,7 +492,7 @@ void Simulation::Train() {
   Matrix::Mat1D label;
   for (auto &it : m_TrainData) {
     int n_label = it.back();
-    it.back() = 1;
+    it.back() = 1.0;
     if (n_label == 1) {
       ++m_positiveSamples;
     } else {
@@ -596,24 +500,21 @@ void Simulation::Train() {
     }
     label.emplace_back(n_label);
   }
-  // m_model = new Model();
-  // m_model->Train(m_TrainData, label);
-  m_adam = new Adam();
-  m_adam->Train(m_TrainData, label);
+  m_model.Train(m_TrainData, label);
 }
 
 void Simulation::PredictAndSaveAnswer() {
+  FILE *fp = fopen(m_predictFile.c_str(), "w");
   for (auto &test : m_PredictData) {
     test.emplace_back(1.0);
-    // char c = m_model->Predict(test) + '0';
-    char c = m_adam->Predict(test) + '0';
-    m_answer.push_back(c);
-    m_answer.push_back('\n');
+    int label = m_model.Predict(test);
+    char c[2];
+    c[0] = label + '0';
+    c[1] = '\n';
+    m_answer.push_back(label);
+    fwrite(c, 2, 1, fp);
   }
-  std::ofstream fout(m_predictFile);
-  auto &rdbuf(*fout.rdbuf());
-  rdbuf.sputn(m_answer.data(), m_answer.size());
-  fout.close();
+  fclose(fp);
 }
 
 void Simulation::Score() {
@@ -626,7 +527,7 @@ void Simulation::Score() {
   int sz = m_PredictData.size();
   int same = 0, unsame = 0;
   for (int i = 0; i < sz; ++i) {
-    if (m_answer[i * 2] - '0' == m_AnswerData[i]) {
+    if (m_answer[i] == m_AnswerData[i]) {
       ++same;
     } else {
       ++unsame;
@@ -634,7 +535,7 @@ void Simulation::Score() {
   }
   std::cerr << "* 正样本: " << m_positiveSamples << "\n";
   std::cerr << "* 负样本: " << m_negativeSamples << "\n";
-  std::cerr << "* 迭代数: " << Model::MAX_ITER_TIME << "\n";
+  std::cerr << "* 迭代数: " << Logistics::MAX_ITER_TIME << "\n";
   std::cerr << "* 正确率: " << (double)same / (double)sz * 100 << "%\n";
   std::cerr << "--------------------------------------\n";
 }
@@ -643,7 +544,7 @@ void Simulation::LoadData() {
   std::cerr << "--------------------------------------\n";
   std::cerr << "* 加载数据\n";
   ScopeTime t;
-  this->loadTrainBySkipNumber(Model::SELECT_TRAIN_NUM);
+  this->loadTrainBySkipNumber(Logistics::SELECT_TRAIN_NUM);
   this->loadTestByCharVec();
   this->LoadAnswer();
   std::cerr << "* TrainData: (" << m_TrainData.size() << ", "
@@ -658,14 +559,13 @@ int main() {
   std::cerr << std::fixed << std::setprecision(3);
 
   ScopeTime t;
-  Simulation *simulation = new Simulation();
+  Simulation simulation;
 
-  simulation->LoadData();
-  simulation->Train();
-  simulation->PredictAndSaveAnswer();
-  simulation->Score();
+  simulation.LoadData();
+  simulation.Train();
+  simulation.PredictAndSaveAnswer();
+  simulation.Score();
 
   t.LogTime();
-  delete simulation;
   return 0;
 }

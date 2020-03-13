@@ -352,7 +352,7 @@ void LR::writeWeight(Matrix::Mat1 &vt, string &file) {
         std::cout << "打开写入文件失败\n";
     }
     for (auto &x : vt) {
-        fout << x << "\n";
+        fout << x << ",";
     }
     fout.close();
 }
@@ -423,10 +423,10 @@ int main(int argc, char *argv[]) {
     srand((unsigned)time(NULL));
     int start_time = clock();
     int type = 0;
-    string trainFile = "./code/data/train_data.txt";
-    string testFile = "./code/data/test_data.txt";
-    string predictFile = "./code/data/result.txt";
-    string answerFile = "./code/data/answer.txt";
+    string trainFile = "../data/train_data.txt";
+    string testFile = "../data/test_data.txt";
+    string predictFile = "../data/result.txt";
+    string answerFile = "../data/answer.txt";
     if (type) {
         trainFile = "/data/train_data.txt";
         testFile = "/data/test_data.txt";
