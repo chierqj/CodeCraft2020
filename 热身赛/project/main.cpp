@@ -83,6 +83,23 @@ struct Matrix {
   typedef std::vector<double> Mat1D;
   typedef std::vector<std::vector<double>> Mat2D;
 };
+std::ostream &operator<<(std::ostream &os, const Matrix::Mat1D &mat) {
+  os << "{";
+  for (int i = 0; i < mat.size(); ++i) {
+    if (i != 0) os << ",";
+    os << mat[i];
+  }
+  os << "}";
+  return os;
+}
+std::ostream &operator<<(std::ostream &os, const Matrix::Mat2D &mat) {
+  os << "[";
+  for (auto &it : mat) {
+    os << it;
+  }
+  os << "]";
+  return os;
+}
 // 一维 + 一维
 Matrix::Mat1D operator+(const Matrix::Mat1D &mat1, const Matrix::Mat1D &mat2) {
   int n1 = mat1.size(), n2 = mat2.size();
@@ -191,6 +208,12 @@ Matrix::Mat1D operator*(const Matrix::Mat2D &mat1, const Matrix::Mat1D &mat2) {
     mat.emplace_back(Dot(x, mat2));
   }
   return mat;
+}
+/***************************************************
+ * Config
+ **************************************************/
+class Config {
+
 };
 
 /***************************************************
@@ -205,12 +228,12 @@ Matrix::Mat1D operator*(const Matrix::Mat2D &mat1, const Matrix::Mat1D &mat2) {
  **************************************************/
 class Model {
  public:
-  static const int MAX_ITER_TIME = 120;     // 迭代次数
-  const int SKIP_SAMPLES = 2;               // 随机梯度下降(样本x选1)
-  static const int SELECT_TRAIN_NUM = 800;  // 选择样本数(-1表示全选)
-  const double WEIGHT = 1.0;                // 初始化weight
-  const int SHOW_TRAIN_STEP = 50;           // 每隔多少代打印log
-  const double PREDICT_TRUE_THRESH = 0.5;   // 划分答案
+  static const int MAX_ITER_TIME = 500;      // 迭代次数
+  const int SKIP_SAMPLES = 2;                // 随机梯度下降(样本x选1)
+  static const int SELECT_TRAIN_NUM = -1;  // 选择样本数(-1表示全选)
+  const double WEIGHT = 1.0;                 // 初始化weight
+  const int SHOW_TRAIN_STEP = 50;            // 每隔多少代打印log
+  const double PREDICT_TRUE_THRESH = 0.5;    // 划分答案
 
  public:
   void Train(const Matrix::Mat2D &Train, const Matrix::Mat1D &Label);
@@ -305,36 +328,79 @@ class Adam {
 
  private:
   inline double sigmod(double z);
-  inline Matrix::Mat1D sigmod(const Matrix::Mat1D &mat);
-
- private:
   Matrix::Mat1D m_Weight;
-  Matrix::Mat1D m_B;
+  double m_B = 0.0;
+};
+inline double Adam::sigmod(double z) { return 1.0 / (1.0 + std::exp(-z)); }
 
-  double m_m = 0;
-  double m_b = 0;
-  double m_alpha = 0.1;
-  double m_threshold = 0.5;
-  double m_batch = 128;
+void Adam::Train(const Matrix::Mat2D &Train, const Matrix::Mat1D &Label) {
+  ScopeTime t;
+  int m_m = Train.size(), m_nx = Train[0].size();
+  int m_batch = 20;
+  int m_epoch = 500;
   double m_beta1 = 0.9;
   double m_beta2 = 0.999;
   double m_epsilon = 1e-8;
-};
-inline double Adam::sigmod(double z) { return 1.0 / (1.0 + std::exp(-z)); }
-inline Matrix::Mat1D Adam::sigmod(const Matrix::Mat1D &mat) {
-  Matrix::Mat1D ans;
-  for (auto &v : mat) {
-    ans.emplace_back(this->sigmod(v));
+  double m_alpha = 0.01;
+
+  for (int i = 0; i < m_nx; ++i) {
+    double rd = Tools::RandomDouble(0, 1.0) * 0.1;
+    m_Weight.emplace_back(rd);
   }
-  return ans;
-}
-void Adam::Train(const Matrix::Mat2D &Train, const Matrix::Mat1D &Label) {
-  int n_samples = Train.size(), n_features = Train[0].size();
-  auto Vdw = Matrix::Mat1D(n_features, 0);
-  double Vdb = 0;
-  auto Sdw = Matrix::Mat1D(n_features, 0);
-  double Sdb = 0;
+  Matrix::Mat1D Vdw(m_nx, 0.0), Sdw(m_nx, 0.0);
+  double Vdb = 0.0, Sdb = 0.0;
   int batchNum = m_m / m_batch + 1;
+  for (int epoch = 0; epoch < m_epoch; ++epoch) {
+    for (int k = 0; k < batchNum; ++k) {
+      int start = k * m_batch;
+      if (start >= m_m) break;
+      int end = std::min(m_m, start + m_batch);
+      Matrix::Mat2D x(Train.begin() + start, Train.begin() + end);
+      Matrix::Mat1D y(Label.begin() + start, Label.begin() + end);
+      Matrix::Mat1D dz;
+      double sum_dz = 0.0;
+      int index = 0;
+      for (auto &it : x) {
+        double x = sigmod(Dot(it, m_Weight) + m_B) - y[index++];
+        dz.emplace_back(x);
+        sum_dz += x;
+      }
+      Matrix::Mat1D dw;
+      x = T(x);
+      for (auto &it : x) {
+        dw.emplace_back(1.0 / y.size() * Dot(it, dz));
+      }
+      double db = 1.0 / y.size() * sum_dz;
+
+      for (int p = 0; p < Vdw.size(); ++p) {
+        Vdw[p] = Vdw[p] * m_beta1 + (1.0 - m_beta1) * dw[p];
+      }
+      Vdb = m_beta1 * Vdb + (1 - m_beta1) * db;
+
+      for (int p = 0; p < Vdw.size(); ++p) {
+        Sdw[p] = Sdw[p] * m_beta2 + (1.0 - m_beta2) * (dw[p] * dw[p]);
+      }
+      Sdb = m_beta2 * Sdb + (1 - m_beta2) * (db * db);
+
+      double correct_Vdb = Vdb / (1.0 - std::pow(m_beta1, epoch + 1));
+      double correct_Sdb = Sdb / (1.0 - std::pow(m_beta2, epoch + 1));
+      for (int p = 0; p < m_nx; ++p) {
+        double correct_Vdw = Vdw[p] / (1.0 - std::pow(m_beta1, epoch + 1));
+        double correct_Sdw = Sdw[p] / (1.0 - std::pow(m_beta2, epoch + 1));
+        m_Weight[p] -=
+            m_alpha * (correct_Vdw / std::sqrt(correct_Sdw) + m_epsilon);
+      }
+      m_B -= m_alpha * (correct_Vdb / std::sqrt(correct_Sdb) + m_epsilon);
+    }
+    if (epoch % 50 == 0) {
+      std::cerr << "* epoch: " << epoch << "\n";
+    }
+  }
+  t.LogTime();
+}
+double Adam::Predict(const Matrix::Mat1D &data) {
+  double value = this->sigmod(Dot(data, m_Weight) + m_B);
+  return value > 0.5 ? 1 : 0;
 }
 
 /***************************************************
@@ -350,6 +416,7 @@ void Adam::Train(const Matrix::Mat2D &Train, const Matrix::Mat1D &Label) {
 class Simulation {
  private:
   Model *m_model;
+  Adam *m_adam;
 
  public:
   Simulation();
@@ -399,36 +466,30 @@ Simulation::~Simulation() { delete m_model; }
 void Simulation::loadDataFromCharVec(const std::vector<char> &chars,
                                      Matrix::Mat2D &ans, bool trainfile) {
   bool negative = false, dot = false;
-  double minx = 0, maxx = 1.0;
   double integer = 0, decimal = 0, multiple = 10;
   Matrix::Mat1D features;
+  auto init = [&]() {
+    negative = dot = false;
+    integer = decimal = 0;
+    multiple = 10;
+  };
+  auto number = [&]() {
+    double num = integer + decimal;
+    if (negative) num = -num;
+    if (num < 0) num = 0;
+    if (num > 1) num = 1;
+    return num;
+  };
   for (auto &v : chars) {
-    if (v == ',' || v == '\n') {
-      double num = integer + decimal;
-      if (negative) num = -num;
-      if (num < 0) num = 0;
-      if (num > 1) num = 1;
-      negative = dot = false;
-      integer = decimal = 0;
-      multiple = 10;
-
-      features.emplace_back(num);
-
-      if (v == ',') {
-        minx = std::min(minx, num);
-        maxx = std::max(maxx, num);
-      } else {
-        if (trainfile) {
-          if (minx >= 0 && maxx <= 1) {
-            ans.emplace_back(features);
-          }
-        } else {
-          ans.emplace_back(features);
-        }
-        features.clear();
-        minx = 0;
-        maxx = 1.0;
-      }
+    if (v == '\n') {
+      // features.emplace_back(number());
+      ans.emplace_back(features);
+      features.clear();
+      init();
+    } else if (v == ',') {
+      if (features.size() >= 500) continue;
+      features.emplace_back(number());
+      init();
     } else if (v == '-') {
       negative = true;
     } else if (v == '.') {
@@ -487,7 +548,7 @@ void Simulation::loadTrainBySkipNumber(int skip) {
   std::string line, temp;
   int cnt = 0;
   while (fin) {
-    if (cnt >= skip) break;
+    if (skip != -1 && cnt >= skip) break;
     std::getline(fin, line);
     if (line.empty()) {
       continue;
@@ -495,10 +556,13 @@ void Simulation::loadTrainBySkipNumber(int skip) {
     std::istringstream iss(line);
     std::vector<double> features;
     bool sign = true;
+    double num;
     while (getline(iss, temp, ',')) {
-      double num = ToDouble(temp);
+      num = ToDouble(temp);
+      if (features.size() >= 500) continue;
       features.emplace_back(num);
     }
+    features.emplace_back(num);
     if (sign) {
       m_TrainData.emplace_back(features);
       ++cnt;
@@ -532,14 +596,17 @@ void Simulation::Train() {
     }
     label.emplace_back(n_label);
   }
-  m_model = new Model();
-  m_model->Train(m_TrainData, label);
+  // m_model = new Model();
+  // m_model->Train(m_TrainData, label);
+  m_adam = new Adam();
+  m_adam->Train(m_TrainData, label);
 }
 
 void Simulation::PredictAndSaveAnswer() {
   for (auto &test : m_PredictData) {
     test.emplace_back(1.0);
-    char c = m_model->Predict(test) + '0';
+    // char c = m_model->Predict(test) + '0';
+    char c = m_adam->Predict(test) + '0';
     m_answer.push_back(c);
     m_answer.push_back('\n');
   }
