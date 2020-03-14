@@ -1,13 +1,23 @@
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <algorithm>
 #include <cassert>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <numeric>
 #include <random>
 #include <sstream>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -163,8 +173,11 @@ double Dot(const Matrix::Mat1D &mat1, const Matrix::Mat1D &mat2) {
   int n1 = mat1.size(), n2 = mat2.size();
   assert(n1 == n2);
   double ans = 0.0L;
-  for (int i = 0; i < n1; ++i) {
+  for (int i = 0; i < n1; i += 4) {
     ans += mat1[i] * mat2[i];
+    ans += mat1[i + 1] * mat2[i + 1];
+    ans += mat1[i + 2] * mat2[i + 2];
+    ans += mat1[i + 3] * mat2[i + 3];
   }
   return ans;
 }
@@ -232,6 +245,7 @@ class Logistics {
  public:
   void Train(const Matrix::Mat2D &Train, const Matrix::Mat1D &Label);
   int Predict(const Matrix::Mat1D &data);
+  void LoadPredictData();
 
  private:
   inline double sigmod(const double &x);  // sigmod
@@ -241,9 +255,13 @@ class Logistics {
            std::vector<int> &RandomIndex, const int &epoch);
 
  private:
-  Matrix::Mat1D m_Weight;  // 参数
-  int m_samples = 0;
-  int m_features = 0;
+  Matrix::Mat2D m_TrainData;      // 训练集
+  Matrix::Mat1D m_Label;          // 标签
+  Matrix::Mat1D m_Weight;         // 参数
+  Matrix::Mat2D m_PredictData;    // 预测
+  std::vector<int> m_AnswerData;  // 本地答案
+  int m_samples = 0;              // 样本个数
+  int m_features = 0;             // 特征个数
 };
 int Logistics::Predict(const Matrix::Mat1D &data) {
   double sigValue = this->sigmod(Dot(data, m_Weight));
@@ -282,7 +300,6 @@ void Logistics::sgd(const Matrix::Mat2D &Train, const Matrix::Mat1D &Label,
   }
 }
 void Logistics::Train(const Matrix::Mat2D &Train, const Matrix::Mat1D &Label) {
-  std::cerr << "--------------------------------------\n";
   std::cerr << "* 开始训练\n";
   ScopeTime t;
 
@@ -298,15 +315,9 @@ void Logistics::Train(const Matrix::Mat2D &Train, const Matrix::Mat1D &Label) {
   }
 
   for (int epoch = 0; epoch < MAX_ITER_TIME; ++epoch) {
-    // this->sgd(Train, Label, RandomIndex, epoch);
     this->gd(Train, Label, epoch);
-
-    if (epoch % SHOW_TRAIN_STEP == 0) {
-      std::cerr << "* epoch: " << epoch << "\n";
-    }
   }
   t.LogTime();
-  std::cerr << "--------------------------------------\n";
 }
 
 /***************************************************
@@ -353,7 +364,7 @@ class Simulation {
 };
 
 Simulation::Simulation() {
-#ifdef LOCAL_TRAIN
+#ifdef LOCAL
   m_trainFile = LOCAL_TRAIN_FILE;
   m_testFile = LOCAL_TEST_FILE;
   m_predictFile = LOCAL_PREDICT_FILE;
@@ -420,14 +431,24 @@ void Simulation::loadTrainByCharVec() {
 }
 
 void Simulation::loadTestByCharVec() {
-  std::ifstream fin(m_testFile, std::ios::binary);
-  assert(fin);
-  std::vector<char> buf(
-      static_cast<unsigned int>(fin.seekg(0, std::ios::end).tellg()));
-  fin.seekg(0, std::ios::beg)
-      .read(&buf[0], static_cast<std::streamsize>(buf.size()));
-  fin.close();
-  this->loadDataFromCharVec(buf, m_PredictData, false);
+  struct stat sb;
+  int fd = open(m_testFile.c_str(), O_RDONLY);
+  fstat(fd, &sb); /* 取得文件大小 */
+  char *data;
+  data = (char *)mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+  Matrix::Mat1D features;
+  for (long long i = 0; i < sb.st_size; i += 6) {
+    double x1 = data[i] - '0';
+    double x2 = data[i + 2] - '0';
+    double x3 = data[i + 3] - '0';
+    double x4 = data[i + 4] - '0';
+    double num = x1 + x2 / 10 + x3 / 100 + x4 / 1000;
+    features.emplace_back(num);
+    if (data[i + 5] == '\n') {
+      m_PredictData.emplace_back(features);
+      features.clear();
+    }
+  }
 }
 
 double ToDouble(std::string &s) {
@@ -446,37 +467,58 @@ double ToDouble(std::string &s) {
   }
 }
 void Simulation::loadTrainBySkipNumber(int skip) {
-  if (skip == -1) {
-    this->loadTrainByCharVec();
-    return;
-  }
-  std::ifstream fin(m_trainFile);
-  std::string line, temp;
+  int fd = open(m_trainFile.c_str(), O_RDONLY);
+  long size = lseek(fd, 0, SEEK_END);
+  size /= 6;
   int cnt = 0;
-  while (fin) {
-    if (skip != -1 && cnt >= skip) break;
-    std::getline(fin, line);
-    if (line.empty()) {
-      continue;
-    }
-    std::istringstream iss(line);
-    std::vector<double> features;
-    bool sign = true;
-    double num;
-    while (getline(iss, temp, ',')) {
-      num = ToDouble(temp);
-      features.emplace_back(num);
-    }
-    if (sign) {
+  char *data = NULL;
+  data = (char *)mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
+
+  bool negative = false, dot = false;
+  double integer = 0, decimal = 0, multiple = 10;
+  Matrix::Mat1D features;
+  auto init = [&]() {
+    negative = dot = false;
+    integer = decimal = 0;
+    multiple = 10;
+  };
+  auto number = [&]() {
+    double num = integer + decimal;
+    if (negative) num = -num;
+    if (num < 0) num = 0;
+    if (num > 1) num = 1;
+    return num;
+  };
+  for (long long i = 0; i < size; ++i) {
+    if (cnt >= skip) break;
+    char v = data[i];
+    if (v == '\n') {
+      features.emplace_back(number());
       m_TrainData.emplace_back(features);
       ++cnt;
+      features.clear();
+      init();
+    } else if (v == ',') {
+      features.emplace_back(number());
+      init();
+    } else if (v == '-') {
+      negative = true;
+    } else if (v == '.') {
+      dot = true;
+    } else {
+      double x = v - '0';
+      if (!dot) {
+        integer = integer * 10 + x;
+      } else {
+        decimal = decimal + x / multiple;
+        multiple *= 10;
+      }
     }
   }
-  fin.close();
 }
 
 void Simulation::LoadAnswer() {
-#ifndef LOCAL_TRAIN
+#ifndef LOCAL
   return;
 #endif
   std::ifstream fin(m_answerFile);
@@ -511,14 +553,33 @@ void Simulation::PredictAndSaveAnswer() {
     char c[2];
     c[0] = label + '0';
     c[1] = '\n';
-    m_answer.push_back(label);
+    m_answer.emplace_back(label);
     fwrite(c, 2, 1, fp);
   }
   fclose(fp);
+  // int DATA_LEN = m_PredictData.size() * 2;
+  // char *pData = new char[DATA_LEN];
+
+  // int idx = 0;
+  // for (auto &test : m_PredictData) {
+  //   test.emplace_back(1);
+  //   int label = m_model.Predict(test);
+  //   pData[idx++] = label + '0';
+  //   pData[idx++] = '\n';
+  //   // m_answer.emplace_back(label);
+  // }
+
+  // int fd = open(m_predictFile.c_str(), O_RDWR | O_CREAT);
+  // lseek(fd, DATA_LEN - 1, SEEK_SET);
+  // write(fd, "", 1);
+  // void *p = mmap(NULL, DATA_LEN, PROT_WRITE, MAP_SHARED, fd, 0);
+  // close(fd);
+  // fd = -1;
+  // memcpy(p, pData, DATA_LEN);
 }
 
 void Simulation::Score() {
-#ifndef LOCAL_TRAIN
+#ifndef LOCAL
   return;
 #endif
   std::cerr << "--------------------------------------\n";
@@ -547,10 +608,10 @@ void Simulation::LoadData() {
   this->loadTrainBySkipNumber(Logistics::SELECT_TRAIN_NUM);
   this->loadTestByCharVec();
   this->LoadAnswer();
-  std::cerr << "* TrainData: (" << m_TrainData.size() << ", "
-            << m_TrainData[0].size() << ")\n";
-  std::cerr << "* TestData: (" << m_PredictData.size() << ", "
-            << m_PredictData[0].size() << ")\n";
+  // std::cerr << "* TrainData: (" << m_TrainData.size() << ", "
+  //           << m_TrainData[0].size() << ")\n";
+  // std::cerr << "* TestData: (" << m_PredictData.size() << ", "
+  //           << m_PredictData[0].size() << ")\n";
   t.LogTime();
   std::cerr << "--------------------------------------\n";
 }
@@ -559,12 +620,12 @@ int main() {
   std::cerr << std::fixed << std::setprecision(3);
 
   ScopeTime t;
-  Simulation simulation;
+  Simulation *simulation = new Simulation();
 
-  simulation.LoadData();
-  simulation.Train();
-  simulation.PredictAndSaveAnswer();
-  simulation.Score();
+  simulation->LoadData();
+  simulation->Train();
+  simulation->PredictAndSaveAnswer();
+  simulation->Score();
 
   t.LogTime();
   return 0;
