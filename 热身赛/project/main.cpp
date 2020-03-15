@@ -106,8 +106,10 @@ double Dot(const Matrix::Mat1D &mat1, const Matrix::Mat1D &mat2) {
 
 class Logistics {
  private:
-  const int ITER_TIME = 10000;  // 迭代次数
-  const int TRAIN_NUM = 5000;   // 样本个数
+  const int ITER_TIME = 50000;  // 迭代次数
+  const int TRAIN_NUM = -1;     // 样本个数
+  const double ALPHA = 0.015;   // 学习率
+  const int NTHREAD = 2;        // 线程个数
 
  public:
   Logistics(const std::string &train, const std::string &predict,
@@ -126,9 +128,12 @@ class Logistics {
   void loadTrain();
   void loadPredict();
   inline double sigmod(const double &z);
+  void handleThread(const char *buffer, int pid, unsigned int left,
+                    unsigned int right);
 
  private:
   Matrix::Mat2D m_TrainData;
+  std::vector<Matrix::Mat2D> m_ThreadData;
   std::vector<int> m_Label;
   Matrix::Mat2D m_PredictData;
   Matrix::Mat1D m_Weight;
@@ -144,29 +149,29 @@ void Logistics::loadTrain() {
   struct stat sb;
   int fd = open(m_trainFile.c_str(), O_RDONLY);
   fstat(fd, &sb);
-  char *data = (char *)mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+  char *buffer = (char *)mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
   Matrix::Mat1D features;
   unsigned int i = 0;
   int cnt = 0;
   bool sign = (TRAIN_NUM != -1);
   while (i < sb.st_size) {
     if (sign && cnt >= TRAIN_NUM) break;
-    if (data[i] == '-') {
+    if (buffer[i] == '-') {
       features.clear();
-      while (data[i] != '\n') ++i;
+      while (buffer[i] != '\n') ++i;
       ++i;
-    } else if (data[i + 1] == '\n') {
-      int x = data[i] - '0';
+    } else if (buffer[i + 1] == '\n') {
+      int x = buffer[i] - '0';
       m_Label.emplace_back(x);
       m_TrainData.emplace_back(features);
       features.clear();
       ++cnt;
       i += 2;
     } else {
-      double x1 = data[i] - '0';
-      double x2 = data[i + 2] - '0';
-      double x3 = data[i + 3] - '0';
-      double x4 = data[i + 4] - '0';
+      double x1 = buffer[i] - '0';
+      double x2 = buffer[i + 2] - '0';
+      double x3 = buffer[i + 3] - '0';
+      double x4 = buffer[i + 4] - '0';
       double num = x1 + x2 / 10 + x3 / 100 + x4 / 1000;
       features.emplace_back(num);
       i += 6;
@@ -177,67 +182,87 @@ void Logistics::loadTrain() {
   std::cerr << "* TrainData: (" << m_samples;
   std::cerr << ", " << m_features << ")\n";
 }
+void Logistics::handleThread(const char *buffer, int pid, unsigned int left,
+                             unsigned int right) {
+  Matrix::Mat1D features;
+  for (unsigned int i = left; i < right; i += 6) {
+    double x1 = buffer[i] - '0';
+    double x2 = buffer[i + 2] - '0';
+    double x3 = buffer[i + 3] - '0';
+    double x4 = buffer[i + 4] - '0';
+    double num = x1 + x2 / 10 + x3 / 100 + x4 / 1000;
+    features.emplace_back(num);
+    if (buffer[i + 5] == '\n') {
+      m_ThreadData[pid].emplace_back(features);
+      features.clear();
+    }
+  }
+}
 void Logistics::loadPredict() {
   struct stat sb;
   int fd = open(m_predictFile.c_str(), O_RDONLY);
   fstat(fd, &sb);
-  char *data = (char *)mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+  char *buffer = (char *)mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
   Matrix::Mat1D features;
-  for (unsigned int i = 0; i < sb.st_size; i += 6) {
-    double x1 = data[i] - '0';
-    double x2 = data[i + 2] - '0';
-    double x3 = data[i + 3] - '0';
-    double x4 = data[i + 4] - '0';
+  int p = 0, linesize = 0;
+  while (p < sb.st_size) {
+    double x1 = buffer[p] - '0';
+    double x2 = buffer[p + 2] - '0';
+    double x3 = buffer[p + 3] - '0';
+    double x4 = buffer[p + 4] - '0';
     double num = x1 + x2 / 10 + x3 / 100 + x4 / 1000;
     features.emplace_back(num);
-    if (data[i + 5] == '\n') {
+    if (buffer[p + 5] == '\n') {
       m_PredictData.emplace_back(features);
+      linesize = p + 6;
       features.clear();
+      break;
     }
+    p += 6;
+  }
+  int totalLine = sb.st_size / linesize;
+  int block = totalLine / NTHREAD;
+  int start = 1;
+  std::vector<std::thread> Threads;
+  m_ThreadData.resize(NTHREAD);
+  for (int i = 0; i < NTHREAD; ++i) {
+    int end = (i == NTHREAD - 1 ? totalLine : start + block);
+    unsigned int l = start * linesize, r = end * linesize;
+    std::thread th(&Logistics::handleThread, this, buffer, i, l, r);
+    Threads.emplace_back(std::move(th));
+    start += block;
+  }
+  for (auto &it : Threads) it.join();
+  for (auto &it : m_ThreadData) {
+    m_PredictData.insert(m_PredictData.end(), it.begin(), it.end());
   }
   std::cerr << "* PredictData: (" << m_PredictData.size();
   std::cerr << ", " << m_PredictData[0].size() << ")\n";
 }
 void Logistics::LoadData() {
-  ScopeTime t;
   this->loadTrain();
   this->loadPredict();
-  std::cerr << "@ loading data time: ";
-  t.LogTime();
 }
 inline double Logistics::sigmod(const double &z) {
   return 1.0 / (1.0 + std::exp(-z));
 }
 void Logistics::Train() {
-  ScopeTime t;
-
   m_Weight = Matrix::Mat1D(m_features, 1.0);
-
-  double alpha = 0.02;
-
   for (int epoch = 0; epoch < ITER_TIME; ++epoch) {
     int index = Tools::RandomInt(0, m_samples - 1);
     double sgd = Dot(m_TrainData[index], m_Weight);
     double err = this->sigmod(sgd) - m_Label[index];
-
     for (int i = 0; i < m_features; ++i) {
-      m_Weight[i] -= alpha * err * m_TrainData[index][i];
+      m_Weight[i] -= ALPHA * err * m_TrainData[index][i];
     }
-
-    // if (epoch % 1000 == 0) {
-    //   std::cerr << "* epoch: " << epoch << "\n";
-    // }
   }
-  std::cerr << "@ trainging time: ";
-  t.LogTime();
 }
 
 void Logistics::Predict() {
-  auto getLabel = [&](const Matrix::Mat1D &data) {
-    double sigValue = this->sigmod(Dot(data, m_Weight));
+  auto getLabel = [&](const Matrix::Mat1D &buffer) {
+    double sigValue = this->sigmod(Dot(buffer, m_Weight));
     return (sigValue >= 0.5 ? 1 : 0);
   };
-
   FILE *fp = fopen(m_resultFile.c_str(), "w");
   for (auto &test : m_PredictData) {
     int label = getLabel(test);
@@ -261,7 +286,8 @@ void Logistics::Score() {
     ++tol;
   }
   fin.close();
-  std::cerr << "* accuracy: " << ac * 100 / tol << "%\n";
+  std::cerr << "@ threads: " << NTHREAD << "\n";
+  std::cerr << "@ accuracy: " << ac * 100 / tol << "%\n";
 }
 
 int main() {
@@ -290,7 +316,7 @@ int main() {
   lr.Predict();
 #endif
 
-  std::cerr << "@ program total time: ";
+  std::cerr << "@ total time: ";
   t.LogTime();
   return 0;
 }
