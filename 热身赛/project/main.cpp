@@ -27,7 +27,7 @@ class ScopeTime {
   void LogTime() const {
     auto t = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::high_resolution_clock::now() - m_begin);
-    float elapsed = (float)(t.count() * 1.0) / 1000.0;
+    double elapsed = (double)(t.count() * 1.0) / 1000.0;
     std::cerr << elapsed << "s\n";
   }
 
@@ -65,8 +65,8 @@ inline void Tools::ShuffleVector(std::vector<int> &vt) {
 }
 
 struct Matrix {
-  typedef std::vector<float> Mat1D;
-  typedef std::vector<std::vector<float>> Mat2D;
+  typedef std::vector<double> Mat1D;
+  typedef std::vector<std::vector<double>> Mat2D;
 };
 std::ostream &operator<<(std::ostream &os, const Matrix::Mat1D &mat) {
   os << "{";
@@ -88,10 +88,10 @@ std::ostream &operator<<(std::ostream &os, const Matrix::Mat2D &mat) {
 
 class Logistics {
  private:
-  const int ITER_TIME = 50000;  // 迭代次数
-  const int TRAIN_NUM = 5000;   // 样本个数
-  const double ALPHA = 0.015;   // 学习率
-  const int NTHREAD = 4;        // 线程个数
+  const int ITER_TIME = 120;   // 迭代次数
+  const int TRAIN_NUM = 800;   // 样本个数
+  const double ALPHA = 0.015;  // 学习率
+  const int NTHREAD = 2;       // 线程个数
 
  public:
   Logistics(const std::string &train, const std::string &predict,
@@ -111,8 +111,8 @@ class Logistics {
   void loadPredict();
   double Dot(const Matrix::Mat1D &mat);
   inline double sigmod(const double &z);
-  void handleThread(const char *buffer, int pid, unsigned int start,
-                    unsigned int end, unsigned int linesize);
+  void gd();
+  void sgd();
 
  private:
   Matrix::Mat2D m_TrainData;
@@ -167,57 +167,97 @@ void Logistics::loadTrain() {
   std::cerr << "* TrainData: (" << m_samples;
   std::cerr << ", " << m_features << ")\n";
 }
-void Logistics::handleThread(const char *buffer, int pid, unsigned int start,
-                             unsigned int end, unsigned int linesize) {
-  for (unsigned i = start; i < end; ++i) {
-    int x1, x2, x3, x4;
-    double num;
-    Matrix::Mat1D features;
-    unsigned int index = i * linesize;
-    for (int j = 0; j < linesize; j += 6) {
-      x1 = buffer[index + j] - '0';
-      x2 = buffer[index + j + 2] - '0';
-      x3 = buffer[index + j + 3] - '0';
-      x4 = buffer[index + j + 4] - '0';
-      num = x1 + (double)(x2 * 100 + x3 * 10 + x2) / 1000;
-      features.emplace_back(num);
-    }
-    m_ThreadData[pid].emplace_back(features);
-  }
-}
 void Logistics::loadPredict() {
+  // 读文件
   struct stat sb;
   int fd = open(m_predictFile.c_str(), O_RDONLY);
   fstat(fd, &sb);
   char *buffer = (char *)mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
-  Matrix::Mat1D features;
-  int p = 0, linesize = 0;
-  int x1, x2, x3, x4;
-  double num;
-  while (p < sb.st_size) {
-    x1 = buffer[p] - '0';
-    x2 = buffer[p + 2] - '0';
-    x3 = buffer[p + 3] - '0';
-    x4 = buffer[p + 4] - '0';
-    num = x1 + (double)(x2 * 100 + x3 * 10 + x2) / 1000;
-    features.emplace_back(num);
-    if (buffer[p + 5] == '\n') {
-      m_PredictData.emplace_back(features);
-      linesize = p + 6;
-      features.clear();
-      break;
+
+  int linesize = 6000;
+
+  // 子线程
+  auto foo = [&](int pid, long long st, long long ed) {
+    for (long long i = st; i < ed; i += linesize) {
+      int x1, x2, x3, x4;
+      double num;
+      Matrix::Mat1D features;
+
+      for (int j = 0; j < linesize; j += 60) {
+        x1 = buffer[i + j] - '0';
+        x2 = buffer[i + j + 2] - '0';
+        x3 = buffer[i + j + 3] - '0';
+        x4 = buffer[i + j + 4] - '0';
+        num = x1 + (double)(x2 * 100 + x3 * 10 + x2) / 1000;
+        features.emplace_back(num);
+        x1 = buffer[i + j + 6] - '0';
+        x2 = buffer[i + j + 2 + 6] - '0';
+        x3 = buffer[i + j + 3 + 6] - '0';
+        x4 = buffer[i + j + 4 + 6] - '0';
+        num = x1 + (double)(x2 * 100 + x3 * 10 + x2) / 1000;
+        features.emplace_back(num);
+        x1 = buffer[i + j + 12] - '0';
+        x2 = buffer[i + j + 2 + 12] - '0';
+        x3 = buffer[i + j + 3 + 12] - '0';
+        x4 = buffer[i + j + 4 + 12] - '0';
+        num = x1 + (double)(x2 * 100 + x3 * 10 + x2) / 1000;
+        features.emplace_back(num);
+        x1 = buffer[i + j + 18] - '0';
+        x2 = buffer[i + j + 2 + 18] - '0';
+        x3 = buffer[i + j + 3 + 18] - '0';
+        x4 = buffer[i + j + 4 + 18] - '0';
+        num = x1 + (double)(x2 * 100 + x3 * 10 + x2) / 1000;
+        features.emplace_back(num);
+        x1 = buffer[i + j + 24] - '0';
+        x2 = buffer[i + j + 2 + 24] - '0';
+        x3 = buffer[i + j + 3 + 24] - '0';
+        x4 = buffer[i + j + 4 + 24] - '0';
+        num = x1 + (double)(x2 * 100 + x3 * 10 + x2) / 1000;
+        features.emplace_back(num);
+        x1 = buffer[i + j + 30] - '0';
+        x2 = buffer[i + j + 2 + 30] - '0';
+        x3 = buffer[i + j + 3 + 30] - '0';
+        x4 = buffer[i + j + 4 + 30] - '0';
+        num = x1 + (double)(x2 * 100 + x3 * 10 + x2) / 1000;
+        features.emplace_back(num);
+        x1 = buffer[i + j + 36] - '0';
+        x2 = buffer[i + j + 2 + 36] - '0';
+        x3 = buffer[i + j + 3 + 36] - '0';
+        x4 = buffer[i + j + 4 + 36] - '0';
+        num = x1 + (double)(x2 * 100 + x3 * 10 + x2) / 1000;
+        features.emplace_back(num);
+        x1 = buffer[i + j + 42] - '0';
+        x2 = buffer[i + j + 2 + 42] - '0';
+        x3 = buffer[i + j + 3 + 42] - '0';
+        x4 = buffer[i + j + 4 + 42] - '0';
+        num = x1 + (double)(x2 * 100 + x3 * 10 + x2) / 1000;
+        features.emplace_back(num);
+        x1 = buffer[i + j + 48] - '0';
+        x2 = buffer[i + j + 2 + 48] - '0';
+        x3 = buffer[i + j + 3 + 48] - '0';
+        x4 = buffer[i + j + 4 + 48] - '0';
+        num = x1 + (double)(x2 * 100 + x3 * 10 + x2) / 1000;
+        features.emplace_back(num);
+        x1 = buffer[i + j + 54] - '0';
+        x2 = buffer[i + j + 2 + 54] - '0';
+        x3 = buffer[i + j + 3 + 54] - '0';
+        x4 = buffer[i + j + 4 + 54] - '0';
+        num = x1 + (double)(x2 * 100 + x3 * 10 + x2) / 1000;
+        features.emplace_back(num);
+      }
+      m_ThreadData[pid].emplace_back(features);
     }
-    p += 6;
-  }
-  int totalLine = sb.st_size / linesize;
-  int block = totalLine / NTHREAD;
-  int start = 1;
+  };
+
+  // 创建线程
+  long long linenum = sb.st_size / linesize;
+  long long block = (linenum / NTHREAD) * linesize;
+  long long start = 0;
   std::vector<std::thread> Threads;
   m_ThreadData.resize(NTHREAD);
   for (int i = 0; i < NTHREAD; ++i) {
-    int end = (i == NTHREAD - 1 ? totalLine : start + block);
-    std::thread th(&Logistics::handleThread, this, buffer, i, start, end,
-                   linesize);
+    long long end = (i == NTHREAD - 1 ? sb.st_size : start + block);
+    std::thread th(foo, i, start, end);
     Threads.emplace_back(std::move(th));
     start += block;
   }
@@ -229,39 +269,94 @@ void Logistics::loadPredict() {
   std::cerr << ", " << m_PredictData[0].size() << ")\n";
 }
 inline void Logistics::LoadData() {
+  ScopeTime t;
   this->loadTrain();
   this->loadPredict();
+  std::cerr << "@ load data: ";
+  t.LogTime();
 }
 inline double Logistics::sigmod(const double &z) {
   return 1.0 / (1.0 + std::exp(-z));
 }
 double Logistics::Dot(const Matrix::Mat1D &mat) {
-  double ans = 0.0L;
-  int i = 0;
-  while (i < m_features - 4) {
-    ans += mat[i] * m_Weight[i] + mat[i + 1] * m_Weight[i + 1] +
-           mat[i + 2] * m_Weight[i + 2] + mat[i + 3] * m_Weight[i + 3];
-    i += 4;
-  }
-  while (i < m_features) {
-    ans += mat[i] * m_Weight[i];
-    ++i;
+  double ans = 0.0;
+  for (int i = 0; i < m_features; i += 8) {
+    ans += mat[i] * m_Weight[i] + mat[i + 1] * m_Weight[i + 1];
+    ans += mat[i + 2] * m_Weight[i + 2] + mat[i + 3] * m_Weight[i + 3];
+    ans += mat[i + 4] * m_Weight[i + 4] + mat[i + 5] * m_Weight[i + 5];
+    ans += mat[i + 6] * m_Weight[i + 6] + mat[i + 7] * m_Weight[i + 7];
   }
   return ans;
 }
-void Logistics::Train() {
+void Logistics::sgd() {
   m_Weight = Matrix::Mat1D(m_features, 1.0);
-  for (int epoch = 0; epoch < ITER_TIME; ++epoch) {
-    int index = Tools::RandomInt(0, m_samples - 1);
-    auto &train = m_TrainData[index];
-    double sgd = this->Dot(train);
-    double err = this->sigmod(sgd) - m_Label[index];
-    err *= ALPHA;
+  auto foo = [&](int cnt) {
+    for (int i = 0; i < cnt; ++i) {
+      int idx = Tools::RandomInt(0, m_samples - 1);
+      auto &train = m_TrainData[idx];
+      double sgd = this->Dot(train);
+      double err = this->sigmod(sgd) - m_Label[idx];
+      err *= ALPHA;
+      for (int i = 0; i < m_features; ++i) {
+        m_Weight[i] -= err * train[i];
+      }
+    }
+  };
+  std::vector<std::thread> Threads;
+  int start = 0, block = ITER_TIME / NTHREAD;
+  for (int i = 0; i < NTHREAD; ++i) {
+    int cnt = std::min(ITER_TIME - start, block);
+    std::thread th(foo, cnt);
+    Threads.emplace_back(std::move(th));
+    start += block;
+  }
+  for (auto &it : Threads) it.join();
+}
+void Logistics::gd() {
+  int start = 0, block = m_samples / NTHREAD;
+  std::vector<std::pair<int, int>> thdParam;
+  for (int i = 0; i < NTHREAD; ++i) {
+    int end = std::min(start + block, m_samples);
+    thdParam.emplace_back(std::make_pair(start, end));
+    start += block;
+  }
 
+  m_Weight = Matrix::Mat1D(m_features, 1.0);
+
+  for (int epoch = 0; epoch < ITER_TIME; ++epoch) {
+    Matrix::Mat2D errAry(NTHREAD, Matrix::Mat1D(m_features, 0));
+    auto foo = [&](int pid, int st, int ed) {
+      for (int i = st; i < ed; ++i) {
+        double sgd = Dot(m_TrainData[i]);
+        sgd = sigmod(sgd) - m_Label[i];
+        for (int j = 0; j < m_features; j += 8) {
+          for (int k = 0; k < 8; ++k) {
+            errAry[pid][j + k] += sgd * m_TrainData[i][j + k];
+          }
+        }
+      }
+    };
+
+    std::vector<std::thread> Thread;
+    int idx = 0;
+    for (auto &it : thdParam) {
+      std::thread th(foo, idx++, it.first, it.second);
+      Thread.emplace_back(std::move(th));
+    }
+    for (auto &it : Thread) it.join();
+    double rate = 5.0 / (epoch + 1) + 0.01;
     for (int i = 0; i < m_features; ++i) {
-      m_Weight[i] -= err * train[i];
+      double err = 0;
+      for (int j = 0; j < NTHREAD; ++j) err += errAry[j][i];
+      m_Weight[i] -= rate * err;
     }
   }
+}
+void Logistics::Train() {
+  ScopeTime t;
+  gd();
+  std::cerr << "@ train: ";
+  t.LogTime();
 }
 
 void Logistics::Predict() {
