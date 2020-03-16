@@ -1,3 +1,4 @@
+#include <arm_neon.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,7 +28,7 @@ class ScopeTime {
   void LogTime() const {
     auto t = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::high_resolution_clock::now() - m_begin);
-    double elapsed = (double)(t.count() * 1.0) / 1000.0;
+    float elapsed = (float)(t.count() * 1.0) / 1000.0;
     std::cerr << elapsed << "s\n";
   }
 
@@ -44,7 +45,7 @@ class ScopeTime {
 class Tools {
  public:
   inline static int RandomInt(const int &l, const int &r);
-  inline static double RandomDouble(const double &l, const double &r);
+  inline static float RandomDouble(const float &l, const float &r);
   inline static void ShuffleVector(std::vector<int> &vt);
 };
 inline int Tools::RandomInt(const int &l, const int &r) {
@@ -52,10 +53,10 @@ inline int Tools::RandomInt(const int &l, const int &r) {
   std::uniform_int_distribution<int> u(l, r);
   return u(e);
 }
-inline double Tools::RandomDouble(const double &l, const double &r) {
+inline float Tools::RandomDouble(const float &l, const float &r) {
   static std::default_random_engine e(time(nullptr));
-  std::uniform_real_distribution<double> u(l, r);
-  double ans = u(e);
+  std::uniform_real_distribution<float> u(l, r);
+  float ans = u(e);
   ans = floor(ans * 1000.000f + 0.5) / 1000.000f;
   return ans;
 }
@@ -65,8 +66,8 @@ inline void Tools::ShuffleVector(std::vector<int> &vt) {
 }
 
 struct Matrix {
-  typedef std::vector<double> Mat1D;
-  typedef std::vector<std::vector<double>> Mat2D;
+  typedef std::vector<float> Mat1D;
+  typedef std::vector<std::vector<float>> Mat2D;
 };
 std::ostream &operator<<(std::ostream &os, const Matrix::Mat1D &mat) {
   os << "{";
@@ -88,10 +89,10 @@ std::ostream &operator<<(std::ostream &os, const Matrix::Mat2D &mat) {
 
 class Logistics {
  private:
-  const int ITER_TIME = 120;   // 迭代次数
-  const int TRAIN_NUM = 800;   // 样本个数
-  const double ALPHA = 0.015;  // 学习率
-  const int NTHREAD = 2;       // 线程个数
+  const int ITER_TIME = 120;  // 迭代次数
+  const int TRAIN_NUM = 800;  // 样本个数
+  const float ALPHA = 0.015;  // 学习率
+  const int NTHREAD = 2;      // 线程个数
 
  public:
   Logistics(const std::string &train, const std::string &predict,
@@ -109,8 +110,8 @@ class Logistics {
  private:
   void loadTrain();
   void loadPredict();
-  double Dot(const Matrix::Mat1D &mat);
-  inline double sigmod(const double &z);
+  float Dot(const Matrix::Mat1D &mat);
+  inline float sigmod(const float &z);
   void gd();
   void sgd();
 
@@ -135,31 +136,34 @@ void Logistics::loadTrain() {
   char *buffer = (char *)mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
   Matrix::Mat1D features;
   unsigned int i = 0;
-  int cnt = 0;
+  int cnt = 0, linesize = 6002;
   bool sign = (TRAIN_NUM != -1);
   int x1, x2, x3, x4;
-  double num;
+  float num;
   while (i < sb.st_size) {
     if (sign && cnt >= TRAIN_NUM) break;
-    if (buffer[i] == '-') {
-      features.clear();
+    if (buffer[i + linesize - 1] != '\n') {
+      i += linesize - 1;
       while (buffer[i] != '\n') ++i;
       ++i;
-    } else if (buffer[i + 1] == '\n') {
+    } else {
+      int tmp = 0;
+      while (tmp < 1000) {
+        x1 = buffer[i] - '0';
+        x2 = buffer[i + 2] - '0';
+        x3 = buffer[i + 3] - '0';
+        x4 = buffer[i + 4] - '0';
+        num = x1 + (float)(x2 * 100 + x3 * 10 + x2) / 1000;
+        features.emplace_back(num);
+        ++tmp;
+        i += 6;
+      }
       int x = buffer[i] - '0';
       m_Label.emplace_back(x);
       m_TrainData.emplace_back(features);
       features.clear();
       ++cnt;
       i += 2;
-    } else {
-      x1 = buffer[i] - '0';
-      x2 = buffer[i + 2] - '0';
-      x3 = buffer[i + 3] - '0';
-      x4 = buffer[i + 4] - '0';
-      num = x1 + (double)(x2 * 100 + x3 * 10 + x2) / 1000;
-      features.emplace_back(num);
-      i += 6;
     }
   }
   m_samples = m_TrainData.size();
@@ -180,7 +184,7 @@ void Logistics::loadPredict() {
   auto foo = [&](int pid, long long st, long long ed) {
     for (long long i = st; i < ed; i += linesize) {
       int x1, x2, x3, x4;
-      double num;
+      float num;
       Matrix::Mat1D features;
 
       for (int j = 0; j < linesize; j += 60) {
@@ -188,61 +192,61 @@ void Logistics::loadPredict() {
         x2 = buffer[i + j + 2] - '0';
         x3 = buffer[i + j + 3] - '0';
         x4 = buffer[i + j + 4] - '0';
-        num = x1 + (double)(x2 * 100 + x3 * 10 + x2) / 1000;
+        num = x1 + (float)(x2 * 100 + x3 * 10 + x2) / 1000;
         features.emplace_back(num);
         x1 = buffer[i + j + 6] - '0';
         x2 = buffer[i + j + 2 + 6] - '0';
         x3 = buffer[i + j + 3 + 6] - '0';
         x4 = buffer[i + j + 4 + 6] - '0';
-        num = x1 + (double)(x2 * 100 + x3 * 10 + x2) / 1000;
+        num = x1 + (float)(x2 * 100 + x3 * 10 + x2) / 1000;
         features.emplace_back(num);
         x1 = buffer[i + j + 12] - '0';
         x2 = buffer[i + j + 2 + 12] - '0';
         x3 = buffer[i + j + 3 + 12] - '0';
         x4 = buffer[i + j + 4 + 12] - '0';
-        num = x1 + (double)(x2 * 100 + x3 * 10 + x2) / 1000;
+        num = x1 + (float)(x2 * 100 + x3 * 10 + x2) / 1000;
         features.emplace_back(num);
         x1 = buffer[i + j + 18] - '0';
         x2 = buffer[i + j + 2 + 18] - '0';
         x3 = buffer[i + j + 3 + 18] - '0';
         x4 = buffer[i + j + 4 + 18] - '0';
-        num = x1 + (double)(x2 * 100 + x3 * 10 + x2) / 1000;
+        num = x1 + (float)(x2 * 100 + x3 * 10 + x2) / 1000;
         features.emplace_back(num);
         x1 = buffer[i + j + 24] - '0';
         x2 = buffer[i + j + 2 + 24] - '0';
         x3 = buffer[i + j + 3 + 24] - '0';
         x4 = buffer[i + j + 4 + 24] - '0';
-        num = x1 + (double)(x2 * 100 + x3 * 10 + x2) / 1000;
+        num = x1 + (float)(x2 * 100 + x3 * 10 + x2) / 1000;
         features.emplace_back(num);
         x1 = buffer[i + j + 30] - '0';
         x2 = buffer[i + j + 2 + 30] - '0';
         x3 = buffer[i + j + 3 + 30] - '0';
         x4 = buffer[i + j + 4 + 30] - '0';
-        num = x1 + (double)(x2 * 100 + x3 * 10 + x2) / 1000;
+        num = x1 + (float)(x2 * 100 + x3 * 10 + x2) / 1000;
         features.emplace_back(num);
         x1 = buffer[i + j + 36] - '0';
         x2 = buffer[i + j + 2 + 36] - '0';
         x3 = buffer[i + j + 3 + 36] - '0';
         x4 = buffer[i + j + 4 + 36] - '0';
-        num = x1 + (double)(x2 * 100 + x3 * 10 + x2) / 1000;
+        num = x1 + (float)(x2 * 100 + x3 * 10 + x2) / 1000;
         features.emplace_back(num);
         x1 = buffer[i + j + 42] - '0';
         x2 = buffer[i + j + 2 + 42] - '0';
         x3 = buffer[i + j + 3 + 42] - '0';
         x4 = buffer[i + j + 4 + 42] - '0';
-        num = x1 + (double)(x2 * 100 + x3 * 10 + x2) / 1000;
+        num = x1 + (float)(x2 * 100 + x3 * 10 + x2) / 1000;
         features.emplace_back(num);
         x1 = buffer[i + j + 48] - '0';
         x2 = buffer[i + j + 2 + 48] - '0';
         x3 = buffer[i + j + 3 + 48] - '0';
         x4 = buffer[i + j + 4 + 48] - '0';
-        num = x1 + (double)(x2 * 100 + x3 * 10 + x2) / 1000;
+        num = x1 + (float)(x2 * 100 + x3 * 10 + x2) / 1000;
         features.emplace_back(num);
         x1 = buffer[i + j + 54] - '0';
         x2 = buffer[i + j + 2 + 54] - '0';
         x3 = buffer[i + j + 3 + 54] - '0';
         x4 = buffer[i + j + 4 + 54] - '0';
-        num = x1 + (double)(x2 * 100 + x3 * 10 + x2) / 1000;
+        num = x1 + (float)(x2 * 100 + x3 * 10 + x2) / 1000;
         features.emplace_back(num);
       }
       m_ThreadData[pid].emplace_back(features);
@@ -275,18 +279,35 @@ inline void Logistics::LoadData() {
   std::cerr << "@ load data: ";
   t.LogTime();
 }
-inline double Logistics::sigmod(const double &z) {
+inline float Logistics::sigmod(const float &z) {
   return 1.0 / (1.0 + std::exp(-z));
 }
-double Logistics::Dot(const Matrix::Mat1D &mat) {
-  double ans = 0.0;
-  for (int i = 0; i < m_features; i += 8) {
-    ans += mat[i] * m_Weight[i] + mat[i + 1] * m_Weight[i + 1];
-    ans += mat[i + 2] * m_Weight[i + 2] + mat[i + 3] * m_Weight[i + 3];
-    ans += mat[i + 4] * m_Weight[i + 4] + mat[i + 5] * m_Weight[i + 5];
-    ans += mat[i + 6] * m_Weight[i + 6] + mat[i + 7] * m_Weight[i + 7];
+// float Logistics::Dot(const Matrix::Mat1D &mat) {
+//   float ans = 0.0;
+//   for (int i = 0; i < m_features; i += 8) {
+//     ans += mat[i] * m_Weight[i] + mat[i + 1] * m_Weight[i + 1];
+//     ans += mat[i + 2] * m_Weight[i + 2] + mat[i + 3] * m_Weight[i + 3];
+//     ans += mat[i + 4] * m_Weight[i + 4] + mat[i + 5] * m_Weight[i + 5];
+//     ans += mat[i + 6] * m_Weight[i + 6] + mat[i + 7] * m_Weight[i + 7];
+//   }
+//   return ans;
+// }
+float Logistics::Dot(const Matrix::Mat1D &mat) {
+  const float *p_vec1 = &mat[0];
+  const float *p_vec2 = &m_Weight[0];
+
+  float sum = 0;
+  float32x4_t sum_vec = vdupq_n_f32(0), left_vec, right_vec;
+  for (int i = 0; i < m_features; i += 4) {
+    left_vec = vld1q_f32(p_vec1 + i);
+    right_vec = vld1q_f32(p_vec2 + i);
+    sum_vec = vmlaq_f32(sum_vec, left_vec, right_vec);
   }
-  return ans;
+
+  float32x2_t r = vadd_f32(vget_high_f32(sum_vec), vget_low_f32(sum_vec));
+  sum += vget_lane_f32(vpadd_f32(r, r), 0);
+
+  return sum;
 }
 void Logistics::sgd() {
   m_Weight = Matrix::Mat1D(m_features, 1.0);
@@ -294,8 +315,8 @@ void Logistics::sgd() {
     for (int i = 0; i < cnt; ++i) {
       int idx = Tools::RandomInt(0, m_samples - 1);
       auto &train = m_TrainData[idx];
-      double sgd = this->Dot(train);
-      double err = this->sigmod(sgd) - m_Label[idx];
+      float sgd = this->Dot(train);
+      float err = this->sigmod(sgd) - m_Label[idx];
       err *= ALPHA;
       for (int i = 0; i < m_features; ++i) {
         m_Weight[i] -= err * train[i];
@@ -327,7 +348,7 @@ void Logistics::gd() {
     Matrix::Mat2D errAry(NTHREAD, Matrix::Mat1D(m_features, 0));
     auto foo = [&](int pid, int st, int ed) {
       for (int i = st; i < ed; ++i) {
-        double sgd = Dot(m_TrainData[i]);
+        float sgd = Dot(m_TrainData[i]);
         sgd = sigmod(sgd) - m_Label[i];
         for (int j = 0; j < m_features; j += 8) {
           for (int k = 0; k < 8; ++k) {
@@ -344,24 +365,27 @@ void Logistics::gd() {
       Thread.emplace_back(std::move(th));
     }
     for (auto &it : Thread) it.join();
-    double rate = 5.0 / (epoch + 1) + 0.01;
-    for (int i = 0; i < m_features; ++i) {
-      double err = 0;
-      for (int j = 0; j < NTHREAD; ++j) err += errAry[j][i];
-      m_Weight[i] -= rate * err;
+    float rate = 5.0 / (epoch + 1) + 0.01;
+    for (auto &it : errAry) {
+      for (int j = 0; j < m_features; j += 8) {
+        for (int k = 0; k < 8; ++k) {
+          m_Weight[j + k] -= rate * it[j + k];
+        }
+      }
     }
   }
 }
 void Logistics::Train() {
   ScopeTime t;
   gd();
+  // sgd();
   std::cerr << "@ train: ";
   t.LogTime();
 }
 
 void Logistics::Predict() {
   auto getLabel = [&](const Matrix::Mat1D &data) {
-    double sigValue = this->sigmod(this->Dot(data));
+    float sigValue = this->sigmod(this->Dot(data));
     return (sigValue >= 0.5 ? 1 : 0);
   };
   FILE *fp = fopen(m_resultFile.c_str(), "w");
@@ -379,7 +403,7 @@ void Logistics::Score() {
   std::ifstream fin(m_answerFile);
   assert(fin);
   int x, index = 0;
-  double ac = 0, tol = 0;
+  float ac = 0, tol = 0;
   while (fin >> x) {
     if (x == m_Answer[index++]) {
       ++ac;
