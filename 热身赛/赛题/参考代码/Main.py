@@ -40,6 +40,7 @@ class LR:
         feats = np.array(feats)
         labels = np.array(labels)
         return feats, labels
+
     def loadTrainData(self):
 
         import time
@@ -98,7 +99,7 @@ class LR:
             preval = self.compute(recNum, self.param_num,
                                   self.feats, self.weight)
             sum_err = self.error_rate(recNum, self.labels, preval)
-            if i %30 == 0:
+            if i % 30 == 0:
                 print("Iters:" + str(i) + " error:" + str(sum_err))
                 theTime = datetime.datetime.now().strftime(ISOTIMEFORMAT)
                 print(theTime)
