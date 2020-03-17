@@ -92,7 +92,7 @@ class Logistics {
   const int ITER_TIME = 120;  // 迭代次数
   const int TRAIN_NUM = 800;  // 样本个数
   const float ALPHA = 0.015;  // 学习率
-  const int NTHREAD = 2;      // 线程个数
+  const int NTHREAD = 4;      // 线程个数
 
  public:
   Logistics(const std::string &train, const std::string &predict,
@@ -127,7 +127,7 @@ class Logistics {
   std::string m_resultFile;
   std::string m_answerFile;
   int m_samples;
-  int m_features;
+  int m_features = 1000;
 };
 void Logistics::loadTrain() {
   struct stat sb;
@@ -136,33 +136,37 @@ void Logistics::loadTrain() {
   char *buffer = (char *)mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
   Matrix::Mat1D features;
   unsigned int i = 0;
-  int cnt = 0, linesize = 6002;
+  int linesize = 6002;
   bool sign = (TRAIN_NUM != -1);
+  if (sign) {
+    m_TrainData = Matrix::Mat2D(TRAIN_NUM, Matrix::Mat1D(m_features));
+  } else {
+    m_TrainData =
+        Matrix::Mat2D(sb.st_size / linesize, Matrix::Mat1D(m_features));
+  }
   int x1, x2, x3, x4;
   float num;
+  int pidx = 0;
   while (i < sb.st_size) {
-    if (sign && cnt >= TRAIN_NUM) break;
+    if (sign && pidx >= TRAIN_NUM) break;
     if (buffer[i + linesize - 1] != '\n') {
       i += linesize - 1;
       while (buffer[i] != '\n') ++i;
       ++i;
     } else {
-      int tmp = 0;
-      while (tmp < 1000) {
+      int idx = 0;
+      while (idx < 1000) {
         x1 = buffer[i] - '0';
         x2 = buffer[i + 2] - '0';
         x3 = buffer[i + 3] - '0';
         x4 = buffer[i + 4] - '0';
-        num = x1 + (float)(x2 * 100 + x3 * 10 + x2) / 1000;
-        features.emplace_back(num);
-        ++tmp;
+        num = x1 + (float)(x2 * 100 + x3 * 10 + x4) / 1000;
+        m_TrainData[pidx][idx++] = num;
         i += 6;
       }
       int x = buffer[i] - '0';
       m_Label.emplace_back(x);
-      m_TrainData.emplace_back(features);
-      features.clear();
-      ++cnt;
+      ++pidx;
       i += 2;
     }
   }
@@ -181,86 +185,85 @@ void Logistics::loadPredict() {
   int linesize = 6000;
 
   // 子线程
-  auto foo = [&](int pid, long long st, long long ed) {
-    for (long long i = st; i < ed; i += linesize) {
+  auto foo = [&](int pid, int startline, int endline) {
+    long long move = startline * linesize;
+    for (int i = startline; i < endline; ++i, move += linesize) {
       int x1, x2, x3, x4;
       float num;
       Matrix::Mat1D features;
-
+      int idx = 0;
       for (int j = 0; j < linesize; j += 60) {
-        x1 = buffer[i + j] - '0';
-        x2 = buffer[i + j + 2] - '0';
-        x3 = buffer[i + j + 3] - '0';
-        x4 = buffer[i + j + 4] - '0';
-        num = x1 + (float)(x2 * 100 + x3 * 10 + x2) / 1000;
-        features.emplace_back(num);
-        x1 = buffer[i + j + 6] - '0';
-        x2 = buffer[i + j + 2 + 6] - '0';
-        x3 = buffer[i + j + 3 + 6] - '0';
-        x4 = buffer[i + j + 4 + 6] - '0';
-        num = x1 + (float)(x2 * 100 + x3 * 10 + x2) / 1000;
-        features.emplace_back(num);
-        x1 = buffer[i + j + 12] - '0';
-        x2 = buffer[i + j + 2 + 12] - '0';
-        x3 = buffer[i + j + 3 + 12] - '0';
-        x4 = buffer[i + j + 4 + 12] - '0';
-        num = x1 + (float)(x2 * 100 + x3 * 10 + x2) / 1000;
-        features.emplace_back(num);
-        x1 = buffer[i + j + 18] - '0';
-        x2 = buffer[i + j + 2 + 18] - '0';
-        x3 = buffer[i + j + 3 + 18] - '0';
-        x4 = buffer[i + j + 4 + 18] - '0';
-        num = x1 + (float)(x2 * 100 + x3 * 10 + x2) / 1000;
-        features.emplace_back(num);
-        x1 = buffer[i + j + 24] - '0';
-        x2 = buffer[i + j + 2 + 24] - '0';
-        x3 = buffer[i + j + 3 + 24] - '0';
-        x4 = buffer[i + j + 4 + 24] - '0';
-        num = x1 + (float)(x2 * 100 + x3 * 10 + x2) / 1000;
-        features.emplace_back(num);
-        x1 = buffer[i + j + 30] - '0';
-        x2 = buffer[i + j + 2 + 30] - '0';
-        x3 = buffer[i + j + 3 + 30] - '0';
-        x4 = buffer[i + j + 4 + 30] - '0';
-        num = x1 + (float)(x2 * 100 + x3 * 10 + x2) / 1000;
-        features.emplace_back(num);
-        x1 = buffer[i + j + 36] - '0';
-        x2 = buffer[i + j + 2 + 36] - '0';
-        x3 = buffer[i + j + 3 + 36] - '0';
-        x4 = buffer[i + j + 4 + 36] - '0';
-        num = x1 + (float)(x2 * 100 + x3 * 10 + x2) / 1000;
-        features.emplace_back(num);
-        x1 = buffer[i + j + 42] - '0';
-        x2 = buffer[i + j + 2 + 42] - '0';
-        x3 = buffer[i + j + 3 + 42] - '0';
-        x4 = buffer[i + j + 4 + 42] - '0';
-        num = x1 + (float)(x2 * 100 + x3 * 10 + x2) / 1000;
-        features.emplace_back(num);
-        x1 = buffer[i + j + 48] - '0';
-        x2 = buffer[i + j + 2 + 48] - '0';
-        x3 = buffer[i + j + 3 + 48] - '0';
-        x4 = buffer[i + j + 4 + 48] - '0';
-        num = x1 + (float)(x2 * 100 + x3 * 10 + x2) / 1000;
-        features.emplace_back(num);
-        x1 = buffer[i + j + 54] - '0';
-        x2 = buffer[i + j + 2 + 54] - '0';
-        x3 = buffer[i + j + 3 + 54] - '0';
-        x4 = buffer[i + j + 4 + 54] - '0';
-        num = x1 + (float)(x2 * 100 + x3 * 10 + x2) / 1000;
-        features.emplace_back(num);
+        x1 = buffer[move + j] - '0';
+        x2 = buffer[move + j + 2] - '0';
+        x3 = buffer[move + j + 3] - '0';
+        x4 = buffer[move + j + 4] - '0';
+        num = x1 + (float)(x2 * 100 + x3 * 10 + x4) / 1000;
+        m_PredictData[i][idx++] = num;
+        x1 = buffer[move + j + 6] - '0';
+        x2 = buffer[move + j + 2 + 6] - '0';
+        x3 = buffer[move + j + 3 + 6] - '0';
+        x4 = buffer[move + j + 4 + 6] - '0';
+        num = x1 + (float)(x2 * 100 + x3 * 10 + x4) / 1000;
+        m_PredictData[i][idx++] = num;
+        x1 = buffer[move + j + 12] - '0';
+        x2 = buffer[move + j + 2 + 12] - '0';
+        x3 = buffer[move + j + 3 + 12] - '0';
+        x4 = buffer[move + j + 4 + 12] - '0';
+        num = x1 + (float)(x2 * 100 + x3 * 10 + x4) / 1000;
+        m_PredictData[i][idx++] = num;
+        x1 = buffer[move + j + 18] - '0';
+        x2 = buffer[move + j + 2 + 18] - '0';
+        x3 = buffer[move + j + 3 + 18] - '0';
+        x4 = buffer[move + j + 4 + 18] - '0';
+        num = x1 + (float)(x2 * 100 + x3 * 10 + x4) / 1000;
+        m_PredictData[i][idx++] = num;
+        x1 = buffer[move + j + 24] - '0';
+        x2 = buffer[move + j + 2 + 24] - '0';
+        x3 = buffer[move + j + 3 + 24] - '0';
+        x4 = buffer[move + j + 4 + 24] - '0';
+        num = x1 + (float)(x2 * 100 + x3 * 10 + x4) / 1000;
+        m_PredictData[i][idx++] = num;
+        x1 = buffer[move + j + 30] - '0';
+        x2 = buffer[move + j + 2 + 30] - '0';
+        x3 = buffer[move + j + 3 + 30] - '0';
+        x4 = buffer[move + j + 4 + 30] - '0';
+        num = x1 + (float)(x2 * 100 + x3 * 10 + x4) / 1000;
+        m_PredictData[i][idx++] = num;
+        x1 = buffer[move + j + 36] - '0';
+        x2 = buffer[move + j + 2 + 36] - '0';
+        x3 = buffer[move + j + 3 + 36] - '0';
+        x4 = buffer[move + j + 4 + 36] - '0';
+        num = x1 + (float)(x2 * 100 + x3 * 10 + x4) / 1000;
+        m_PredictData[i][idx++] = num;
+        x1 = buffer[move + j + 42] - '0';
+        x2 = buffer[move + j + 2 + 42] - '0';
+        x3 = buffer[move + j + 3 + 42] - '0';
+        x4 = buffer[move + j + 4 + 42] - '0';
+        num = x1 + (float)(x2 * 100 + x3 * 10 + x4) / 1000;
+        m_PredictData[i][idx++] = num;
+        x1 = buffer[move + j + 48] - '0';
+        x2 = buffer[move + j + 2 + 48] - '0';
+        x3 = buffer[move + j + 3 + 48] - '0';
+        x4 = buffer[move + j + 4 + 48] - '0';
+        num = x1 + (float)(x2 * 100 + x3 * 10 + x4) / 1000;
+        m_PredictData[i][idx++] = num;
+        x1 = buffer[move + j + 54] - '0';
+        x2 = buffer[move + j + 2 + 54] - '0';
+        x3 = buffer[move + j + 3 + 54] - '0';
+        x4 = buffer[move + j + 4 + 54] - '0';
+        num = x1 + (float)(x2 * 100 + x3 * 10 + x4) / 1000;
+        m_PredictData[i][idx++] = num;
       }
-      m_ThreadData[pid].emplace_back(features);
     }
   };
 
   // 创建线程
   long long linenum = sb.st_size / linesize;
-  long long block = (linenum / NTHREAD) * linesize;
-  long long start = 0;
+  int start = 0, block = linenum / NTHREAD;
   std::vector<std::thread> Threads;
-  m_ThreadData.resize(NTHREAD);
+  m_PredictData = Matrix::Mat2D(linenum, Matrix::Mat1D(m_features));
   for (int i = 0; i < NTHREAD; ++i) {
-    long long end = (i == NTHREAD - 1 ? sb.st_size : start + block);
+    long long end = (i == NTHREAD - 1 ? linenum : start + block);
     std::thread th(foo, i, start, end);
     Threads.emplace_back(std::move(th));
     start += block;
@@ -282,16 +285,18 @@ inline void Logistics::LoadData() {
 inline float Logistics::sigmod(const float &z) {
   return 1.0 / (1.0 + std::exp(-z));
 }
-// float Logistics::Dot(const Matrix::Mat1D &mat) {
-//   float ans = 0.0;
-//   for (int i = 0; i < m_features; i += 8) {
-//     ans += mat[i] * m_Weight[i] + mat[i + 1] * m_Weight[i + 1];
-//     ans += mat[i + 2] * m_Weight[i + 2] + mat[i + 3] * m_Weight[i + 3];
-//     ans += mat[i + 4] * m_Weight[i + 4] + mat[i + 5] * m_Weight[i + 5];
-//     ans += mat[i + 6] * m_Weight[i + 6] + mat[i + 7] * m_Weight[i + 7];
-//   }
-//   return ans;
-// }
+/*
+float Logistics::Dot(const Matrix::Mat1D &mat) {
+  float ans = 0.0;
+  for (int i = 0; i < m_features; i += 8) {
+    ans += mat[i] * m_Weight[i] + mat[i + 1] * m_Weight[i + 1];
+    ans += mat[i + 2] * m_Weight[i + 2] + mat[i + 3] * m_Weight[i + 3];
+    ans += mat[i + 4] * m_Weight[i + 4] + mat[i + 5] * m_Weight[i + 5];
+    ans += mat[i + 6] * m_Weight[i + 6] + mat[i + 7] * m_Weight[i + 7];
+  }
+  return ans;
+}
+*/
 float Logistics::Dot(const Matrix::Mat1D &mat) {
   const float *p_vec1 = &mat[0];
   const float *p_vec2 = &m_Weight[0];
