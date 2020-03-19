@@ -20,6 +20,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 class ScopeTime {
@@ -60,6 +61,17 @@ std::ostream &operator<<(std::ostream &os, const Matrix::Mat2D &mat) {
 
 class Logistics {
  private:
+  std::vector<int> m_Answer;
+  std::string m_trainFile;
+  std::string m_predictFile;
+  std::string m_resultFile;
+  std::string m_answerFile;
+  Matrix::Mat1D m_P0Vec;
+  Matrix::Mat1D m_P1Vec;
+  float m_Log1PAusuive = 0;
+  float m_Log0PAusuive = 0;
+  int m_samples = 0;
+  int m_features = 1000;
   const int TRAIN_NUM = 2000;  // 样本个数
   const int NTHREAD = 4;       // 线程个数
 
@@ -80,28 +92,10 @@ class Logistics {
   float Dot(const Matrix::Mat1D &mat1, const Matrix::Mat1D &mat2);
   void Add(Matrix::Mat1D &mat1, const Matrix::Mat1D &mat2);
   int doPredict(const Matrix::Mat1D &data);
-
- private:
-  std::vector<int> m_Answer;
-  std::string m_trainFile;
-  std::string m_predictFile;
-  std::string m_resultFile;
-  std::string m_answerFile;
-  Matrix::Mat1D m_P0Vec;
-  Matrix::Mat1D m_P1Vec;
-  float m_Log1PAusuive = 0;
-  float m_Log0PAusuive = 0;
-  int m_samples = 0;
-  int m_features = 1000;
 };
 /***********************************************************
-************************************************************
-************************************************************
 ***************************文件处理**************************
-************************************************************
-************************************************************
 ************************************************************/
-
 void Logistics::Train() {
   ScopeTime t;
 
@@ -109,7 +103,6 @@ void Logistics::Train() {
   int fd = open(m_trainFile.c_str(), O_RDONLY);
   fstat(fd, &sb);
   char *buffer = (char *)mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
-  unsigned int i = 0;
   int linesize = 6002;
 
   if (TRAIN_NUM != -1) {
@@ -128,30 +121,26 @@ void Logistics::Train() {
   int pidx = 0, idx = 0;
 
   Matrix::Mat1D features(m_features);
-  for (int i = 0; i < sb.st_size;) {
-    if (pidx >= m_samples) break;
-    if (buffer[i] == '-') {
-      ++i;
-      x1 = buffer[i] - '0';
-      x2 = buffer[i + 2] - '0';
-      x3 = buffer[i + 3] - '0';
-      x4 = buffer[i + 4] - '0';
-      num = x1 + (float)(x2 * 100 + x3 * 10 + x4) / 1000;
-      features[idx++] = -num;
-      sum -= num;
-    } else {
-      x1 = buffer[i] - '0';
-      x2 = buffer[i + 2] - '0';
-      x3 = buffer[i + 3] - '0';
-      x4 = buffer[i + 4] - '0';
-      num = x1 + (float)(x2 * 100 + x3 * 10 + x4) / 1000;
-      features[idx++] = num;
-      sum += num;
-    }
-    i += 6;
-    if (idx == m_features) {
-      int label = buffer[i] - '0';
 
+  const char *ptr = buffer;
+  while (pidx < m_samples) {
+    int x = 1;
+    if (ptr[0] == '-') {
+      ++ptr;
+      x = -1;
+    }
+    x1 = ptr[0] - '0';
+    x2 = ptr[2] - '0';
+    x3 = ptr[3] - '0';
+    x4 = ptr[4] - '0';
+    num = x1 + (float)(x2 * 100 + x3 * 10 + x4) / 1000;
+    num *= x;
+    features[idx++] = num;
+    sum += num;
+
+    ptr += 6;
+    if (idx == m_features) {
+      int label = ptr[0] - '0';
       if (label == 1) {
         p1total += sum;
         Add(m_P1Vec, features);
@@ -160,11 +149,10 @@ void Logistics::Train() {
         p0total += sum;
         Add(m_P0Vec, features);
       }
-
       ++pidx;
       sum = 0;
       idx = 0;
-      i += 2;
+      ptr += 2;
     }
   }
 
@@ -190,13 +178,14 @@ void Logistics::Predict() {
   long long linenum = sb.st_size / linesize;
   m_Answer.resize(linenum);
 
-  float PW[10][4] = {{0.0, 0.0, 0.0, 0.0},    {1.0, 0.1, 0.01, 0.001},
-                     {2.0, 0.2, 0.02, 0.002}, {3.0, 0.3, 0.03, 0.003},
-                     {4.0, 0.4, 0.04, 0.004}, {5.0, 0.5, 0.05, 0.005},
-                     {6.0, 0.6, 0.06, 0.006}, {7.0, 0.7, 0.07, 0.007},
-                     {8.0, 0.8, 0.08, 0.008}, {9.0, 0.9, 0.09, 0.009}};
   // 子线程
   auto foo = [&](int pid, int startline, int endline) {
+    float PW[10][4] = {{0.0, 0.0, 0.0, 0.0},    {1.0, 0.1, 0.01, 0.001},
+                       {2.0, 0.2, 0.02, 0.002}, {3.0, 0.3, 0.03, 0.003},
+                       {4.0, 0.4, 0.04, 0.004}, {5.0, 0.5, 0.05, 0.005},
+                       {6.0, 0.6, 0.06, 0.006}, {7.0, 0.7, 0.07, 0.007},
+                       {8.0, 0.8, 0.08, 0.008}, {9.0, 0.9, 0.09, 0.009}};
+
     long long move = startline * linesize;
     Matrix::Mat1D features(m_features);
     int x1, x2, x3, x4;
@@ -204,14 +193,16 @@ void Logistics::Predict() {
     float num;
     for (int i = startline; i < endline; ++i, move += linesize) {
       idx = 0;
-      const char *ptr = &buffer[move];
-      for (int j = 0; j < linesize; j += 6) {
-        x1 = ptr[j] - '0';
-        x2 = ptr[j + 2] - '0';
-        x3 = ptr[j + 3] - '0';
-        x4 = ptr[j + 4] - '0';
-        num = PW[x1][0] + PW[x2][1] + PW[x3][2] + PW[x4][3];
-        features[idx++] = num;
+      for (int j = 0; j < linesize; j += 60) {
+        const char *ptr = &buffer[move + j];
+        for (int k = 0; k < 60; k += 6) {
+          x1 = ptr[k] - '0';
+          x2 = ptr[k + 2] - '0';
+          x3 = ptr[k + 3] - '0';
+          x4 = ptr[k + 4] - '0';
+          num = PW[x1][0] + PW[x2][1] + PW[x3][2] + PW[x4][3];
+          features[idx++] = num;
+        }
       }
       m_Answer[i] = this->doPredict(features);
     }
@@ -232,18 +223,15 @@ void Logistics::Predict() {
 }
 
 /***********************************************************
-************************************************************
-************************************************************
 ***************************训练相关**************************
-************************************************************
-************************************************************
 ************************************************************/
 void Logistics::Add(Matrix::Mat1D &mat1, const Matrix::Mat1D &mat2) {
-  for (int i = 0; i < m_features; i += 4) {
-    mat1[i] += mat2[i];
-    mat1[i + 1] += mat2[i + 1];
-    mat1[i + 2] += mat2[i + 2];
-    mat1[i + 3] += mat2[i + 3];
+  for (int i = 0; i < m_features; i += 8) {
+    float *ptr1 = &mat1[i];
+    const float *ptr2 = &mat2[i];
+    for (int k = 0; k < 8; ++k) {
+      ptr1[k] += ptr2[k];
+    }
   }
 }
 /*
