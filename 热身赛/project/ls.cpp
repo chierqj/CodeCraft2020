@@ -306,12 +306,22 @@ void LR::LoadChar(const vector<char> &ch, Matrix::Mat2 &vt1,
 }
 void LR::handleThread(int pid, unsigned int left, unsigned int right) {
   Matrix::Mat1 features;
+  float PW[10][4] = {{0.0, 0.0, 0.0, 0.0},    {1.0, 0.1, 0.01, 0.001},
+                     {2.0, 0.2, 0.02, 0.002}, {3.0, 0.3, 0.03, 0.003},
+                     {4.0, 0.4, 0.04, 0.004}, {5.0, 0.5, 0.05, 0.005},
+                     {6.0, 0.6, 0.06, 0.006}, {7.0, 0.7, 0.07, 0.007},
+                     {8.0, 0.8, 0.08, 0.008}, {9.0, 0.9, 0.09, 0.009}};
+  int x1, x2, x3, x4;
+  double num;
   for (unsigned int i = left; i < right; i += 6) {
-    double x1 = m_Buffer[i] - '0';
-    double x2 = m_Buffer[i + 2] - '0';
-    double x3 = m_Buffer[i + 3] - '0';
-    double x4 = m_Buffer[i + 4] - '0';
-    double num = x1 + x2 / 10 + x3 / 100 + x4 / 1000;
+    x1 = m_Buffer[i] - '0';
+    x2 = m_Buffer[i + 2] - '0';
+    x3 = m_Buffer[i + 3] - '0';
+    x4 = m_Buffer[i + 4] - '0';
+    // num = x1 + x2 / 10 + x3 / 100 + x4 / 1000;
+    // num = PW[x1][0] + PW[x2][1] + PW[x3][2] + PW[x4][3];
+    num = x1 + (float)(x2 * 100 + x3 * 10 + x4) / 1000;
+
     features.emplace_back(num);
     if (m_Buffer[i + 5] == '\n') {
       m_ThreadData[pid].emplace_back(features);
@@ -444,7 +454,7 @@ int main(int argc, char *argv[]) {
   for (int i = 1; i < 5; i++) {
     pw[i] = pw[i - 1] * 10;
   }
-  int start_time = clock();
+  // int start_time = clock();
   // string trainFile = "../data/train_data.txt";
   // string testFile = "../data/test_data.txt";
   // string predictFile = "../data/result.txt";

@@ -189,11 +189,7 @@ void LR::train() {
     }
 
     if (i % train_show_step == 0) {
-      cout << "iter " << i << ". updated weight value is : ";
-      for (j = 0; j < param.wtSet.size(); j++) {
-        cout << param.wtSet[j] << "  ";
-      }
-      cout << endl;
+      cout << "iter " << i << ", loss: " << lossCal() << "\n";
     }
   }
 }
@@ -338,10 +334,10 @@ int main(int argc, char *argv[]) {
   vector<int> predictVec;
   int correctCount;
   double accurate;
-  string trainFile = "/data/train_data.txt";
-  string testFile = "/data/test_data.txt";
-  string predictFile = "/projects/student/result.txt";
-  string answerFile = "/projects/student/answer.txt";
+  string trainFile = "../init_data/train_data.txt";
+  string testFile = "../init_data/test_data.txt";
+  string predictFile = "../init_data/result.txt";
+  string answerFile = "../init_data/answer.txt";
 
   LR logist(trainFile, testFile, predictFile);
 
