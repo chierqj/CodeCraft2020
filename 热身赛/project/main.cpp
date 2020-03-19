@@ -272,8 +272,11 @@ void Logistics::Predict() {
 ************************************************************
 ************************************************************/
 void Logistics::Add(Matrix::Mat1D &mat1, const Matrix::Mat1D &mat2) {
-  for (int i = 0; i < m_features; ++i) {
+  for (int i = 0; i < m_features; i += 4) {
     mat1[i] += mat2[i];
+    mat1[i + 1] += mat2[i + 1];
+    mat1[i + 2] += mat2[i + 2];
+    mat1[i + 3] += mat2[i + 3];
   }
 }
 /*
