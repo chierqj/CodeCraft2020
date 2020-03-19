@@ -121,6 +121,11 @@ void Logistics::Train() {
   int pidx = 0, idx = 0;
 
   Matrix::Mat1D features(m_features);
+  float PW[10][4] = {{0.0, 0.0, 0.0, 0.0},    {1.0, 0.1, 0.01, 0.001},
+                     {2.0, 0.2, 0.02, 0.002}, {3.0, 0.3, 0.03, 0.003},
+                     {4.0, 0.4, 0.04, 0.004}, {5.0, 0.5, 0.05, 0.005},
+                     {6.0, 0.6, 0.06, 0.006}, {7.0, 0.7, 0.07, 0.007},
+                     {8.0, 0.8, 0.08, 0.008}, {9.0, 0.9, 0.09, 0.009}};
 
   const char *ptr = buffer;
   while (pidx < m_samples) {
@@ -133,7 +138,7 @@ void Logistics::Train() {
     x2 = ptr[2] - '0';
     x3 = ptr[3] - '0';
     x4 = ptr[4] - '0';
-    num = x1 + (float)(x2 * 100 + x3 * 10 + x4) / 1000;
+    num = PW[x1][0] + PW[x2][1] + PW[x3][2] + PW[x4][3];
     num *= x;
     features[idx++] = num;
     sum += num;
