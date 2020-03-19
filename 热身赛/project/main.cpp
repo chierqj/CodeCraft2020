@@ -71,7 +71,7 @@ class Logistics {
   float m_Log1PAusuive = 0;
   float m_Log0PAusuive = 0;
   int m_samples = 0;
-  int m_features = 1000;
+  int m_features = 600;
   const int TRAIN_NUM = 2000;  // 样本个数
   const int NTHREAD = 4;       // 线程个数
 
@@ -145,6 +145,7 @@ void Logistics::Train() {
 
     ptr += 6;
     if (idx == m_features) {
+      while (ptr[1] != '\n') ++ptr;
       int label = ptr[0] - '0';
       if (label == 1) {
         p1total += sum;
@@ -207,6 +208,12 @@ void Logistics::Predict() {
           x4 = ptr[k + 4] - '0';
           num = PW[x1][0] + PW[x2][1] + PW[x3][2] + PW[x4][3];
           features[idx++] = num;
+          if (idx == m_features) {
+            break;
+          }
+        }
+        if (idx == m_features) {
+          break;
         }
       }
       m_Answer[i] = this->doPredict(features);
