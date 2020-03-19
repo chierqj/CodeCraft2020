@@ -36,35 +36,6 @@ class ScopeTime {
   std::chrono::time_point<std::chrono::high_resolution_clock> m_begin;
 };
 
-/***************************************************
- * 工具类
- * 1. RandomInt(l, r) [l, r]之间的int
- * 2. RandomDouble(l, r) [l, r]之间的double
- * 3. ShuffleVector(vector<int> vt) 随机打乱vt
- **************************************************/
-class Tools {
- public:
-  inline static int RandomInt(const int &l, const int &r);
-  inline static float RandomDouble(const float &l, const float &r);
-  inline static void ShuffleVector(std::vector<int> &vt);
-};
-inline int Tools::RandomInt(const int &l, const int &r) {
-  static std::default_random_engine e(time(nullptr));
-  std::uniform_int_distribution<int> u(l, r);
-  return u(e);
-}
-inline float Tools::RandomDouble(const float &l, const float &r) {
-  static std::default_random_engine e(time(nullptr));
-  std::uniform_real_distribution<float> u(l, r);
-  float ans = u(e);
-  ans = floor(ans * 1000.000f + 0.5) / 1000.000f;
-  return ans;
-}
-inline void Tools::ShuffleVector(std::vector<int> &vt) {
-  unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
-  std::shuffle(vt.begin(), vt.end(), std::default_random_engine(seed));
-}
-
 struct Matrix {
   typedef std::vector<float> Mat1D;
   typedef std::vector<std::vector<float>> Mat2D;
@@ -89,7 +60,7 @@ std::ostream &operator<<(std::ostream &os, const Matrix::Mat2D &mat) {
 
 class Logistics {
  private:
-  const int TRAIN_NUM = 4000;  // 样本个数
+  const int TRAIN_NUM = 2000;  // 样本个数
   const int NTHREAD = 4;       // 线程个数
 
  public:
@@ -118,14 +89,9 @@ class Logistics {
   std::string m_answerFile;
   Matrix::Mat1D m_P0Vec;
   Matrix::Mat1D m_P1Vec;
-  float m_PAusuive = 0;
   float m_Log1PAusuive = 0;
   float m_Log0PAusuive = 0;
-  float m_p1total = 1.0;
-  float m_p0total = 1.0;
   int m_samples = 0;
-  int m_positive = 0;
-  int m_negative = 0;
   int m_features = 1000;
 };
 /***********************************************************
@@ -152,6 +118,8 @@ void Logistics::Train() {
     m_samples = sb.st_size / linesize;
   }
 
+  float p0total = 1.0, p1total = 1.0;
+  int positive = 0;
   m_P0Vec = Matrix::Mat1D(m_features, 1.0);
   m_P1Vec = Matrix::Mat1D(m_features, 1.0);
 
@@ -185,13 +153,12 @@ void Logistics::Train() {
       int label = buffer[i] - '0';
 
       if (label == 1) {
-        m_p1total += sum;
+        p1total += sum;
         Add(m_P1Vec, features);
-        ++m_positive;
+        ++positive;
       } else {
-        m_p0total += sum;
+        p0total += sum;
         Add(m_P0Vec, features);
-        ++m_negative;
       }
 
       ++pidx;
@@ -201,11 +168,11 @@ void Logistics::Train() {
     }
   }
 
-  m_PAusuive = (float)(m_positive) / (float)m_samples;
-  m_Log1PAusuive = std::log(m_PAusuive);
-  m_Log0PAusuive = std::log(1.0 - m_PAusuive);
-  for (auto &it : m_P0Vec) it = std::log(it / m_p0total);
-  for (auto &it : m_P1Vec) it = std::log(it / m_p1total);
+  float pausuive = (float)(positive) / (float)m_samples;
+  m_Log1PAusuive = std::log(pausuive);
+  m_Log0PAusuive = std::log(1.0 - pausuive);
+  for (auto &it : m_P0Vec) it = std::log(it / p0total);
+  for (auto &it : m_P1Vec) it = std::log(it / p1total);
 
   std::cerr << "* TrainData: (" << m_samples << ", " << m_features << ")\n";
   std::cerr << "@ train: ";
@@ -302,40 +269,8 @@ float Logistics::Dot(const Matrix::Mat1D &mat1, const Matrix::Mat1D &mat2) {
   sum += vget_lane_f32(vpadd_f32(r, r), 0);
   return sum;
 }
-// void Logistics::doTrain(const Matrix::Mat1D train, const float &sum,
-//                         const int label) {
-//   auto add = [&](Matrix::Mat1D &mat1, const Matrix::Mat1D &mat2) {
-//     for (int i = 0; i < m_features; ++i) {
-//       mat1[i] += mat2[i];
-//     }
-//   };
-//   if (label == 1) {
-//     m_p1total += m_TrainSum[i];
-//     add(m_P1Vec, m_TrainData[i]);
-//   }
 
-//   m_PAusuive = (float)(m_positive) / (float)m_samples;
-//   m_Log1PAusuive = std::log(m_PAusuive);
-//   m_Log0PAusuive = std::log(1.0 - m_PAusuive);
-//   m_P0Vec = Matrix::Mat1D(m_features, 1.0);
-//   m_P1Vec = Matrix::Mat1D(m_features, 1.0);
-//   float p0total = 1.0, p1total = 1.0;
-
-//   for (int i = 0; i < m_samples; ++i) {
-//     if (m_Label[i] == 1) {
-//     } else {
-//       p0total += m_TrainSum[i];
-//       add(m_P0Vec, m_TrainData[i]);
-//     }
-//   }
-
-//   for (auto &it : m_P0Vec) it = std::log(it / p0total);
-//   for (auto &it : m_P1Vec) it = std::log(it / p1total);
-// }
 int Logistics::doPredict(const Matrix::Mat1D &data) {
-  // float sigValue = this->sigmod(this->Dot(features));
-  // int label = (sigValue >= 0.5 ? 1 : 0);
-
   float p1 = Dot(data, m_P1Vec) + m_Log1PAusuive;
   float p0 = Dot(data, m_P0Vec) + m_Log0PAusuive;
   return (p1 > p0 ? 1 : 0);
