@@ -72,8 +72,8 @@ class Logistics {
   float m_Log0PAusuive = 0;
   int m_samples = 0;
   int m_features = 600;
-  const int TRAIN_NUM = 2000;  // 样本个数
-  const int NTHREAD = 4;       // 线程个数
+  const int TRAIN_NUM = 1600;  // 样本个数
+  const int NTHREAD = 8;       // 线程个数
 
  public:
   Logistics(const std::string &train, const std::string &predict,
