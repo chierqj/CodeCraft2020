@@ -71,9 +71,9 @@ class Logistics {
   float m_Log1PAusuive = 0;
   float m_Log0PAusuive = 0;
   int m_samples = 0;
-  int m_features = 600;
-  const int TRAIN_NUM = 1600;  // 样本个数
-  const int NTHREAD = 8;       // 线程个数
+  int m_features = 400;
+  const int TRAIN_NUM = 1580;  // 样本个数
+  const int NTHREAD = 4;       // 线程个数
 
  public:
   Logistics(const std::string &train, const std::string &predict,
@@ -92,6 +92,8 @@ class Logistics {
   float Dot(const Matrix::Mat1D &mat1, const Matrix::Mat1D &mat2);
   void Add(Matrix::Mat1D &mat1, const Matrix::Mat1D &mat2);
   int doPredict(const Matrix::Mat1D &data);
+  void handelSplitPredictData(const char *thBuffer, int startline, int endline,
+                              int linesize);
 };
 /***********************************************************
 ***************************文件处理**************************
@@ -172,6 +174,42 @@ void Logistics::Train() {
   std::cerr << "@ train: ";
   t.LogTime();
 }
+
+void Logistics::handelSplitPredictData(const char *thBuffer, int startline,
+                                       int endline, int linesize) {
+  const float PW[10][4] = {{0.0, 0.0, 0.0, 0.0},    {1.0, 0.1, 0.01, 0.001},
+                           {2.0, 0.2, 0.02, 0.002}, {3.0, 0.3, 0.03, 0.003},
+                           {4.0, 0.4, 0.04, 0.004}, {5.0, 0.5, 0.05, 0.005},
+                           {6.0, 0.6, 0.06, 0.006}, {7.0, 0.7, 0.07, 0.007},
+                           {8.0, 0.8, 0.08, 0.008}, {9.0, 0.9, 0.09, 0.009}};
+  long long move = startline * linesize;
+  Matrix::Mat1D features(m_features);
+  int x1, x2, x3, x4;
+  int idx;
+  float num;
+  for (int i = startline; i < endline; ++i, move += linesize) {
+    idx = 0;
+    for (int j = 0; j < linesize; j += 60) {
+      const char *ptr = &thBuffer[move + j];
+      for (int k = 0; k < 60; k += 6) {
+        x1 = ptr[k] - '0';
+        x2 = ptr[k + 2] - '0';
+        x3 = ptr[k + 3] - '0';
+        x4 = ptr[k + 4] - '0';
+        num = PW[x1][0] + PW[x2][1] + PW[x3][2] + PW[x4][3];
+        features[idx++] = num;
+        if (idx == m_features) {
+          break;
+        }
+      }
+      if (idx == m_features) {
+        break;
+      }
+    }
+    m_Answer[i] = this->doPredict(features);
+  }
+}
+
 void Logistics::Predict() {
   ScopeTime t;
   // 读文件
@@ -184,48 +222,13 @@ void Logistics::Predict() {
   long long linenum = sb.st_size / linesize;
   m_Answer.resize(linenum);
 
-  // 子线程
-  auto foo = [&](int pid, int startline, int endline) {
-    float PW[10][4] = {{0.0, 0.0, 0.0, 0.0},    {1.0, 0.1, 0.01, 0.001},
-                       {2.0, 0.2, 0.02, 0.002}, {3.0, 0.3, 0.03, 0.003},
-                       {4.0, 0.4, 0.04, 0.004}, {5.0, 0.5, 0.05, 0.005},
-                       {6.0, 0.6, 0.06, 0.006}, {7.0, 0.7, 0.07, 0.007},
-                       {8.0, 0.8, 0.08, 0.008}, {9.0, 0.9, 0.09, 0.009}};
-
-    long long move = startline * linesize;
-    Matrix::Mat1D features(m_features);
-    int x1, x2, x3, x4;
-    int idx;
-    float num;
-    for (int i = startline; i < endline; ++i, move += linesize) {
-      idx = 0;
-      for (int j = 0; j < linesize; j += 60) {
-        const char *ptr = &buffer[move + j];
-        for (int k = 0; k < 60; k += 6) {
-          x1 = ptr[k] - '0';
-          x2 = ptr[k + 2] - '0';
-          x3 = ptr[k + 3] - '0';
-          x4 = ptr[k + 4] - '0';
-          num = PW[x1][0] + PW[x2][1] + PW[x3][2] + PW[x4][3];
-          features[idx++] = num;
-          if (idx == m_features) {
-            break;
-          }
-        }
-        if (idx == m_features) {
-          break;
-        }
-      }
-      m_Answer[i] = this->doPredict(features);
-    }
-  };
-
   // 创建线程
   int start = 0, block = linenum / NTHREAD;
   std::vector<std::thread> Threads(NTHREAD);
   for (int i = 0; i < NTHREAD; ++i) {
-    long long end = (i == NTHREAD - 1 ? linenum : start + block);
-    Threads[i] = std::thread(foo, i, start, end);
+    int end = (i == NTHREAD - 1 ? linenum : start + block);
+    Threads[i] = std::thread(&Logistics::handelSplitPredictData, this, buffer,
+                             start, end, linesize);
     start += block;
   }
   for (auto &it : Threads) it.join();
@@ -237,6 +240,7 @@ void Logistics::Predict() {
 /***********************************************************
 ***************************训练相关**************************
 ************************************************************/
+
 void Logistics::Add(Matrix::Mat1D &mat1, const Matrix::Mat1D &mat2) {
   for (int i = 0; i < m_features; i += 8) {
     float *ptr1 = &mat1[i];
