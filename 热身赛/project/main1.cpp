@@ -74,8 +74,8 @@ class Logistics {
   std::string m_resultFile;
   std::string m_answerFile;
   int m_samples = 0;
-  int m_features = 800;
-  const int TRAIN_NUM = 4000;  // 样本个数
+  int m_features = 400;
+  const int TRAIN_NUM = 1580;  // 样本个数
   const int NTHREAD = 4;       // 线程个数
 
   std::vector<Matrix::Mat2D> m_ThreadTrainData;
@@ -109,54 +109,10 @@ class Logistics {
   void handleSplitPredictData(const char *thBuffer, int startline, int endline);
   void handleSplitTrainData(const char *thBuffer, int pid, int start, int end);
   void doTrain();
-  inline float sigmod(float x);
 };
 /***********************************************************
 ***************************文件处理**************************
 ************************************************************/
-inline float Logistics::sigmod(float x) { return 1.0 / (1 + std::exp(-x)); }
-/*
-void Logistics::doTrain() {
-  ScopeTime t;
-
-  int batch = 8, items = m_samples / batch;
-  float rate = 0.02;
-  float beta1 = 0.9;
-  float beta2 = 0.999;
-  float epsilon = 1e-8;
-
-  m_Weight = Matrix::Mat1D(m_features, 0.25);
-  Matrix::Mat1D Vdw(m_features, 0);
-  Matrix::Mat1D Sdw(m_features, 0);
-
-  for (int epoch = 0; epoch < 10; ++epoch) {
-    int start = 0;
-    for (int item = 0; item < items; ++item, start += batch) {
-      int end = start + batch;
-
-      Matrix::Mat1D grads(m_features, 0);
-      for (int i = start; i < end; ++i) {
-        float sgd = Dot(m_TrainData[i], m_Weight);
-        sgd = sigmod(sgd) - m_Label[i];
-        for (int j = 0; j < m_features; ++j) {
-          grads[j] += sgd * m_TrainData[i][j];
-        }
-      }
-      for (int i = 0; i < m_features; ++i) {
-        float gsv = grads[i] / (float)batch;
-        Vdw[i] = beta1 * Vdw[i] + (1 - beta1) * gsv;
-        Sdw[i] = beta2 * Sdw[i] + (1 - beta2) * gsv * gsv;
-        float cat_vdw = Vdw[i] / (1 - std::pow(beta1, epoch + 1));
-        float cat_sdw = Sdw[i] / (1 - std::pow(beta2, epoch + 1));
-        m_Weight[i] -= rate * (cat_vdw / std::sqrt(cat_sdw) + epsilon);
-      }
-    }
-  }
-  // std::sort(m_Weight.begin(), m_Weight.end());
-  std::cerr << "@ train: ";
-  t.LogTime();
-}
-*/
 void Logistics::doTrain() {
   float p0total = 1.0, p1total = 1.0;
   int positive = 0;
@@ -193,10 +149,8 @@ void Logistics::doTrain() {
   for (auto &it : m_P0Vec) it = std::log(it / p0total);
   for (auto &it : m_P1Vec) it = std::log(it / p1total);
 
-  std::cerr << m_P0Vec << "\n";
-  std::cerr << m_P1Vec << "\n";
-  std::cerr << "delta: " << p0total << ", " << p1total << "\n";
-  std::cerr << "log: " << m_Log0PAusuive << ", " << m_Log1PAusuive << "\n";
+  std::cerr << m_Log0PAusuive << ", " << m_Log1PAusuive << "\n";
+  std::cerr << "Total: (" << p0total << ", " << p1total << ")\n";
 }
 
 void Logistics::handleSplitTrainData(const char *buffer, int pid, int start,
@@ -214,7 +168,8 @@ void Logistics::handleSplitTrainData(const char *buffer, int pid, int start,
     x2 = buffer[2] - '0';
     x3 = buffer[3] - '0';
     x4 = buffer[4] - '0';
-    num = m_PW[x1][0] + m_PW[x2][1] + m_PW[x3][2] + m_PW[x4][3];
+    // num = m_PW[x1][0] + m_PW[x2][1] + m_PW[x3][2] + m_PW[x4][3];
+    num = m_PW[x2][1] + m_PW[x3][2];
     num *= x;
     buffer += 6;
     start += 6;
@@ -272,9 +227,9 @@ void Logistics::Train() {
   }
   for (auto &it : Threads) it.join();
   std::cerr << "* TrainData: (" << m_samples << ", " << m_features << ")\n";
-  std::cerr << "@ load train: ";
-  t.LogTime();
+  std::cerr << "@ train: ";
   this->doTrain();
+  t.LogTime();
 }
 
 void Logistics::handleSplitPredictData(const char *thBuffer, int startline,
@@ -294,7 +249,8 @@ void Logistics::handleSplitPredictData(const char *thBuffer, int startline,
         x2 = ptr[k + 2] - '0';
         x3 = ptr[k + 3] - '0';
         x4 = ptr[k + 4] - '0';
-        num = m_PW[x1][0] + m_PW[x2][1] + m_PW[x3][2] + m_PW[x4][3];
+        // num = m_PW[x1][0] + m_PW[x2][1] + m_PW[x3][2] + m_PW[x4][3];
+        num = m_PW[x2][1] + m_PW[x3][2];
         features[idx++] = num;
         if (idx == m_features) {
           break;
@@ -371,7 +327,6 @@ float Logistics::Dot(const Matrix::Mat1D &mat1, const Matrix::Mat1D &mat2) {
   return sum;
 }
 */
-
 int Logistics::doPredict(const Matrix::Mat1D &data) {
   float p1 = Dot(data, m_P1Vec) + m_Log1PAusuive;
   float p0 = Dot(data, m_P0Vec) + m_Log0PAusuive;
