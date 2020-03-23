@@ -1,36 +1,54 @@
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <algorithm>
+#include <cassert>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <numeric>
 #include <random>
 #include <sstream>
+#include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
+
 using namespace std;
 
-int pw[10];
+float pw[10];
 //矩阵操作
 struct Matrix {
-  typedef vector<double> Mat1;
-  typedef vector<vector<double> > Mat2;
+  typedef vector<float> Mat1;
+  typedef vector<vector<float> > Mat2;
 };
 void out(Matrix::Mat1 mat) {
+  std::cout << "{";
   for (auto &x : mat) {
     cout << x << " ";
   }
-  cout << "\n";
+  cout << "}\n";
 }
 void out(Matrix::Mat2 mat) {
+  std::cout << "[";
   for (auto &x : mat) {
     out(x);
   }
+  std::cout << "]\n";
 }
 //点乘
-static double Dot(const Matrix::Mat1 &mat1, const Matrix::Mat1 &mat2) {
+static float Dot(const Matrix::Mat1 &mat1, const Matrix::Mat1 &mat2) {
   int n = mat1.size();
-  double ans = 0;
+  float ans = 0;
   for (int i = 0; i < n; i++) {
     ans += mat1[i] * mat2[i];
   }
@@ -95,9 +113,9 @@ class LR {
  public:
   LR(string trainF, string testF, string predictOutF, string answerF);
   void init();
-  void predict();             //预测
-  void judge(string &file);   //判分
-  void getNumber(int start);  //获取训练、测试数据信息
+  int predict(Matrix::Mat1 &vt);  //预测
+  void judge();                   //判分
+  void getNumber(int start);      //获取训练、测试数据信息
 
  private:
   Matrix::Mat2 trainX;  //训练数据集
@@ -106,373 +124,258 @@ class LR {
   Matrix::Mat1 testY;   //预测的结果
   vector<int> answer;   //进行比对的答案
   Matrix::Mat1 pred;    //预测的sigmod结果
-  Matrix::Mat1 weight;  //权重矩阵
   string trainFile;
   string testFile;
   string answerFile;
   string predictOutFile;
 
  private:
-  double learningRate = 0.01;  //学习率
-  int iterations = 130;        //训练轮数
-  int feature = 0;             //特征数
-  int trainNum = 800;          //样本数
-  int YLabTrain = 0;           //样本中正标签
-  int NLabTrain = 0;           //样本中负标签
-  int YLabTest = 0;            //测试结果中正标签
-  int NLabTest = 0;            //测试结果中负标签
-  double totTime = 0;          //运行时间
-  char *m_Buffer;
-  std::vector<Matrix::Mat2> m_ThreadData;
+  int testLineSize = 6000;
+  int feature = 100;    //特征数
+  int trainNum = 3000;  //参与训练样本数
+  int YLabTrain = 0;    //测试结果中正标签
+  int NLabTrain = 0;    //测试结果中负标签
+  int YLabTest = 0;     //测试结果中正标签
+  int NLabTest = 0;     //测试结果中负标签
+  float totTime = 0;    //运行时间
+  float rho = 0;
+  float pLabel0;
+  float pLabel1;
+  vector<float> mu[2];
+  vector<int> trainLabel;
+  vector<float> delta;
 
  private:
-  void loadData(const string &file, Matrix::Mat2 &vt1, Matrix::Mat1 &vt2);
-  void writeWeight(Matrix::Mat1 &vt, string &file);
   void writeData(Matrix::Mat1 &vt, string &file);
-  void LoadChar(const vector<char> &c, Matrix::Mat2 &vt1, Matrix::Mat1 &vt2);
-  void changeWeight(Matrix::Mat1 &vt);
-  void NewloadData(const string &file, Matrix::Mat2 &vt1, Matrix::Mat1 &vt2);
-  void init_weight();
+  void loadTrainData(const string &file);
+  void loadTestData(const string &file, int &lineSize);
+  void LoadChar(const vector<char> &ch);
   void train();
-  int getLab(double &z);
-  double sigmod(double &x);
-  void handleThread(int pid, unsigned int left, unsigned int right);
+  void normalization(Matrix::Mat1 &vt, int type);
 };
 
-double LR::sigmod(double &x) { return 1.0 / (1.0 + exp(-x)); }
+inline void ShuffleVector(vector<int> &vt) {
+  unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
+  shuffle(vt.begin(), vt.end(), std::default_random_engine(seed));
+}
+
 LR::LR(string trainF, string testF, string predictOutF, string answerF) {
   trainFile = trainF;
   testFile = testF;
   predictOutFile = predictOutF;
   answerFile = answerF;
   init();
-  train();
-}
-
-void LR::getNumber(int start) {
-  YLabTest = 0;
-  YLabTrain = 0;
-  NLabTest = 0;
-  NLabTrain = 0;
-  cout << "================\n";
-  for (auto &x : trainY) {
-    if (x == 1) {
-      YLabTrain++;
-    } else
-      NLabTrain++;
-  }
-  cout << "================\n";
-  for (auto &x : testY) {
-    if (x > 0.5) {
-      YLabTest++;
-    } else
-      NLabTest++;
-  }
-  int end = clock();
-  totTime = (double)(end - start) / CLOCKS_PER_SEC;
-  cout << "================\n";
-  cout << "训练集样本数：" << trainNum << "\n";
-  cout << "训练集特征数：" << feature << "\n";
-  cout << "训练集正样本数：" << YLabTrain << "\n";
-  cout << "训练集负样本数：" << NLabTrain << "\n";
-  cout << "================\n";
-  cout << "测试集样本数：" << testY.size() << "\n";
-  cout << "测试集正样本数：" << YLabTest << "\n";
-  cout << "测试集负样本数：" << NLabTest << "\n";
-  cout << "运行时间：" << totTime << "s\n";
-  cout << "================\n";
-}
-
-void LR::init_weight() {
-  weight = Matrix::Mat1(feature, 1);
-  weight.emplace_back(0);
-  return;
-  int limit = sqrt(1.0 / feature) * 10000;
-  double p;
-  for (int i = 0; i < feature; i++) {
-    p = (rand() % (limit * 2) - limit) * 1.0 / 10000;
-    weight.emplace_back(p);
-  }
-  weight.emplace_back(0);
 }
 
 void LR::init() {
-  // cout << "开始初始化\n";
-  NewloadData(trainFile, trainX, trainY);
-  loadData(testFile, testX, testY);
-  // cout << trainX.size() << " " << testX.size() << "\n";
-  feature = trainX[0].size() - 1;
-  init_weight();
+  cout << "开始初始化\n";
+  int start = clock();
+  mu[0] = vector<float>(feature, 1);
+  mu[1] = vector<float>(feature, 1);
+  delta = vector<float>(2, 1);
+  trainLabel = vector<int>(2, 0);
+  loadTrainData(trainFile);
+  train();
+  loadTestData(testFile, testLineSize);
+  int end = clock();
+  cout << "Running Time: " << (float)(end - start) / CLOCKS_PER_SEC << " s\n";
 }
 
 //////////////////
 
-double Todouble(string &s) {
-  int n = s.size(), i = n - 1;
-  double ans = 0;
-  if (s[0] == '-') {
-    return 0;
-  } else if (s[0] == '0') {
-    while (i > 1) {
-      ans = ans + (s[i--] - '0');
-      ans /= 10;
+// double Todouble(string &s) {
+//     int n = s.size(), i = n - 1;
+//     double ans = 0;
+//     if (s[0] == '-') {
+//         return 0;
+//     } else if (s[0] == '0') {
+//         while (i > 1) {
+//             ans = ans + (s[i--] - '0');
+//             ans /= 10;
+//         }
+//         return ans;
+//     } else {
+//         return 1;
+//     }
+// }
+
+// void LR::loadTrainData(const string &file) {
+//     ifstream fin(file);
+//     vector<float> features;
+//     string line, temp;
+//     int label, num = 0;
+//     while (fin) {
+//         getline(fin, line);
+//         if (num == trainNum) {
+//             break;
+//         }
+//         if (line.empty()) {
+//             continue;
+//         }
+//         istringstream iss(line);
+//         features.clear();
+//         while (getline(iss, temp, ',')) {
+//             features.emplace_back(Todouble(temp));
+//         }
+//         label = features.back();
+//         features.pop_back();
+
+//         normalization(features, label);
+//         features.clear();
+//         num++;
+//     }
+//     fin.close();
+// }
+
+void LR::loadTrainData(const string &file) {
+  struct stat sb;
+  int fd = open(file.c_str(), O_RDONLY);
+  fstat(fd, &sb);
+  char *buffer = (char *)mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+  int r, id, now = 0, p = 0, label;
+  bool flag;
+  float num, sum;
+  Matrix::Mat1 features(feature);
+  ofstream fout(predictOutFile);
+  for (int i = 0; i < trainNum; ++i) {
+    id = 0;
+    num = 0;
+    r = 0;
+    flag = false;
+    sum = 0;
+    while (id < feature) {
+      if (buffer[now] == ',') {
+        if (flag) {
+          features[id] = 0 - num;
+        } else {
+          features[id] = num;
+        }
+        num = 0;
+        id++;
+        r = 0;
+        flag = false;
+      } else if (buffer[now] == '-') {
+        flag = true;
+      } else if (buffer[now] != '.') {
+        p = (buffer[now] - '0');
+        num += pw[r] * p;
+        r++;
+      }
+      now++;
     }
-    return ans;
-  } else {
-    return 1;
+    while (buffer[now + 1] != '\n') ++now;
+    label = buffer[now] - '0';
+    now += 2;
+    normalization(features, label);
   }
 }
-void LR::NewloadData(const string &file, Matrix::Mat2 &vt1, Matrix::Mat1 &vt2) {
-  ifstream fin(file);
-  vector<double> features;
-  string line, temp;
-  int label;
-  while (fin) {
-    getline(fin, line);
-    if (vt1.size() == trainNum) {
-      break;
+
+void LR::loadTestData(const string &file, int &lineSize) {
+  struct stat sb;
+  int fd = open(file.c_str(), O_RDONLY);
+  fstat(fd, &sb);
+  char *buffer = (char *)mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+  long long linenum = sb.st_size / lineSize;
+  int x1, x2, x3, x4, id;
+  long long initId;
+  float num;
+  Matrix::Mat1 features(feature);
+  ofstream fout(predictOutFile);
+  for (int i = 0; i < linenum; ++i) {
+    id = 0;
+    initId = (long long)i * lineSize;
+    for (int j = 0; j < lineSize; j += 6) {
+      x1 = buffer[initId + j] - '0';
+      x2 = buffer[initId + j + 2] - '0';
+      x3 = buffer[initId + j + 3] - '0';
+      x4 = buffer[initId + j + 4] - '0';
+      if (id < feature)
+        // features[id++] = x1 + (float)(x2 * 100 + x3 * 10 + x4) /
+        // 1000;
+        features[id++] = x1 * 1.0 + x2 * 0.1 + x3 * 0.01 + x4 * 0.001;
+      else
+        break;
     }
-    if (line.empty()) {
-      continue;
-    }
-    istringstream iss(line);
-    features.clear();
-    while (getline(iss, temp, ',')) {
-      features.emplace_back(Todouble(temp));
-    }
-    label = features.back();
-    features.pop_back();
-    features.emplace_back(1);
-    vt1.emplace_back(features);
-    vt2.emplace_back(label);
-    features.clear();
+    fout << predict(features) << "\n";
   }
-  fin.close();
+  fout.close();
 }
 
 ////////////////////
-
-void LR::LoadChar(const vector<char> &ch, Matrix::Mat2 &vt1,
-                  Matrix::Mat1 &vt2) {
-  bool ne = false, dot = false, one = false;
-  int r = 1;
-  double sum = 0, x;
-  Matrix::Mat1 features;
-  for (auto &c : ch) {
-    if (c == ',' || c == '\n') {
-      if (ne) {
-        sum = 0;
-        ne = false;
-      }
-      if (one) {
-        sum = 1;
-        one = false;
-      }
-      dot = false;
-      r = 1;
-      if (c == ',') {
-        features.emplace_back(sum);
-      } else {
-        features.emplace_back(sum);
-        features.emplace_back(1);
-        vt1.emplace_back(features);
-        features.clear();
-      }
-      sum = 0;
-    } else {
-      if (ne || one) {
-        continue;
-      }
-      if (c == '-') {
-        ne = true;
-        continue;
-      } else if (c == '.') {
-        dot = true;
-        continue;
-      }
-      x = c - '0';
-      if (!dot) {
-        if (c == '0')
-          sum = 0;
-        else
-          one = true;
-
-      } else {
-        sum += x / pw[r];
-        r++;
-      }
-    }
-  }
-}
-void LR::handleThread(int pid, unsigned int left, unsigned int right) {
-  Matrix::Mat1 features;
-  float PW[10][4] = {{0.0, 0.0, 0.0, 0.0},    {1.0, 0.1, 0.01, 0.001},
-                     {2.0, 0.2, 0.02, 0.002}, {3.0, 0.3, 0.03, 0.003},
-                     {4.0, 0.4, 0.04, 0.004}, {5.0, 0.5, 0.05, 0.005},
-                     {6.0, 0.6, 0.06, 0.006}, {7.0, 0.7, 0.07, 0.007},
-                     {8.0, 0.8, 0.08, 0.008}, {9.0, 0.9, 0.09, 0.009}};
-  int x1, x2, x3, x4;
-  double num;
-  for (unsigned int i = left; i < right; i += 6) {
-    x1 = m_Buffer[i] - '0';
-    x2 = m_Buffer[i + 2] - '0';
-    x3 = m_Buffer[i + 3] - '0';
-    x4 = m_Buffer[i + 4] - '0';
-    // num = x1 + x2 / 10 + x3 / 100 + x4 / 1000;
-    // num = PW[x1][0] + PW[x2][1] + PW[x3][2] + PW[x4][3];
-    num = x1 + (float)(x2 * 100 + x3 * 10 + x4) / 1000;
-
-    features.emplace_back(num);
-    if (m_Buffer[i + 5] == '\n') {
-      m_ThreadData[pid].emplace_back(features);
-      features.clear();
-    }
-  }
-}
-void LR::loadData(const string &file, Matrix::Mat2 &vt1, Matrix::Mat1 &vt2) {
-  ifstream fin(file, ios::binary);
-  unsigned int bufsize = fin.seekg(0, ios::end).tellg();
-  m_Buffer = new char[bufsize];
-  fin.seekg(0, ios::beg).read(m_Buffer, static_cast<streamsize>(bufsize));
-  fin.close();
-
-  Matrix::Mat1 features;
-  int p = 0;
-  int linesize = 0;
-  while (p < bufsize) {
-    double x1 = m_Buffer[p] - '0';
-    double x2 = m_Buffer[p + 2] - '0';
-    double x3 = m_Buffer[p + 3] - '0';
-    double x4 = m_Buffer[p + 4] - '0';
-    double num = x1 + x2 / 10 + x3 / 100 + x4 / 1000;
-    features.emplace_back(num);
-    if (m_Buffer[p + 5] == '\n') {
-      vt1.emplace_back(features);
-      features.clear();
-      linesize = p + 6;
-      break;
-    }
-    p += 6;
-  }
-
-  int nthread = 4;
-  m_ThreadData.resize(nthread);
-
-  int linenum = bufsize / linesize;
-  int blocksize = linenum / nthread;
-  int start = 1;
-  std::vector<std::thread> Thread(nthread);
-  for (int i = 0; i < nthread; i++) {
-    int end;
-    if (i == nthread - 1) {
-      end = linenum;
-    } else {
-      end = start + blocksize;
-    }
-    unsigned int l = start * linesize, r = end * linesize;
-    Thread[i] = std::thread(&LR::handleThread, this, i, l, r);
-    start += blocksize;
-  }
-  for (auto &it : Thread) {
-    it.join();
-  }
-  for (auto &it : m_ThreadData) {
-    vt1.insert(vt1.end(), it.begin(), it.end());
-  }
-}
-
-void LR::writeWeight(Matrix::Mat1 &vt, string &file) {
-  string line;
-  ofstream fout(file);
+void LR::normalization(Matrix::Mat1 &vt, int type) {
+  int id = 0;
+  trainLabel[type]++;
+  float sum = 0;
   for (auto &x : vt) {
-    fout << x << "\n";
+    mu[type][id] += x;
+    sum += x;
+    id++;
   }
-  fout.close();
+  delta[type] += sum;
 }
 
 void LR::train() {
-  // cout << "================\n";
-  // cout << "------开始训练------\n";
-  Matrix::Mat2 mat2 = T(trainX);
-  Matrix::Mat1 mat;
-  Matrix::Mat1 sig;
-  for (int i = 0; i < iterations; i++) {
-    // if (i % 20 == 0) cout << "第 " << i << " 轮迭代\n";
-    learningRate = 5.0 / (i + 1) + 0.01;
-    mat = trainX * weight;
-    for (auto &x : mat) {
-      x = sigmod(x);
-    }
-    sig = mat - trainY;
-    sig = mat2 * sig;
-    for (int j = 0; j <= feature; j++) {
-      weight[j] -= sig[j] * learningRate;
-    }
+  pLabel0 = 1.0 * trainLabel[0] / trainNum;
+  pLabel1 = 1.0 - pLabel0;
+  pLabel0 = log(pLabel0);
+  pLabel1 = log(pLabel1);
+  float al0 = 1.0 / delta[0], al1 = 1.0 / delta[1];
+  for (int i = 0; i < feature; i++) {
+    mu[0][i] = log(mu[0][i] * al0);
+    mu[1][i] = log(mu[1][i] * al1);
   }
-  // string modelweight = "modelweight.txt";
-  // writeWeight(weight, modelweight);
-  // cout << "----------------\n";
-  // cout << "----------------\n";
-  // cout << "------训练结束------\n";
-  // cout << "================\n";
+}
+int LR::predict(Matrix::Mat1 &vt) {
+  float sum0, sum1;
+  sum0 = Dot(vt, mu[0]);
+  sum1 = Dot(vt, mu[1]);
+  sum0 += pLabel0;
+  sum1 += pLabel1;
+  // std::cout << sum0 << ", " << sum1 << "\n";
+  if (sum1 > sum0) return 1;
+  return 0;
 }
 
-void LR::writeData(Matrix::Mat1 &vt, string &file) {
-  string line;
-  ofstream fout(file);
-  for (auto &x : vt) {
-    fout << (x > 0.5 ? 1 : 0) << "\n";
-  }
-  fout.close();
-}
-void LR::judge(string &file) {
-  ifstream fin(file);
-  int x, cor = 0, n = testY.size();
+void LR::judge() {
+  vector<int> answer, result;
+  int x, cor = 0;
+  ifstream fin(answerFile);
   while (fin) {
     fin >> x;
     answer.emplace_back(x);
   }
   fin.close();
-  for (int i = 0; i < testY.size(); i++) {
-    if ((testY[i] > 0.5 ? 1 : 0) == answer[i]) cor++;
+  ifstream fin2(predictOutFile);
+  while (fin2) {
+    fin2 >> x;
+    result.emplace_back(x);
   }
-  cout << "================\n";
-  cout << "预测准确率为: " << cor * 1.0 / n << "\n";
-  cout << "================\n";
-}
-void LR::predict() {
-  testY = testX * weight;
-  for (auto &x : testY) {
-    x = sigmod(x);
+  fin2.close();
+  for (int i = 0; i < answer.size(); i++) {
+    if (answer[i] == result[i]) cor++;
   }
-  writeData(testY, predictOutFile);
+  cout << "准确率: " << 1.0 * cor / answer.size() << "\n";
 }
-
 int main(int argc, char *argv[]) {
-  srand((unsigned)time(NULL));
-  pw[0] = 1;
-  for (int i = 1; i < 5; i++) {
-    pw[i] = pw[i - 1] * 10;
-  }
-  // int start_time = clock();
-  // string trainFile = "../data/train_data.txt";
-  // string testFile = "../data/test_data.txt";
-  // string predictFile = "../data/result.txt";
-  // string answerFile = "../data/answer.txt";
+  std::cout << std::fixed << std::setprecision(3);
 
-  string trainFile = "/data/train_data.txt";
-  string testFile = "/data/test_data.txt";
-  string predictFile = "/projects/student/result.txt";
-  string answerFile = "/projects/student/answer.txt";
+  // srand((unsigned)time(NULL));
+  pw[0] = 1;
+  for (int i = 1; i < 8; i++) {
+    pw[i] = pw[i - 1] * 0.1;
+  }
+  string trainFile = "../data/train_data.txt";
+  string testFile = "../data/test_data.txt";
+  string predictFile = "../data/result.txt";
+  string answerFile = "../data/answer.txt";
+
+  // string trainFile = "/data/train_data.txt";
+  // string testFile = "/data/test_data.txt";
+  // string predictFile = "/projects/student/result.txt";
+  // string answerFile = "/projects/student/answer.txt";
 
   LR logist(trainFile, testFile, predictFile, answerFile);
-  // cout << "================\n";
-  // cout << "开始预测\n";
-  logist.predict();
-
-  // cout << "预测完成\n";
-  // cout << "================\n";
   // logist.getNumber(start_time);
-  // logist.judge(answerFile);
+  logist.judge();
   return 0;
 }

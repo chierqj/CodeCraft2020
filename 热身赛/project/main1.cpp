@@ -1,347 +1,443 @@
+// #include <arm_neon.h>
 #include <fcntl.h>
-#include <sys/ipc.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
-#include <sys/shm.h>
 #include <sys/stat.h>
-#include <sys/types.h>
-#include <sys/wait.h>
 #include <unistd.h>
+#include <algorithm>
+#include <cassert>
+#include <chrono>
 #include <cmath>
-#include <cstdlib>
-#include <ctime>
+#include <cstdio>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
-#include <memory>
+#include <numeric>
+#include <random>
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
-using namespace std;
-/***********************************************/
-//#define TEST
-#define trainFlie "/data/train_data.txt"
-#define testFile "/data/test_data.txt"
-#define resultFile "/projects/student/result.txt"
-/***********************************************/
-#define M 7200
-#define N 1000
-#define NT 1000
-#define TestNum 20000
-char answer[50000];
-int disposeCount = 0;
-int trainDataSet[M][N];
-int trainDataSet_lab[M];
-int testData[TestNum][N];
 
-#ifdef TEST
-string predictFile = "/projects/student/result.txt";
-string answerFile = "/projects/student/answer.txt";
-#endif
-
-bool loadAnswerData(string awFile, vector<int> &awVec) {
-  ifstream infile(awFile.c_str());
-  while (infile) {
-    string line;
-    int aw;
-    getline(infile, line);
-    if (line.size() > 0) {
-      stringstream sin(line);
-      sin >> aw;
-      awVec.push_back(aw);
-    }
+class ScopeTime {
+ public:
+  ScopeTime() : m_begin(std::chrono::high_resolution_clock::now()) {}
+  void LogTime() const {
+    auto t = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::high_resolution_clock::now() - m_begin);
+    float elapsed = (float)(t.count() * 1.0) / 1000.0;
+    std::cerr << elapsed << "s\n";
   }
-  infile.close();
-  return true;
+
+ private:
+  std::chrono::time_point<std::chrono::high_resolution_clock> m_begin;
+};
+
+struct Matrix {
+  typedef std::vector<float> Mat1D;
+  typedef std::vector<std::vector<float>> Mat2D;
+};
+std::ostream &operator<<(std::ostream &os, const Matrix::Mat1D &mat) {
+  os << "{";
+  for (int i = 0; i < mat.size(); ++i) {
+    if (i != 0) os << ",";
+    os << mat[i];
+  }
+  os << "}";
+  return os;
 }
-bool loadTestData(int batch, char *data, long size)  // 0.6s-2000
-{
-  long i = 0;
-  char *p;
-  long n = 0, m = 0;
-  long third = size / 3;
-  long twoThird = size * 2 / 3;
-  char *dataCopy = data;
-  while (*(data + third) != '\n') {
-    third++;
+std::ostream &operator<<(std::ostream &os, const Matrix::Mat2D &mat) {
+  os << "[";
+  for (auto &it : mat) {
+    os << it;
   }
-  third++;
-  while (*(data + twoThird) != '\n') {
-    twoThird++;
-  }
-  twoThird++;
-  if (batch == 1) {
-    data = data + third;
-  }
-  if (batch == 2) {
-    data = data + twoThird;
-  }
-  while (true) {
-    p = data + i;
-    if (n >= N) {
-      m++;
-      disposeCount++;
-      n = 0;
-      if ((batch == 0 && (p - dataCopy) >= third) ||
-          (batch == 1 && (p - dataCopy) >= twoThird) ||
-          (batch == 2 && ((p)-dataCopy) >= size)) {
-        break;
+  os << "]";
+  return os;
+}
+
+class Logistics {
+ private:
+  const float m_PW[10][4] = {{0.0, 0.0, 0.0, 0.0},    {1.0, 0.1, 0.01, 0.001},
+                             {2.0, 0.2, 0.02, 0.002}, {3.0, 0.3, 0.03, 0.003},
+                             {4.0, 0.4, 0.04, 0.004}, {5.0, 0.5, 0.05, 0.005},
+                             {6.0, 0.6, 0.06, 0.006}, {7.0, 0.7, 0.07, 0.007},
+                             {8.0, 0.8, 0.08, 0.008}, {9.0, 0.9, 0.09, 0.009}};
+
+ private:
+  std::vector<int> m_Answer;
+  std::string m_trainFile;
+  std::string m_predictFile;
+  std::string m_resultFile;
+  std::string m_answerFile;
+  int m_samples = 0;
+  int m_features = 800;
+  const int TRAIN_NUM = 4000;  // 样本个数
+  const int NTHREAD = 4;       // 线程个数
+
+  std::vector<Matrix::Mat2D> m_ThreadTrainData;
+  std::vector<std::vector<int>> m_ThreadLabel;
+  std::vector<int> m_ThreadCur;
+  std::vector<Matrix::Mat1D> m_ThreadSum;
+  Matrix::Mat1D m_Weight;
+
+  Matrix::Mat1D m_P0Vec;
+  Matrix::Mat1D m_P1Vec;
+  float m_Log1PAusuive = 0;
+  float m_Log0PAusuive = 0;
+
+ public:
+  Logistics(const std::string &train, const std::string &predict,
+            const std::string &result, const std::string &answer)
+      : m_trainFile(train),
+        m_predictFile(predict),
+        m_resultFile(result),
+        m_answerFile(answer) {}
+
+  void Train();
+  void Predict();
+  void WriteAnswer();
+  void Score();
+
+ private:
+  float Dot(const Matrix::Mat1D &mat1, const Matrix::Mat1D &mat2);
+  void Add(Matrix::Mat1D &mat1, const Matrix::Mat1D &mat2);
+  int doPredict(const Matrix::Mat1D &data);
+  void handleSplitPredictData(const char *thBuffer, int startline, int endline);
+  void handleSplitTrainData(const char *thBuffer, int pid, int start, int end);
+  void doTrain();
+  inline float sigmod(float x);
+};
+/***********************************************************
+***************************文件处理**************************
+************************************************************/
+inline float Logistics::sigmod(float x) { return 1.0 / (1 + std::exp(-x)); }
+/*
+void Logistics::doTrain() {
+  ScopeTime t;
+
+  int batch = 8, items = m_samples / batch;
+  float rate = 0.02;
+  float beta1 = 0.9;
+  float beta2 = 0.999;
+  float epsilon = 1e-8;
+
+  m_Weight = Matrix::Mat1D(m_features, 0.25);
+  Matrix::Mat1D Vdw(m_features, 0);
+  Matrix::Mat1D Sdw(m_features, 0);
+
+  for (int epoch = 0; epoch < 10; ++epoch) {
+    int start = 0;
+    for (int item = 0; item < items; ++item, start += batch) {
+      int end = start + batch;
+
+      Matrix::Mat1D grads(m_features, 0);
+      for (int i = start; i < end; ++i) {
+        float sgd = Dot(m_TrainData[i], m_Weight);
+        sgd = sigmod(sgd) - m_Label[i];
+        for (int j = 0; j < m_features; ++j) {
+          grads[j] += sgd * m_TrainData[i][j];
+        }
+      }
+      for (int i = 0; i < m_features; ++i) {
+        float gsv = grads[i] / (float)batch;
+        Vdw[i] = beta1 * Vdw[i] + (1 - beta1) * gsv;
+        Sdw[i] = beta2 * Sdw[i] + (1 - beta2) * gsv * gsv;
+        float cat_vdw = Vdw[i] / (1 - std::pow(beta1, epoch + 1));
+        float cat_sdw = Sdw[i] / (1 - std::pow(beta2, epoch + 1));
+        m_Weight[i] -= rate * (cat_vdw / std::sqrt(cat_sdw) + epsilon);
       }
     }
-
-    if (*p == '-') {
-      testData[m][n] = ('0' - *(p + 3)) * 100 + 10 * ('0' - *(p + 4));
-      i += 7;
-    } else {
-      testData[m][n] = (*(p + 2) - '0') * 100 + 10 * (*(p + 3) - '0');
-      i += 6;
-    }
-    n++;
   }
-  return true;
+  // std::sort(m_Weight.begin(), m_Weight.end());
+  std::cerr << "@ train: ";
+  t.LogTime();
 }
-int one = 0;
-int zero = 0;
-void loadTrainData(int *mean0Ptr, int *mean1Ptr) {
-  int Now = 0;
-  long n = 0, m = 0;
-  long i = 0;
-  char *p;
-  char *data = NULL;
-  int fd = open(trainFlie, O_RDONLY);
-  long size = lseek(fd, 0, SEEK_END);
-  data = (char *)mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
-  data = data + size - 2;
-  Now = *(data) - '0';
-  if (Now) {
-    one++;
-  } else {
-    zero++;
-  }
-  i += 2;
-  while (i < size) {
-    p = data - i;
-    if (n >= N) {
-      m++;
-      Now = *(p) - '0';
-      if (Now) {
-        one++;
+*/
+void Logistics::doTrain() {
+  float p0total = 1.0, p1total = 1.0;
+  int positive = 0;
+  m_P0Vec = Matrix::Mat1D(m_features, 1.0);
+  m_P1Vec = Matrix::Mat1D(m_features, 1.0);
+  int total = 0;
+
+  for (int pid = 0; pid < NTHREAD; ++pid) {
+    const auto &train = m_ThreadTrainData[pid];
+    const auto &label = m_ThreadLabel[pid];
+    const auto &sum = m_ThreadSum[pid];
+    int up = m_ThreadCur[pid];
+    for (int i = 0; i < up; ++i) {
+      if (label[i] == 1) {
+        p1total += sum[i];
+        Add(m_P1Vec, train[i]);
+        ++positive;
       } else {
-        zero++;
+        p0total += sum[i];
+        Add(m_P0Vec, train[i]);
       }
-      n = 0;
-      i += 2;
-      p = data - i;
-      if (m >= M) {
+      ++total;
+      if (total >= m_samples) {
         break;
       }
     }
-
-    if (*(p - 5) == '-') {
-      if (Now)
-        mean1Ptr[N - 1 - n] += ('0' - *(p - 1)) * 10 + 100 * ('0' - *(p - 2));
-      else
-        mean0Ptr[N - 1 - n] += ('0' - *(p - 1)) * 10 + 100 * ('0' - *(p - 2));
-      i += 7;
-    } else {
-      if (Now)
-        mean1Ptr[N - 1 - n] += (*(p - 1) - '0') * 10 + 100 * (*(p - 2) - '0');
-      else
-        mean0Ptr[N - 1 - n] += (*(p - 1) - '0') * 10 + 100 * (*(p - 2) - '0');
-      i += 6;
+    if (total >= m_samples) {
+      break;
     }
-    n++;
   }
-  for (int i = 0; i < N; i++) {
-    mean1Ptr[i] /= one;
-    mean0Ptr[i] /= zero;
+  float pausuive = (float)(positive) / (float)m_samples;
+  m_Log1PAusuive = std::log(pausuive);
+  m_Log0PAusuive = std::log(1.0 - pausuive);
+  for (auto &it : m_P0Vec) it = std::log(it / p0total);
+  for (auto &it : m_P1Vec) it = std::log(it / p1total);
+
+  std::cerr << m_P0Vec << "\n";
+  std::cerr << m_P1Vec << "\n";
+  std::cerr << "delta: " << p0total << ", " << p1total << "\n";
+  std::cerr << "log: " << m_Log0PAusuive << ", " << m_Log1PAusuive << "\n";
+}
+
+void Logistics::handleSplitTrainData(const char *buffer, int pid, int start,
+                                     int end) {
+  int pidx = 0, idx = 0;
+  int x1, x2, x3, x4;
+  float num, sum = 0;
+  Matrix::Mat1D features(m_features);
+  int delta = (1000 - m_features) * 6;
+  buffer += start;
+  while (start < end) {
+    int x = 1;
+    if (buffer[0] == '-') ++buffer, x = -1, ++start;
+    x1 = buffer[0] - '0';
+    x2 = buffer[2] - '0';
+    x3 = buffer[3] - '0';
+    x4 = buffer[4] - '0';
+    num = m_PW[x1][0] + m_PW[x2][1] + m_PW[x3][2] + m_PW[x4][3];
+    num *= x;
+    buffer += 6;
+    start += 6;
+
+    features[idx++] = num;
+    sum += num;
+    if (idx == m_features) {
+      buffer += delta;
+      start += delta;
+      while (buffer[1] != '\n') ++buffer, ++start;
+      int label = buffer[0] - '0';
+      m_ThreadTrainData[pid][pidx] = features;
+      m_ThreadLabel[pid][pidx] = label;
+      m_ThreadSum[pid][pidx] = sum;
+      buffer += 2;
+      start += 2;
+      ++pidx;
+      idx = 0;
+      sum = 0;
+    }
   }
+  m_ThreadCur[pid] = pidx;
+}
+
+void Logistics::Train() {
+  ScopeTime t;
+  m_samples = TRAIN_NUM;
+
+  int fd = open(m_trainFile.c_str(), O_RDONLY);
+  long long bufsize = m_samples * 7000;
+  char *buffer = (char *)mmap(NULL, bufsize, PROT_READ, MAP_PRIVATE, fd, 0);
+
+  int maxItem = m_samples / NTHREAD + 300;
+  std::vector<std::thread> Threads(NTHREAD);
+  m_ThreadTrainData =
+      std::vector<Matrix::Mat2D>(NTHREAD, Matrix::Mat2D(maxItem));
+  m_ThreadLabel =
+      std::vector<std::vector<int>>(NTHREAD, std::vector<int>(maxItem));
+  m_ThreadCur = std::vector<int>(NTHREAD, 0);
+  m_ThreadSum = std::vector<Matrix::Mat1D>(NTHREAD, Matrix::Mat1D(maxItem));
+
+  long long block = bufsize / NTHREAD;
+  long long start = 0;
+  for (int i = 0; i < NTHREAD; ++i) {
+    long long end = std::min(bufsize - 1, start + block);
+    if (i == NTHREAD - 1) {
+      while (buffer[end] != '\n') --end;
+    } else {
+      while (buffer[end] != '\n') ++end;
+      ++end;
+    }
+    Threads[i] = std::thread(&Logistics::handleSplitTrainData, this, buffer, i,
+                             start, end);
+    start = end;
+  }
+  for (auto &it : Threads) it.join();
+  std::cerr << "* TrainData: (" << m_samples << ", " << m_features << ")\n";
+  std::cerr << "@ load train: ";
+  t.LogTime();
+  this->doTrain();
+}
+
+void Logistics::handleSplitPredictData(const char *thBuffer, int startline,
+                                       int endline) {
+  int linesize = 6000;
+  long long move = startline * linesize;
+  Matrix::Mat1D features(m_features);
+  int x1, x2, x3, x4;
+  int idx;
+  float num;
+  for (int i = startline; i < endline; ++i, move += linesize) {
+    idx = 0;
+    for (int j = 0; j < linesize; j += 60) {
+      const char *ptr = &thBuffer[move + j];
+      for (int k = 0; k < 60; k += 6) {
+        x1 = ptr[k] - '0';
+        x2 = ptr[k + 2] - '0';
+        x3 = ptr[k + 3] - '0';
+        x4 = ptr[k + 4] - '0';
+        num = m_PW[x1][0] + m_PW[x2][1] + m_PW[x3][2] + m_PW[x4][3];
+        features[idx++] = num;
+        if (idx == m_features) {
+          break;
+        }
+      }
+      if (idx == m_features) {
+        break;
+      }
+    }
+    m_Answer[i] = this->doPredict(features);
+  }
+}
+
+void Logistics::Predict() {
+  ScopeTime t;
+  // 读文件
+  struct stat sb;
+  int fd = open(m_predictFile.c_str(), O_RDONLY);
+  fstat(fd, &sb);
+  char *buffer = (char *)mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+
+  int linesize = 6000;
+  long long linenum = sb.st_size / linesize;
+  m_Answer.resize(linenum);
+
+  // 创建线程
+  int start = 0, block = linenum / NTHREAD;
+  std::vector<std::thread> Threads(NTHREAD);
+  for (int i = 0; i < NTHREAD; ++i) {
+    int end = (i == NTHREAD - 1 ? linenum : start + block);
+    Threads[i] = std::thread(&Logistics::handleSplitPredictData, this, buffer,
+                             start, end);
+    start += block;
+  }
+  for (auto &it : Threads) it.join();
+
+  std::cerr << "@ predict: ";
+  t.LogTime();
+}
+
+/***********************************************************
+***************************训练相关**************************
+************************************************************/
+
+void Logistics::Add(Matrix::Mat1D &mat1, const Matrix::Mat1D &mat2) {
+  for (int i = 0; i < m_features; i += 8) {
+    float *ptr1 = &mat1[i];
+    const float *ptr2 = &mat2[i];
+    for (int k = 0; k < 8; ++k) {
+      ptr1[k] += ptr2[k];
+    }
+  }
+}
+float Logistics::Dot(const Matrix::Mat1D &mat1, const Matrix::Mat1D &mat2) {
+  float ans = 0.0;
+  for (int i = 0; i < m_features; ++i) {
+    ans += mat1[i] * mat2[i];
+  }
+  return ans;
+}
+/*
+float Logistics::Dot(const Matrix::Mat1D &mat1, const Matrix::Mat1D &mat2) {
+  const float *p_vec1 = &mat1[0];
+  const float *p_vec2 = &mat2[0];
+  float sum = 0;
+  float32x4_t sum_vec = vdupq_n_f32(0), left_vec, right_vec;
+  for (int i = 0; i < m_features; i += 4) {
+    left_vec = vld1q_f32(p_vec1 + i);
+    right_vec = vld1q_f32(p_vec2 + i);
+    sum_vec = vmlaq_f32(sum_vec, left_vec, right_vec);
+  }
+  float32x2_t r = vadd_f32(vget_high_f32(sum_vec), vget_low_f32(sum_vec));
+  sum += vget_lane_f32(vpadd_f32(r, r), 0);
+  return sum;
+}
+*/
+
+int Logistics::doPredict(const Matrix::Mat1D &data) {
+  float p1 = Dot(data, m_P1Vec) + m_Log1PAusuive;
+  float p0 = Dot(data, m_P0Vec) + m_Log0PAusuive;
+  return (p1 > p0 ? 1 : 0);
+  // float value = sigmod(Dot(data, m_Weight));
+  // return (value > 0.5 ? 1 : 0);
+}
+
+void Logistics::WriteAnswer() {
+  ScopeTime t;
+  FILE *fp = fopen(m_resultFile.c_str(), "w");
+  for (auto &label : m_Answer) {
+    char c[2];
+    c[0] = label + '0';
+    c[1] = '\n';
+    fwrite(c, 2, 1, fp);
+  }
+  fclose(fp);
+  std::cerr << "@ write result: ";
+  t.LogTime();
+}
+void Logistics::Score() {
+  std::ifstream fin(m_answerFile);
+  assert(fin);
+  int x, index = 0;
+  float ac = 0, tol = 0;
+  while (fin >> x) {
+    if (x == m_Answer[index++]) {
+      ++ac;
+    }
+    ++tol;
+  }
+  fin.close();
+  std::cerr << "@ threads: " << NTHREAD << "\n";
+  std::cerr << "@ accuracy: " << ac * 100 / tol << "%\n";
 }
 
 int main() {
-#ifdef TEST
-  time_t clk[10];
-  double times;
-  clk[0] = clock();
-  vector<int> answerVec;
-  vector<int> predictVec;
-  int correctCount;
-  double accurate;
+  std::cerr << std::fixed << std::setprecision(3);
+  std::ios_base::sync_with_stdio(false);
+  std::cin.tie(nullptr);
+
+  const std::string TRAIN = "/data/train_data.txt";
+  const std::string PREDICT = "/data/test_data.txt";
+  const std::string RESULT = "/projects/student/result.txt";
+  const std::string ANSWER = "/projects/student/answer.txt";
+  const std::string LOCAL_TRAIN = "../data/train_data.txt";
+  const std::string LOCAL_PREDICT = "../data/test_data.txt";
+  const std::string LOCAL_RESULT = "../data/result.txt";
+  const std::string LOCAL_ANSWER = "../data/answer.txt";
+
+  ScopeTime t;
+
+#ifdef LOCAL
+  Logistics lr(LOCAL_TRAIN, LOCAL_PREDICT, LOCAL_RESULT, LOCAL_ANSWER);
+  lr.Train();
+  lr.Predict();
+  lr.WriteAnswer();
+  lr.Score();
+#else
+  Logistics lr(TRAIN, PREDICT, RESULT, ANSWER);
+  lr.Train();
+  lr.Predict();
+  lr.WriteAnswer();
 #endif
-
-  pid_t pid_loadTrain, pid_loadTest1, pid_loadTest2;
-  int mean0Shm = shmget(IPC_PRIVATE, N * sizeof(int), IPC_CREAT | 0600);
-  int mean1Shm = shmget(IPC_PRIVATE, N * sizeof(int), IPC_CREAT | 0600);
-
-  pid_loadTrain = fork();
-
-  int *mean0Ptr = (int *)shmat(mean0Shm, NULL, 0);
-  int *mean1Ptr = (int *)shmat(mean1Shm, NULL, 0);
-  int i = 0, j = 0, k = 0, l = 0;
-
-  if (!pid_loadTrain) {
-    /***********************children0*********************************/
-    /*loadTrainData-start*/
-    loadTrainData(mean0Ptr, mean1Ptr);
-/*loadTrainData-end*/
-#ifdef TEST
-    clk[1] = clock();
-    cout << "children0 " << double(clk[1] - clk[0]) / CLOCKS_PER_SEC << endl;
-#endif
-    exit(0);
-  } else {
-    char *data = NULL;
-    int fd = open(testFile, O_RDONLY);
-    long size = lseek(fd, 0, SEEK_END);
-    data = (char *)mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
-
-    int Children1[2];
-    int Children2[2];
-    pipe(Children1);
-    pipe(Children2);
-    int result1Shm =
-        shmget(IPC_PRIVATE, 2 * TestNum * sizeof(char), IPC_CREAT | 0600);
-    int FlagShm = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | 0600);
-
-    pid_loadTest1 = fork();
-
-    char *result1Ptr = (char *)shmat(result1Shm, NULL, 0);
-    int *FlagPtr = (int *)shmat(FlagShm, NULL, 0);
-    if (!pid_loadTest1) {
-      /***********************children1*********************************/
-      loadTestData(1, data, size);
-      int Delay = 0;
-      close(Children1[1]);
-      char line[3] = "NO";
-      while (true) {
-        int n = read(Children1[0], line, 3);
-        if (n == 2) break;
-      }
-      int distance = 0;
-      int j;
-      for (j = 0; j < disposeCount; j++) {
-        distance = 0;
-
-        for (int i = 0; i < N; i++) {
-          distance +=
-              (testData[j][i] + testData[j][i] - mean0Ptr[i] - mean1Ptr[i]) *
-              (mean0Ptr[i] - mean1Ptr[i]);
-        }
-        result1Ptr[2 * j] = distance >= 0 ? '0' : '1';
-        result1Ptr[2 * j + 1] = '\n';
-      }
-      result1Ptr[2 * disposeCount] = 0;
-#ifdef TEST
-      clk[1] = clock();
-      cout << "children1 " << double(clk[1] - clk[0]) / CLOCKS_PER_SEC << endl;
-#endif
-      exit(0);
-    } else {
-      int result2Shm =
-          shmget(IPC_PRIVATE, 2 * TestNum * sizeof(char), IPC_CREAT | 0600);
-      /***********************children2*********************************/
-
-      pid_loadTest2 = fork();
-
-      char *result2Ptr = (char *)shmat(result2Shm, NULL, 0);
-      if (!pid_loadTest2) {
-        loadTestData(2, data, size);
-        int Delay = 0;
-        close(Children2[1]);
-        char line[2];
-        while (true) {
-          int n = read(Children2[0], line, 2);
-          if (n == 2) break;
-        }
-
-        int distance = 0;
-        int j;
-        for (j = 0; j < disposeCount; j++) {
-          distance = 0;
-          for (int i = 0; i < N; i++) {
-            distance +=
-                (testData[j][i] + testData[j][i] - mean0Ptr[i] - mean1Ptr[i]) *
-                (mean0Ptr[i] - mean1Ptr[i]);
-          }
-          result2Ptr[2 * j] = distance >= 0 ? '0' : '1';
-          result2Ptr[2 * j + 1] = '\n';
-        }
-        result2Ptr[2 * disposeCount] = 0;
-#ifdef TEST
-        clk[1] = clock();
-        cout << "children2 " << double(clk[1] - clk[0]) / CLOCKS_PER_SEC
-             << endl;
-#endif
-        exit(0);
-      } else {
-        loadTestData(0, data, size);
-
-        waitpid(pid_loadTrain, NULL, 0);
-        close(Children1[0]);
-        close(Children2[0]);
-        write(Children2[1], "O", 2);
-        write(Children1[1], "O", 2);
-
-        int distance = 0;
-        FILE *fp = fopen(resultFile, "wt");
-        int j = 0;
-        for (j = 0; j < disposeCount; j++) {
-          distance = 0;
-          for (int i = 0; i < N; i++) {
-            distance +=
-                (testData[j][i] + testData[j][i] - mean0Ptr[i] - mean1Ptr[i]) *
-                (mean0Ptr[i] - mean1Ptr[i]);
-          }
-          answer[2 * j] = distance >= 0 ? '0' : '1';
-          answer[2 * j + 1] = '\n';
-        }
-        waitpid(pid_loadTest1, NULL, 0);
-        j = 0;
-        while (true) {
-          if (result1Ptr[j] == 0) break;
-          answer[2 * disposeCount + j] = result1Ptr[j];
-          j++;
-        }
-        int k = 0;
-        waitpid(pid_loadTest2, NULL, 0);
-        while (true) {
-          answer[2 * disposeCount + j] = result2Ptr[k];
-          if (result2Ptr[k] == 0) break;
-          k++;
-          j++;
-        }
-        fputs(answer, fp);
-        fclose(fp);
-#ifdef TEST
-        clk[1] = clock();
-        cout << "parents" << double(clk[1] - clk[0]) / CLOCKS_PER_SEC << endl;
-#endif
-      }
-    }
-#ifdef TEST
-    clk[5] = clock();
-#endif
-
-#ifdef TEST
-    loadAnswerData(answerFile, answerVec);
-    loadAnswerData(predictFile, predictVec);
-    cout << "test data set size is " << predictVec.size() << endl;
-    correctCount = 0;
-    for (int j = 0; j < predictVec.size(); j++) {
-      if (j < answerVec.size()) {
-        if (answerVec[j] == predictVec[j]) {
-          correctCount++;
-        }
-      } else {
-        cout << "answer size less than the real predicted value" << endl;
-      }
-    }
-    accurate = ((double)correctCount) / answerVec.size();
-    cout << "the prediction accuracy is " << accurate << endl;
-#endif
-  }
-#ifdef TEST
-  times = double(clk[5] - clk[0]) / CLOCKS_PER_SEC;
-  cout << "all:" << times << endl;
-#endif
+  std::cerr << "@ total time: ";
+  t.LogTime();
   return 0;
 }

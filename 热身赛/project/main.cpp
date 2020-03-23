@@ -11,7 +11,6 @@
 #include <sstream>
 #include <string>
 #include <thread>
-#include <unordered_map>
 #include <vector>
 
 class ScopeTime {
@@ -21,7 +20,7 @@ class ScopeTime {
     auto t = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::high_resolution_clock::now() - m_begin);
     float elapsed = (float)(t.count() * 1.0) / 1000.0;
-    std::cerr << elapsed << "s\n";
+    // std::cerr << elapsed << "s\n";
   }
 
  private:
@@ -29,8 +28,8 @@ class ScopeTime {
 };
 
 struct Matrix {
-  typedef std::vector<int> Mat1D;
-  typedef std::vector<std::vector<int>> Mat2D;
+  typedef std::vector<int32_t> Mat1D;
+  typedef std::vector<std::vector<int32_t>> Mat2D;
 };
 std::ostream &operator<<(std::ostream &os, const Matrix::Mat1D &mat) {
   os << "{";
@@ -65,17 +64,18 @@ class Logistics {
   void WriteAnswer();
   void Score();
 
- private:
-  int doPredict(const Matrix::Mat1D &data);
-
- private:
-  const int m_samples = 6000;
-  const int m_features = 1000;
+ public:
+  //  6400 912 79%
+  int m_samples = 6300;
+  int m_features = 1000;
   const int NTHREAD = 4;  // 线程个数
 
  private:
-  std::vector<Matrix::Mat1D> m_MeanLabel;
-  Matrix::Mat1D m_CountLabel;
+  Matrix::Mat1D m_MeanLabel[2];
+  int m_CountLabel[2];
+
+  Matrix::Mat1D m_PredictSum;
+  Matrix::Mat1D m_PredictDelta;
   Matrix::Mat1D m_Answer;
 
  private:
@@ -86,13 +86,16 @@ class Logistics {
 };
 
 void Logistics::InitData() {
-  m_MeanLabel = Matrix::Mat2D(2, Matrix::Mat1D(m_features, 0));
-  m_CountLabel = Matrix::Mat1D(2, 0);
+  m_MeanLabel[0] = Matrix::Mat1D(m_features, 0);
+  m_MeanLabel[1] = Matrix::Mat1D(m_features, 0);
+  m_CountLabel[0] = 0;
+  m_CountLabel[1] = 0;
+
+  m_PredictSum = Matrix::Mat1D(20000, 0);
+  m_PredictDelta = Matrix::Mat1D(20000, 0);
   m_Answer = Matrix::Mat1D(20000, 0);
 }
 void Logistics::Train() {
-  ScopeTime t;
-
   std::vector<Matrix::Mat2D> threadSum(
       NTHREAD, Matrix::Mat2D(2, Matrix::Mat1D(m_features, 0)));
   Matrix::Mat2D threadCount(NTHREAD, Matrix::Mat1D(2, 0));
@@ -163,38 +166,28 @@ void Logistics::Train() {
       m_MeanLabel[label][i] += num;
     }
   }
+  fin.close();
+
   for (int i = 0; i < m_features; ++i) {
     m_MeanLabel[0][i] /= m_CountLabel[0];
     m_MeanLabel[1][i] /= m_CountLabel[1];
+    m_PredictSum[i] = (m_MeanLabel[1][i] + m_MeanLabel[0][i]);
+    m_PredictDelta[i] = (m_MeanLabel[0][i] - m_MeanLabel[1][i]);
   }
-
-  fin.close();
-  std::cerr << "@ train: ";
-  t.LogTime();
-}
-int Logistics::doPredict(const Matrix::Mat1D &data) {
-  int dis = 0;
-  for (int i = 0; i < m_features; ++i) {
-    dis += (data[i] - m_MeanLabel[1][i]) * (data[i] - m_MeanLabel[1][i]) -
-           (data[i] - m_MeanLabel[0][i]) * (data[i] - m_MeanLabel[0][i]);
-  }
-  return dis < 0 ? 1 : 0;
 }
 void Logistics::Predict() {
-  ScopeTime t;
-
   auto foo = [&](int start, int end) {
     std::ifstream thfin(m_predictFile);
     thfin.seekg((long long)start * 6000L, std::ios::beg);
     std::string line;
-    Matrix::Mat1D features(m_features);
     while (start < end && std::getline(thfin, line)) {
       int pos = 0;
+      int distance = 0;
       for (int i = 0; i < m_features; ++i, pos += 6) {
-        int num = (line[pos + 2] - '0') * 100 + (line[pos + 3] - '0') * 10;
-        features[i] = num;
+        int num = (line[pos + 2] - '0') * 200 + (line[pos + 3] - '0') * 20;
+        distance += (num - m_PredictSum[i]) * m_PredictDelta[i];
       }
-      m_Answer[start++] = doPredict(features);
+      m_Answer[start++] = (distance < 0 ? 1 : 0);
     }
   };
 
@@ -212,11 +205,8 @@ void Logistics::Predict() {
   for (auto &it : Threads) it.join();
 
   fin.close();
-  std::cerr << "@ predict: ";
-  t.LogTime();
 }
 void Logistics::WriteAnswer() {
-  ScopeTime t;
   FILE *fp = fopen(m_resultFile.c_str(), "w");
   for (auto &label : m_Answer) {
     char c[2];
@@ -225,8 +215,6 @@ void Logistics::WriteAnswer() {
     fwrite(c, 2, 1, fp);
   }
   fclose(fp);
-  std::cerr << "@ write result: ";
-  t.LogTime();
 }
 void Logistics::Score() {
   std::ifstream fin(m_answerFile);
@@ -239,8 +227,8 @@ void Logistics::Score() {
     ++tol;
   }
   fin.close();
-  std::cerr << "@ threads: " << NTHREAD << "\n";
-  std::cerr << "@ accuracy: " << ac * 100 / tol << "%\n";
+  std::cout << "@ (" << m_samples << ", " << m_features << ") ";
+  std::cout << "accuracy: " << ac * 100 / tol << "%\n";
 }
 
 int main() {
@@ -257,8 +245,6 @@ int main() {
   const std::string LOCAL_RESULT = "../data/result.txt";
   const std::string LOCAL_ANSWER = "../data/answer.txt";
 
-  ScopeTime t;
-
 #ifdef LOCAL
   Logistics lr(LOCAL_TRAIN, LOCAL_PREDICT, LOCAL_RESULT, LOCAL_ANSWER);
   lr.InitData();
@@ -266,6 +252,7 @@ int main() {
   lr.Predict();
   lr.WriteAnswer();
   lr.Score();
+
 #else
   Logistics lr(TRAIN, PREDICT, RESULT, ANSWER);
   lr.InitData();
@@ -273,7 +260,5 @@ int main() {
   lr.Predict();
   lr.WriteAnswer();
 #endif
-  std::cerr << "@ total time: ";
-  t.LogTime();
   return 0;
 }
