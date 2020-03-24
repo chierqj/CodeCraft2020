@@ -25,7 +25,7 @@ using namespace std::chrono;
 steady_clock::time_point start = steady_clock::now();
 #endif
 /***********************************************/
-#define M 4000
+#define M 7500
 #define N 1000
 #define NT 1000
 #define TestNum 20000
@@ -119,7 +119,7 @@ int loadTestData(int serialNumber) {
   int Flag = 0;
   while (true) {
     p = data + i;
-    if (n >= 50) {
+    if (n >= 62) {
       distance =
           vgetq_lane_s32(Sum_Low_Low, 0) + vgetq_lane_s32(Sum_Low_Low, 1) +
           vgetq_lane_s32(Sum_Low_Low, 2) + vgetq_lane_s32(Sum_Low_Low, 3) +
@@ -135,7 +135,7 @@ int loadTestData(int serialNumber) {
       Sum_Low_High = vdupq_n_s32(0);
       Sum_High_Low = vdupq_n_s32(0);
       Sum_High_High = vdupq_n_s32(0);
-      i += 1200;
+      i += 48;
       p = data + i;
       answer[m] = distance >= 0 ? '0' : '1';
       distance = 0;
@@ -148,37 +148,36 @@ int loadTestData(int serialNumber) {
       }
     }
     One8 = vld1q_lane_s8((p + 2), One8, 0);
-    One8 = vld1q_lane_s8((p + 8), One8, 1);
-    One8 = vld1q_lane_s8((p + 14), One8, 2);
-    One8 = vld1q_lane_s8((p + 20), One8, 3);
-    One8 = vld1q_lane_s8((p + 26), One8, 4);
-    One8 = vld1q_lane_s8((p + 32), One8, 5);
-    One8 = vld1q_lane_s8((p + 38), One8, 6);
-    One8 = vld1q_lane_s8((p + 44), One8, 7);
-    One8 = vld1q_lane_s8((p + 50), One8, 8);
-    One8 = vld1q_lane_s8((p + 56), One8, 9);
-    One8 = vld1q_lane_s8((p + 62), One8, 10);
-    One8 = vld1q_lane_s8((p + 68), One8, 11);
-    One8 = vld1q_lane_s8((p + 74), One8, 12);
-    One8 = vld1q_lane_s8((p + 80), One8, 13);
-    One8 = vld1q_lane_s8((p + 86), One8, 14);
-    One8 = vld1q_lane_s8((p + 92), One8, 15);
-
     Two8 = vld1q_lane_s8((p + 3), Two8, 0);
+    One8 = vld1q_lane_s8((p + 8), One8, 1);
     Two8 = vld1q_lane_s8((p + 9), Two8, 1);
+    One8 = vld1q_lane_s8((p + 14), One8, 2);
     Two8 = vld1q_lane_s8((p + 15), Two8, 2);
+    One8 = vld1q_lane_s8((p + 20), One8, 3);
     Two8 = vld1q_lane_s8((p + 21), Two8, 3);
+    One8 = vld1q_lane_s8((p + 26), One8, 4);
     Two8 = vld1q_lane_s8((p + 27), Two8, 4);
+    One8 = vld1q_lane_s8((p + 32), One8, 5);
     Two8 = vld1q_lane_s8((p + 33), Two8, 5);
+    One8 = vld1q_lane_s8((p + 38), One8, 6);
     Two8 = vld1q_lane_s8((p + 39), Two8, 6);
+    One8 = vld1q_lane_s8((p + 44), One8, 7);
     Two8 = vld1q_lane_s8((p + 45), Two8, 7);
+    One8 = vld1q_lane_s8((p + 50), One8, 8);
     Two8 = vld1q_lane_s8((p + 51), Two8, 8);
+    One8 = vld1q_lane_s8((p + 56), One8, 9);
     Two8 = vld1q_lane_s8((p + 57), Two8, 9);
+    One8 = vld1q_lane_s8((p + 62), One8, 10);
     Two8 = vld1q_lane_s8((p + 63), Two8, 10);
+    One8 = vld1q_lane_s8((p + 68), One8, 11);
     Two8 = vld1q_lane_s8((p + 69), Two8, 11);
+    One8 = vld1q_lane_s8((p + 74), One8, 12);
     Two8 = vld1q_lane_s8((p + 75), Two8, 12);
+    One8 = vld1q_lane_s8((p + 80), One8, 13);
     Two8 = vld1q_lane_s8((p + 81), Two8, 13);
+    One8 = vld1q_lane_s8((p + 86), One8, 14);
     Two8 = vld1q_lane_s8((p + 87), Two8, 14);
+    One8 = vld1q_lane_s8((p + 92), One8, 15);
     Two8 = vld1q_lane_s8((p + 93), Two8, 15);
 
     One8 = vsubq_s8(One8, ZeroChar);  //*(p+2) - '0'
@@ -368,6 +367,7 @@ int main() {
     while ((trainFlagPtr[4]) == 0) {
       sleep(0.00001);
     }
+
     zero = *zeroPtr;
     one = *onePtr;
     for (int i = Num * 250; i < (Num + 1) * 250; i++) {
