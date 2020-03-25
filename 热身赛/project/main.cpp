@@ -1,4 +1,3 @@
-// #include <arm_neon.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,7 +42,7 @@ struct Matrix {
 };
 std::ostream &operator<<(std::ostream &os, const Matrix::Mat1D &mat) {
   os << "{";
-  for (int i = 0; i < mat.size(); ++i) {
+  for (size_t i = 0; i < mat.size(); ++i) {
     if (i != 0) os << ",";
     os << mat[i];
   }
@@ -77,8 +76,8 @@ class Logistics {
  public:
   //  6400 912 79%
   int m_samples = 5980;
-  int m_features = 1000;
-  const int NTHREAD = 8;  // 线程个数
+  int m_features = 1000;  // 40的倍数
+  const int NTHREAD = 4;  // 线程个数
 
  private:
   Matrix::Mat1D m_MeanLabel[2];
@@ -109,10 +108,9 @@ void Logistics::InitData() {
 }
 
 void Logistics::Train() {
-  ScopeTime t;
   // 读文件
   int fd = open(m_trainFile.c_str(), O_RDONLY);
-  long long bufsize = m_samples * 7000;
+  long long bufsize = m_samples * 6300;
   char *buffer = (char *)mmap(NULL, bufsize, PROT_READ, MAP_PRIVATE, fd, 0);
 
   // 线程变量
@@ -121,44 +119,41 @@ void Logistics::Train() {
   Matrix::Mat2D threadCount(NTHREAD, Matrix::Mat1D(2, 0));
 
   auto foo = [&](int pid, long long start, long long end) {
-    Matrix::Mat1D features(m_features);
     int idx = 0;
-    const char *ptr = buffer + start;
-    while (start < end) {
-      int x = 1;
-      if (ptr[0] == '-') {
-        ++ptr;
-        ++start;
-        x = -1;
-      }
-      int num = (ptr[2] - '0') * 100 + (ptr[3] - '0') * 10;
-      num *= x;
-      features[idx++] = num;
-      ptr += 6;
-      start += 6;
+    auto &thSum = threadSum[pid];
+    auto &thCount = threadCount[pid];
+    int num = 0;
 
-      if (idx == m_features) {
-        while (ptr[1] != '\n') ++ptr, ++start;
-        int label = ptr[0] - '0';
-        ++threadCount[pid][label];
-        for (int i = 0; i < m_features; i += 4) {
-          threadSum[pid][label][i] += features[i];
-          threadSum[pid][label][i + 1] += features[i + 1];
-          threadSum[pid][label][i + 2] += features[i + 2];
-          threadSum[pid][label][i + 3] += features[i + 3];
+    while (start < end) {
+      const char *tail = buffer + start + 6000;
+      while (*(tail + 1) != '\n') ++tail;
+      int label = *tail - '0';
+      ++thCount[label];
+
+      idx = 0;
+      for (size_t i = 0; i < m_features; i += 8, start += 48) {
+        const char *ptr = buffer + start;
+        for (size_t j = 0, pos = 0; j < 8; ++j, pos += 6) {
+          if (*(ptr + pos) == '-') {
+            ++pos;
+            ++start;
+            num =
+                -(*(ptr + pos + 2) - '0') * 100 - (*(ptr + pos + 3) - '0') * 10;
+          } else {
+            num =
+                (*(ptr + pos + 2) - '0') * 100 + (*(ptr + pos + 3) - '0') * 10;
+          }
+          thSum[label][idx++] += num;
         }
-        idx = 0;
-        ptr += 2;
-        start += 2;
       }
+      start += 2;
     }
   };
-
   long long block = bufsize / (NTHREAD + 1);
   long long start = 0, end = 0;
   std::vector<std::thread> Threads(NTHREAD);
 
-  for (int i = 0; i < NTHREAD; ++i) {
+  for (size_t i = 0; i < NTHREAD; ++i) {
     end = start + block;
     while (buffer[end] != '\n') ++end;
     ++end;
@@ -167,8 +162,8 @@ void Logistics::Train() {
   }
   for (auto &it : Threads) it.join();
 
-  for (int i = 0; i < NTHREAD; ++i) {
-    for (int j = 0; j < m_features; ++j) {
+  for (size_t i = 0; i < NTHREAD; ++i) {
+    for (size_t j = 0; j < m_features; ++j) {
       m_MeanLabel[0][j] += threadSum[i][0][j];
       m_MeanLabel[1][j] += threadSum[i][1][j];
     }
@@ -177,51 +172,41 @@ void Logistics::Train() {
   }
   int totalCount = m_CountLabel[0] + m_CountLabel[1];
 
-  const char *ptr = buffer + end;
   int idx = 0;
-  Matrix::Mat1D features(m_features);
-  for (; totalCount < m_samples;) {
-    int x = 1;
-    if (ptr[0] == '-') {
-      ++ptr;
-      x = -1;
-    }
-    int num = (ptr[2] - '0') * 100 + (ptr[3] - '0') * 10;
-    num *= x;
-    features[idx++] = num;
-    ptr += 6;
+  const char *newbuffer = buffer + end;
+  int move = 0, num = 0;
+  for (; totalCount < m_samples; ++totalCount) {
+    const char *tail = newbuffer + move + 6000;
+    while (*(tail + 1) != '\n') ++tail;
+    int label = *tail - '0';
+    ++m_CountLabel[label];
 
-    if (idx == m_features) {
-      while (ptr[1] != '\n') ++ptr;
-      int label = ptr[0] - '0';
-      ++m_CountLabel[label];
-      for (int i = 0; i < m_features; i += 4) {
-        m_MeanLabel[label][i] += features[i];
-        m_MeanLabel[label][i + 1] += features[i + 1];
-        m_MeanLabel[label][i + 2] += features[i + 2];
-        m_MeanLabel[label][i + 3] += features[i + 3];
+    idx = 0;
+    for (size_t i = 0; i < m_features; i += 8, move += 48) {
+      const char *ptr = newbuffer + move;
+      for (size_t j = 0, pos = 0; j < 8; ++j, pos += 6) {
+        if (*(ptr + pos) == '-') {
+          ++pos;
+          ++move;
+          num = -(*(ptr + pos + 2) - '0') * 100 - (*(ptr + pos + 3) - '0') * 10;
+        } else {
+          num = (*(ptr + pos + 2) - '0') * 100 + (*(ptr + pos + 3) - '0') * 10;
+        }
+        m_MeanLabel[label][idx++] += num;
       }
-      idx = 0;
-      ptr += 2;
-      ++totalCount;
     }
+    move += 2;
   }
 
-  for (int i = 0; i < m_features; ++i) {
+  for (size_t i = 0; i < m_features; ++i) {
     m_MeanLabel[0][i] /= m_CountLabel[0];
     m_MeanLabel[1][i] /= m_CountLabel[1];
     m_PredictSum[i] = (m_MeanLabel[1][i] + m_MeanLabel[0][i]);
     m_PredictDelta[i] = (m_MeanLabel[0][i] - m_MeanLabel[1][i]);
   }
-
-  // std::cerr << m_CountLabel[0] << ", " << m_CountLabel[1] << "\n";
-  // std::cerr << m_MeanLabel[0] << "\n";
-  std::cerr << "@ train: ";
-  t.LogTime();
 }
 
 void Logistics::Predict() {
-  ScopeTime t;
   // 读文件
   struct stat sb;
   int fd = open(m_predictFile.c_str(), O_RDONLY);
@@ -234,12 +219,13 @@ void Logistics::Predict() {
   // 子线程
   auto foo = [&](int startline, int endline) {
     long long move = startline * linesize;
-    for (int line = startline; line < endline; ++line, move += linesize) {
+    const char *ptr = buffer + move;
+    for (size_t line = startline; line < endline; ++line, move += linesize) {
       int distance = 0;
-      for (int i = 0, pos = 0; i < m_features; pos += 60) {
-        const char *ptr = &buffer[move + pos];
-        for (int k = 0; k < 60; k += 6, ++i) {
-          int num = (ptr[k + 2] - '0') * 200 + (ptr[k + 3] - '0') * 20;
+      for (size_t i = 0; i < m_features; ptr += 60) {
+        for (size_t k = 0; k < 60; k += 6, ++i) {
+          int32_t num =
+              (*(ptr + k + 2) - '0') * 200 + (*(ptr + k + 3) - '0') * 20;
           distance += (num - m_PredictSum[i]) * m_PredictDelta[i];
         }
       }
@@ -250,105 +236,13 @@ void Logistics::Predict() {
   // 创建线程
   int start = 0, block = linenum / NTHREAD;
   std::vector<std::thread> Threads(NTHREAD);
-  for (int i = 0; i < NTHREAD; ++i) {
+  for (size_t i = 0; i < NTHREAD; ++i) {
     long long end = (i == NTHREAD - 1 ? linenum : start + block);
     Threads[i] = std::thread(foo, start, end);
     start += block;
   }
   for (auto &it : Threads) it.join();
-
-  std::cerr << "@ predict: ";
-  t.LogTime();
 }
-
-/*
-void Logistics::Predict() {
-  ScopeTime t;
-  // 读文件
-  struct stat sb;
-  int fd = open(m_predictFile.c_str(), O_RDONLY);
-  fstat(fd, &sb);
-  char *buffer = (char *)mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
-
-  int linesize = 6000;
-  long long linenum = sb.st_size / linesize;
-
-  // 子线程
-  auto foo = [&](int startline, int endline) {
-    long long move = startline * linesize;
-    for (int line = startline; line < endline; ++line, move += linesize) {
-      // int distance = 0;
-      // for (int i = 0, pos = 0; i < m_features; pos += 60) {
-      //   const char *ptr = &buffer[move + pos];
-      //   for (int k = 0; k < 60; k += 6, ++i) {
-      //     int num = (ptr[k + 2] - '0') * 200 + (ptr[k + 3] - '0') * 20;
-      //     distance += (num - m_PredictSum[i]) * m_PredictDelta[i];
-      //   }
-      // }
-      // m_Answer[line] = (distance < 0 ? 1 : 0);
-      const char *ptr = buffer + move;
-
-      int32x4_t baseChar = vdupq_n_s32('0');  //'0'
-      int32x4_t base200 = vdupq_n_s32(200);
-      int32x4_t base20 = vdupq_n_s32(20);
-
-      int32x4_t ans = vdupq_n_s32(0);
-      int32x4_t data, sum;
-
-      for (int i = 0, pos = 0; i < m_features; i += 4, pos += 24) {
-        int temp[4];
-        temp[0] = ptr[pos + 2];
-        temp[1] = ptr[pos + 8];
-        temp[2] = ptr[pos + 14];
-        temp[3] = ptr[pos + 20];
-
-        data = vld1q_s32(temp);
-        data = vsubq_s32(data, baseChar);
-        sum = vmulq_s32(data, base200);
-
-        temp[0] = ptr[pos + 3];
-        temp[1] = ptr[pos + 9];
-        temp[2] = ptr[pos + 15];
-        temp[3] = ptr[pos + 21];
-        data = vld1q_s32(temp);
-        data = vsubq_s32(data, baseChar);
-        sum = vmlaq_s32(sum, data, base20);
-
-        temp[0] = m_PredictSum[i];
-        temp[1] = m_PredictSum[i + 1];
-        temp[2] = m_PredictSum[i + 2];
-        temp[3] = m_PredictSum[i + 3];
-        data = vld1q_s32(temp);
-        sum = vsubq_s32(sum, data);
-
-        temp[0] = m_PredictDelta[i];
-        temp[1] = m_PredictDelta[i + 1];
-        temp[2] = m_PredictDelta[i + 2];
-        temp[3] = m_PredictDelta[i + 3];
-        data = vld1q_s32(temp);
-        sum = vmulq_s32(sum, data);
-
-        // ans = vsubq_s32(ans, sum);
-      }
-      int distance = vaddvq_s32(ans);
-      m_Answer[line] = (distance < 0 ? 1 : 0);
-    }
-  };
-
-  // 创建线程
-  int start = 0, block = linenum / NTHREAD;
-  std::vector<std::thread> Threads(NTHREAD);
-  for (int i = 0; i < NTHREAD; ++i) {
-    long long end = (i == NTHREAD - 1 ? linenum : start + block);
-    Threads[i] = std::thread(foo, start, end);
-    start += block;
-  }
-  for (auto &it : Threads) it.join();
-
-  std::cerr << "@ predict: ";
-  t.LogTime();
-}
-*/
 
 void Logistics::WriteAnswer() {
   FILE *fp = fopen(m_resultFile.c_str(), "w");
