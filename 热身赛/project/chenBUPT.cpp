@@ -42,16 +42,22 @@ int16_t meanSub[N];
 #define CHILDREN1 1
 #define CHILDREN2 2
 #define CHILDREN3 3
+#define CHILDREN4 4
+#define CHILDREN5 5
+#define CHILDREN6 6
+#define CHILDREN7 7
 
 #define TEST1
 
 #ifdef TEST
-#define trainFlie "./data/train_data.txt"
-#define testFile "./data/test_data.txt"
-#define resultFile "./projects/student/result.txt"
-string predictFile = "./projects/student/result.txt";
-string answerFile = "./projects/student/answer.txt";
-string gt[] = {"", "\t\t\t", "\t\t\t\t\t\t", "\t\t\t\t\t\t\t\t\t"};
+#define trainFlie "../data/train_data.txt"
+#define testFile "../data/test_data.txt"
+#define resultFile "../data/result.txt"
+string predictFile = "../data/result.txt";
+string answerFile = "../data/answer.txt";
+string gt[] = {
+    "",           "\t\t",         "\t\t\t",         "\t\t\t\t",
+    "\t\t\t\t\t", "\t\t\t\t\t\t", "\t\t\t\t\t\t\t", "\t\t\t\t\t\t\t\t"};
 #else
 #define trainFlie "/data/train_data.txt"
 #define testFile "/data/test_data.txt"
@@ -78,22 +84,34 @@ bool loadAnswerData(string awFile, vector<int> &awVec) {
 int loadTestData(int serialNumber) {
   int Max[] = {5000, 5000, 5000, 5000};
   long i = 0;
-  int8_t *p;
+  register int8_t *p;
   int8_t *data = NULL;
   int fd = open(testFile, O_RDONLY);
   long size = lseek(fd, 0, SEEK_END);
   data = (int8_t *)mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
-  long n = 0, m = 0;
-  int8_t *quarter[4] = {
-      data, data + (int)(size * (Max[0]) / TestNum),
-      data + (int)(size * (Max[0] + Max[1]) / TestNum),
-      data + (int)(size * (Max[0] + Max[1] + Max[2]) / TestNum)};
+  register long n = 0, m = 0;
+  int8_t *quarter[8] = {data,
+                        data + (int)(size / 8),
+                        data + (int)(size / 4),
+                        data + (int)(size * 3 / 8),
+                        data + (int)(size / 2),
+                        data + (int)(size * 5 / 8),
+                        data + (int)(size * 3 / 4),
+                        data + (int)(size * 7 / 8)};
   while (*(quarter[1]) != '\n') quarter[1]++;
   quarter[1]++;
   while (*(quarter[2]) != '\n') quarter[2]++;
   quarter[2]++;
   while (*(quarter[3]) != '\n') quarter[3]++;
   quarter[3]++;
+  while (*(quarter[4]) != '\n') quarter[4]++;
+  quarter[4]++;
+  while (*(quarter[5]) != '\n') quarter[5]++;
+  quarter[5]++;
+  while (*(quarter[6]) != '\n') quarter[6]++;
+  quarter[6]++;
+  while (*(quarter[7]) != '\n') quarter[7]++;
+  quarter[7]++;
   int8_t *dataCopy = data;
   data = quarter[serialNumber];
   int distance = 0;
@@ -109,13 +127,17 @@ int loadTestData(int serialNumber) {
   int16x8_t One16_High = vdupq_n_s16(0);
   int16x8_t Two16_High = vdupq_n_s16(0);
 
+  int32x4_t One32_Low_Low = vdupq_n_s32(0);
+  int32x4_t One32_Low_High = vdupq_n_s32(0);
+  int32x4_t One32_High_Low = vdupq_n_s32(0);
+  int32x4_t One32_High_High = vdupq_n_s32(0);
   int32x4_t Sum_Low_Low = vdupq_n_s32(0);
   int32x4_t Sum_Low_High = vdupq_n_s32(0);
   int32x4_t Sum_High_Low = vdupq_n_s32(0);
   int32x4_t Sum_High_High = vdupq_n_s32(0);
 
-  int16_t *meanSumPtr = meanSum;
-  int16_t *meanSubPtr = meanSub;
+  register int16_t *meanSumPtr = meanSum;
+  register int16_t *meanSubPtr = meanSub;
   int Flag = 0;
   while (true) {
     p = data + i;
@@ -141,8 +163,8 @@ int loadTestData(int serialNumber) {
       distance = 0;
       m++;
       n = 0;
-      if ((serialNumber < 3 && p >= quarter[serialNumber + 1]) ||
-          (serialNumber == 3 && p - dataCopy >= size)) {
+      if ((serialNumber < 7 && p >= quarter[serialNumber + 1]) ||
+          (serialNumber == 7 && p - dataCopy >= size)) {
         return m;
         break;
       }
@@ -208,15 +230,27 @@ int loadTestData(int serialNumber) {
     meanSubPtr += 8;
     Two16_High = vld1q_s16(meanSubPtr);
     meanSubPtr += 8;  // meanSum
-    One16_Low = vmulq_s16(One16_Low, Two16_Low);
-    One16_High =
-        vmulq_s16(One16_High,
-                  Two16_High);  //(200*(*(p+2) - '0')... - meanSumPtr) * meanSub
+    // One16_Low = vmulq_s16(One16_Low,Two16_Low);
+    // One16_High= vmulq_s16(One16_High,Two16_High);//(200*(*(p+2) - '0')... -
+    // meanSumPtr) * meanSub
 
-    Sum_Low_Low = vaddw_s16(Sum_Low_Low, vget_low_s16(One16_Low));
-    Sum_Low_High = vaddw_s16(Sum_Low_High, vget_high_s16(One16_Low));
-    Sum_High_Low = vaddw_s16(Sum_High_Low, vget_low_s16(One16_High));
-    Sum_High_High = vaddw_s16(Sum_High_High, vget_high_s16(One16_High));
+    One32_Low_Low = vmull_s16(vget_low_s16(One16_Low), vget_low_s16(Two16_Low));
+    One32_Low_High =
+        vmull_s16(vget_high_s16(One16_Low), vget_high_s16(Two16_Low));
+    One32_High_Low =
+        vmull_s16(vget_low_s16(One16_High), vget_low_s16(Two16_High));
+    One32_High_High =
+        vmull_s16(vget_high_s16(One16_High), vget_high_s16(Two16_High));
+
+    Sum_Low_Low = vaddq_s32(Sum_Low_Low, (One32_Low_Low));
+    Sum_Low_High = vaddq_s32(Sum_Low_High, (One32_Low_High));
+    Sum_High_Low = vaddq_s32(Sum_High_Low, (One32_High_Low));
+    Sum_High_High = vaddq_s32(Sum_High_High, (One32_High_High));
+
+    // Sum_Low_Low = vaddw_s16(Sum_Low_Low,vget_low_s16(One16_Low));
+    // Sum_Low_High= vaddw_s16(Sum_Low_High,vget_high_s16(One16_Low));
+    // Sum_High_Low= vaddw_s16(Sum_High_Low,vget_low_s16(One16_High));
+    // Sum_High_High=vaddw_s16(Sum_High_High,vget_high_s16(One16_High));
     i += 96;
     n++;
   }
@@ -225,19 +259,28 @@ int loadTestData(int serialNumber) {
 void loadTrainData(int serialNumber, int *mean0Ptr, int *mean1Ptr, int *zeroPtr,
                    int *onePtr) {
   int Max[] = {M / 4, M / 4, M / 4, M / 4};
-  int Now = 0;
-  long n = N - 1, m = 0, i = 0;
-  char *data = NULL, *p = NULL;
+  register int Now = 0;
+  register long n = N - 1, m = 0, i = 0;
+  register char *data = NULL, *p = NULL;
   int fd = open(trainFlie, O_RDONLY);
   long size = lseek(fd, 0, SEEK_END);
   data = (char *)mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
   data = data + size - 1;
-  char *quarter[4] = {data, data - (int)(6002 * (Max[0])),
-                      data - (int)(6002 * (Max[0] + Max[1])),
-                      data - (int)(6002 * (Max[0] + Max[1] + Max[2]))};
+  char *quarter[8] = {data,
+                      data - (int)(6002 * M / 8),
+                      data - (int)(6002 * M / 4),
+                      data - (int)(6002 * M * 3 / 8),
+                      data - (int)(6002 * M / 2),
+                      data - (int)(6002 * M * 5 / 8),
+                      data - (int)(6002 * M * 3 / 4),
+                      data - (int)(6002 * M * 7 / 8)};
   while (*(quarter[1]) != '\n') quarter[1]--;
   while (*(quarter[2]) != '\n') quarter[2]--;
   while (*(quarter[3]) != '\n') quarter[3]--;
+  while (*(quarter[4]) != '\n') quarter[4]--;
+  while (*(quarter[5]) != '\n') quarter[5]--;
+  while (*(quarter[6]) != '\n') quarter[6]--;
+  while (*(quarter[7]) != '\n') quarter[7]--;
   data = quarter[serialNumber];
   data--;
   Now = *(data) - '0';
@@ -255,8 +298,8 @@ void loadTrainData(int serialNumber, int *mean0Ptr, int *mean1Ptr, int *zeroPtr,
     p = data - i;
     if (n < 0) {
       m++;
-      if ((serialNumber < 3 && p <= quarter[serialNumber + 1]) ||
-          (serialNumber == 3 && m >= Max[serialNumber])) {
+      if ((serialNumber < 7 && p <= quarter[serialNumber + 1]) ||
+          (serialNumber == 7 && m >= M / 8)) {
         break;
       } else {
         Now = *(p) - '0';
@@ -301,17 +344,17 @@ int main() {
 #endif
 
   /****************¹²ÏíµÄÄÚ´æ±äÁ¿*******************/
-  pid_t pid_Children1, pid_Children2, pid_Children3;
-  int resultShm[4];
-  char *resultPtr[4];
+  pid_t pid_Children1 = 0, pid_Children2 = 0, pid_Children3 = 0,
+        pid_Children4 = 0, pid_Children5 = 0, pid_Children6 = 0,
+        pid_Children7 = 0;
   int mean0Shm = shmget(IPC_PRIVATE, N * sizeof(int), IPC_CREAT | 0600);
   int mean1Shm = shmget(IPC_PRIVATE, N * sizeof(int), IPC_CREAT | 0600);
   int zeroShm = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | 0600);
   int oneShm = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | 0600);
   int answerShm =
       shmget(IPC_PRIVATE, 2 * TestNum * sizeof(char), IPC_CREAT | 0600);
-  int trainFlagShm = shmget(IPC_PRIVATE, 5 * sizeof(int), IPC_CREAT | 0600);
-  int predictFlagShm = shmget(IPC_PRIVATE, 4 * sizeof(int), IPC_CREAT | 0600);
+  int trainFlagShm = shmget(IPC_PRIVATE, 9 * sizeof(int), IPC_CREAT | 0600);
+  int predictFlagShm = shmget(IPC_PRIVATE, 8 * sizeof(int), IPC_CREAT | 0600);
 /****************¿ªÆô×Ó½ø³Ì£¨1-2-3£©*******************/
 #ifdef TEST
   cout << "Farther" << gt[1] << "Children1"
@@ -323,6 +366,11 @@ int main() {
   pid_Children1 = fork();
   if (pid_Children1) pid_Children2 = fork();
   if (pid_Children2) pid_Children3 = fork();
+  if (pid_Children3) pid_Children4 = fork();
+  if (pid_Children4) pid_Children5 = fork();
+  if (pid_Children5) pid_Children6 = fork();
+  if (pid_Children6) pid_Children7 = fork();
+
   int Num = 0;
   if (!pid_Children1)
     Num = CHILDREN1;
@@ -330,6 +378,14 @@ int main() {
     Num = CHILDREN2;
   else if (!pid_Children3)
     Num = CHILDREN3;
+  else if (!pid_Children4)
+    Num = CHILDREN4;
+  else if (!pid_Children5)
+    Num = CHILDREN5;
+  else if (!pid_Children6)
+    Num = CHILDREN6;
+  else if (!pid_Children7)
+    Num = CHILDREN7;
   else
     Num = FATHER;
 
@@ -348,7 +404,7 @@ int main() {
   int *predictFlagPtr = (int *)shmat(predictFlagShm, NULL, 0);
   *trainFlagPtr = 0;
   /********************½ø³Ì¿ªÊ¼**************************/
-  if (Num <= 3) {
+  if (Num <= 7) {
 /********¼ÓÔØÊý¾Ý**********/
 #ifdef TEST
     cout << gt[Num] << Num << "  Loading Start: ";
@@ -362,22 +418,23 @@ int main() {
          << endl;
 #endif
     if (*zeroPtr + *onePtr > M - 100) {
-      trainFlagPtr[4] = 1;
+      trainFlagPtr[8] = 1;
     }
-    while ((trainFlagPtr[4]) == 0) {
+    while ((trainFlagPtr[8]) == 0) {
       sleep(0.00001);
     }
-
     zero = *zeroPtr;
     one = *onePtr;
-    for (int i = Num * 250; i < (Num + 1) * 250; i++) {
+    for (int i = Num * 125; i < (Num + 1) * 125; i++) {
       mean0Ptr[i] /= zero;
       mean1Ptr[i] /= one;
     }
     trainFlagPtr[Num] = 1;
     trainFlagPtr[Num] = 1;
     while (trainFlagPtr[0] == 0 || trainFlagPtr[1] == 0 ||
-           trainFlagPtr[2] == 0 || trainFlagPtr[3] == 0) {
+           trainFlagPtr[2] == 0 || trainFlagPtr[3] == 0 ||
+           trainFlagPtr[4] == 0 || trainFlagPtr[5] == 0 ||
+           trainFlagPtr[6] == 0 || trainFlagPtr[7] == 0) {
       sleep(0.00001);
     }
     for (int i = 0; i < N; i++) {
@@ -396,7 +453,8 @@ int main() {
          << endl;
 #endif
     while (!predictFlagPtr[0] || !predictFlagPtr[1] || !predictFlagPtr[2] ||
-           !predictFlagPtr[3]) {
+           !predictFlagPtr[3] || !predictFlagPtr[4] || !predictFlagPtr[5] ||
+           !predictFlagPtr[6] || !predictFlagPtr[7]) {
       sleep(0.00001);
     }
     int Start = 0;
@@ -418,6 +476,10 @@ int main() {
   waitpid(pid_Children1, NULL, 0);
   waitpid(pid_Children2, NULL, 0);
   waitpid(pid_Children3, NULL, 0);
+  waitpid(pid_Children4, NULL, 0);
+  waitpid(pid_Children5, NULL, 0);
+  waitpid(pid_Children6, NULL, 0);
+  waitpid(pid_Children7, NULL, 0);
   FILE *fp = fopen(resultFile, "wt");
   fputs(answerPtr, fp);
   fclose(fp);
