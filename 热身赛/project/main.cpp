@@ -1,36 +1,18 @@
 #include <fcntl.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <sys/ioctl.h>
 #include <sys/ipc.h>
 #include <sys/mman.h>
 #include <sys/shm.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <sys/wait.h>
 #include <unistd.h>
 #include <algorithm>
-#include <cassert>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <ctime>
-#include <fstream>
-#include <iomanip>
 #include <iostream>
-#include <memory>
-#include <numeric>
 #include <string>
 #include <thread>
 #include <vector>
-using namespace std;
-using namespace std::chrono;
-
-std::string DEBUG[] = {
-    "",           "\t\t",         "\t\t\t",         "\t\t\t\t",
-    "\t\t\t\t\t", "\t\t\t\t\t\t", "\t\t\t\t\t\t\t", "\t\t\t\t\t\t\t\t"};
 
 struct Matrix {
   typedef std::vector<int32_t> Mat1D;
@@ -59,7 +41,6 @@ const std::string TRAIN = "../data/train_data.txt";
 const std::string PREDICT = "../data/test_data.txt";
 const std::string RESULT = "../data/result.txt";
 const std::string ANSWER = "../data/answer.txt";
-steady_clock::time_point start = steady_clock::now();
 #else
 const std::string TRAIN = "/data/train_data.txt";
 const std::string PREDICT = "/data/test_data.txt";
@@ -201,8 +182,8 @@ void Predict(int pid) {
   close(fd);
 
   int fd2 = open(RESULT.c_str(), O_RDWR | O_CREAT);
-  char *result = (char *)mmap(NULL, bufsize / 3000, PROT_READ | PROT_WRITE,
-                              MAP_SHARED, fd2, 0);
+  char *result =
+      (char *)mmap(NULL, 40000, PROT_READ | PROT_WRITE, MAP_SHARED, fd2, 0);
   close(fd2);
 
   buffer += (pid * block);
@@ -226,7 +207,7 @@ void Predict(int pid) {
     result[line << 1] = label;
     result[line << 1 | 1] = '\n';
   }
-  munmap(result, bufsize / 3000);
+  munmap(result, 40000);
 }
 
 int main() {
