@@ -3,6 +3,7 @@
 #include <sys/ipc.h>
 #include <sys/mman.h>
 #include <sys/shm.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <algorithm>
 #include <chrono>
@@ -49,7 +50,7 @@ const std::string ANSWER = "/projects/student/answer.txt";
 #endif
 
 const int NTHREAD = 8;
-const int SAMPLES = 5980;
+const int SAMPLES = 2700;
 const int FEATURES = 1000;
 struct Node {
   int zero = 0;
@@ -64,49 +65,66 @@ struct Node {
 
 Matrix::Mat1D MeanSum(FEATURES, 0);
 Matrix::Mat1D MeanDelta(FEATURES, 0);
-int ZERO = 0, ONE = 0;
 
-void HandleTrain(int pid, const char *buffer, long long start, long long end) {
-  auto &data = ThreadData[pid];
-  const char *ptr = buffer + start;
-  long long move = 0;
-  long long length = end - start;
-  while (move < length) {
-    const char *tail = ptr + move + 6000;
-    int t = 0;
-    while (*(tail + t + 1) != '\n') ++t;
-    int label = *(tail + t) - '0';
-    if (label) {
-      ++data.one;
-    } else {
-      ++data.zero;
-    }
-    int idx = 0, num = 0;
-    for (size_t i = 0; i < FEATURES; i += 8) {
-      for (size_t j = 0; j < 8; ++j, move += 6, ++idx) {
-        if (*(ptr + move) == '-') {
-          ++move;
-          num = -(*(ptr + move + 2) * 100 + *(ptr + move + 3) * 10 - 110 * '0');
-        } else {
-          num = *(ptr + move + 2) * 100 + *(ptr + move + 3) * 10 - 110 * '0';
-        }
-        if (label) {
-          data.meansum1[idx] += num;
-        } else {
-          data.meansum0[idx] += num;
-        }
-      }
-    }
-    move += 2;
-  }
-}
-void Train() {
+int32_t PW0[255][2];
+int32_t PW[255][2];
+
+void Init() {
   FILE *fp = fopen(RESULT.c_str(), "w");
   for (int i = 0; i < 40000; i += 2) {
     char c[2] = {' ', ' '};
     fwrite(c, 2, 1, fp);
   }
   fclose(fp);
+
+  for (int i = 0; i <= 9; i++) {
+    PW0[i + '0'][0] = i * 100;
+    PW0[i + '0'][1] = i * 10;
+    PW[i + '0'][0] = i * 200;
+    PW[i + '0'][1] = i * 20;
+  }
+}
+
+inline int32_t GetNumber(const char *ptr, int pos) {
+  // return *(ptr + pos + 2) * 100 + *(ptr + pos + 3) * 10 - 110 * '0';
+  return PW0[*(ptr + pos + 2)][0] + PW0[*(ptr + pos + 3)][1];
+}
+void HandleTrain(int pid, const char *buffer, long long start, long long end) {
+  auto &data = ThreadData[pid];
+  const char *ptr = buffer + start;
+  while (start < end) {
+    const char *tail = ptr + 6000;
+    while (*(tail + 1) != '\n') ++tail;
+    bool sign = (*tail == '1' ? true : false);
+    if (sign) {
+      ++data.one;
+    } else {
+      ++data.zero;
+    }
+
+    int32_t num = 0;
+    for (size_t i = 0, move = 0; i < FEATURES;
+         ptr += (48 + move), start += (48 + move)) {
+      for (size_t j = 0, pos = 0; j < 8; ++j, ++i, pos += 6) {
+        if (*(ptr + pos) == '-') {
+          ++move;
+          ++pos;
+          num = -GetNumber(ptr, pos);
+        } else {
+          num = GetNumber(ptr, pos);
+        }
+        if (sign) {
+          data.meansum1[i] += num;
+        } else {
+          data.meansum0[i] += num;
+        }
+      }
+    }
+    ptr += 2;
+    start += 2;
+  }
+}
+void Train() {
   // 读文件
   int fd = open(TRAIN.c_str(), O_RDONLY);
   long long bufsize = SAMPLES * 6300;
@@ -136,33 +154,33 @@ void Train() {
   }
   int totalCount = ThreadData[0].zero + ThreadData[0].one;
   const char *ptr = buffer + end;
-  int move = 0;
+  int32_t num = 0;
   for (; totalCount < SAMPLES; ++totalCount) {
-    const char *tail = ptr + move + 6000;
+    const char *tail = ptr + 6000;
     while (*(tail + 1) != '\n') ++tail;
-    int label = *tail - '0';
-    if (label) {
+    bool sign = (*tail == '1' ? true : false);
+    if (sign) {
       ++ThreadData[0].one;
     } else {
       ++ThreadData[0].zero;
     }
-    int idx = 0, num = 0;
-    for (size_t i = 0; i < FEATURES; i += 8) {
-      for (size_t j = 0; j < 8; ++j, move += 6, ++idx) {
-        if (*(ptr + move) == '-') {
+    for (size_t i = 0, move = 0; i < FEATURES; ptr += (48 + move)) {
+      for (size_t j = 0, pos = 0; j < 8; ++j, ++i, pos += 6) {
+        if (*(ptr + pos) == '-') {
           ++move;
-          num = -(*(ptr + move + 2) * 100 + *(ptr + move + 3) * 10 - 110 * '0');
+          ++pos;
+          num = -GetNumber(ptr, pos);
         } else {
-          num = *(ptr + move + 2) * 100 + *(ptr + move + 3) * 10 - 110 * '0';
+          num = GetNumber(ptr, pos);
         }
-        if (label) {
-          ThreadData[0].meansum1[idx] += num;
+        if (sign) {
+          ThreadData[0].meansum1[i] += num;
         } else {
-          ThreadData[0].meansum0[idx] += num;
+          ThreadData[0].meansum0[i] += num;
         }
       }
     }
-    move += 2;
+    ptr += 2;
   }
   for (size_t i = 0; i < FEATURES; ++i) {
     int32_t sum0 = ThreadData[0].meansum0[i];
@@ -181,7 +199,7 @@ void Predict(int pid) {
   char *buffer = (char *)mmap(NULL, bufsize, PROT_READ, MAP_PRIVATE, fd, 0);
   close(fd);
 
-  int fd2 = open(RESULT.c_str(), O_RDWR | O_CREAT);
+  int fd2 = open(RESULT.c_str(), O_RDWR | O_CREAT, 0666);
   char *result =
       (char *)mmap(NULL, 40000, PROT_READ | PROT_WRITE, MAP_SHARED, fd2, 0);
   close(fd2);
@@ -191,26 +209,31 @@ void Predict(int pid) {
   int startline = pid * 2500;
   int endline = startline + 2500;
 
-  long long move = 0;
-  for (size_t line = startline; line < endline; ++line, move += 6000) {
-    const char *ptr = buffer + move;
-    int32_t distance = 0;
+  const char *ptr = buffer;
+  int32_t distance = 0, num;
+  for (size_t line = startline; line < endline; ++line) {
+    if (ptr[2] >= '2') {
+      result[line << 1] = '1';
+      result[line << 1 | 1] = '\n';
+      ptr += 6000;
+      continue;
+    }
+    distance = 0;
     for (size_t i = 0; i < FEATURES; ptr += 60) {
       for (size_t k = 0; k < 60; k += 6, ++i) {
-        int32_t num = *(ptr + k + 2) * 200 + *(ptr + k + 3) * 20 - 220 * '0';
-        int32_t sum = MeanSum[i];
-        int32_t delta = MeanDelta[i];
-        distance += (num - sum) * delta;
+        // num = *(ptr + k + 2) * 200 + *(ptr + k + 3) * 20 - 220 * '0';
+        num = PW[*(ptr + k + 2)][0] + PW[*(ptr + k + 3)][1];
+        distance += (num - MeanSum[i]) * MeanDelta[i];
       }
     }
-    char label = (distance < 0 ? '1' : '0');
-    result[line << 1] = label;
+    result[line << 1] = (distance < 0 ? '1' : '0');
     result[line << 1 | 1] = '\n';
   }
   munmap(result, 40000);
 }
 
 int main() {
+  Init();
   Train();
 
   pid_t child1 = 0, child2 = 0, child3 = 0;
@@ -248,13 +271,13 @@ int main() {
     if (pid) exit(0);
   }
 
-  // waitpid(child1, NULL, 0);
-  // waitpid(child2, NULL, 0);
-  // waitpid(child3, NULL, 0);
-  // waitpid(child4, NULL, 0);
-  // waitpid(child5, NULL, 0);
-  // waitpid(child6, NULL, 0);
-  // waitpid(child7, NULL, 0);
+  waitpid(child1, NULL, 0);
+  waitpid(child2, NULL, 0);
+  waitpid(child3, NULL, 0);
+  waitpid(child4, NULL, 0);
+  waitpid(child5, NULL, 0);
+  waitpid(child6, NULL, 0);
+  waitpid(child7, NULL, 0);
 
   return 0;
 }
