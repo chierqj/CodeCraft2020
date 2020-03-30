@@ -15,79 +15,43 @@
 #include <thread>
 #include <vector>
 
-struct Matrix {
-  typedef std::vector<int32_t> Mat1D;
-  typedef std::vector<std::vector<int32_t>> Mat2D;
-};
-std::ostream &operator<<(std::ostream &os, const Matrix::Mat1D &mat) {
-  os << "{";
-  for (size_t i = 0; i < mat.size(); ++i) {
-    if (i != 0) os << ",";
-    os << mat[i];
-  }
-  os << "}";
-  return os;
-}
-std::ostream &operator<<(std::ostream &os, const Matrix::Mat2D &mat) {
-  os << "[";
-  for (auto &it : mat) {
-    os << it;
-  }
-  os << "]";
-  return os;
-}
-
 #ifdef LOCAL
-const std::string TRAIN = "../data/train_data.txt";
-const std::string PREDICT = "../data/test_data.txt";
-const std::string RESULT = "../data/result.txt";
-const std::string ANSWER = "../data/answer.txt";
+#define TRAIN "../data/train_data.txt"
+#define PREDICT "../data/test_data.txt"
+#define RESULT "../data/result.txt"
+#define ANSWER "../data/answer.txt"
 #else
-const std::string TRAIN = "/data/train_data.txt";
-const std::string PREDICT = "/data/test_data.txt";
-const std::string RESULT = "/projects/student/result.txt";
-const std::string ANSWER = "/projects/student/answer.txt";
+#define TRAIN "/data/train_data.txt"
+#define PREDICT "/data/test_data.txt"
+#define RESULT "/projects/student/result.txt"
+#define ANSWER "/projects/student/answer.txt"
 #endif
 
 const int NTHREAD = 8;
-const int SAMPLES = 2700;
+const int SAMPLES = 1996;  // 6966(6068)
 const int FEATURES = 1000;
 struct Node {
   int zero = 0;
   int one = 0;
-  Matrix::Mat1D meansum0;
-  Matrix::Mat1D meansum1;
-  Node() {
-    meansum0 = Matrix::Mat1D(FEATURES, 0);
-    meansum1 = Matrix::Mat1D(FEATURES, 0);
-  }
+  int32_t meansum0[FEATURES] = {0};
+  int32_t meansum1[FEATURES] = {0};
 } ThreadData[NTHREAD];
 
-Matrix::Mat1D MeanSum(FEATURES, 0);
-Matrix::Mat1D MeanDelta(FEATURES, 0);
-
-int32_t PW0[255][2];
-int32_t PW[255][2];
+int32_t MeanSum[FEATURES] = {0};
+int32_t MeanDelta[FEATURES] = {0};
 
 void Init() {
-  FILE *fp = fopen(RESULT.c_str(), "w");
+  FILE *fp = fopen(RESULT, "w");
   for (int i = 0; i < 40000; i += 2) {
     char c[2] = {' ', ' '};
     fwrite(c, 2, 1, fp);
   }
   fclose(fp);
-
-  for (int i = 0; i <= 9; i++) {
-    PW0[i + '0'][0] = i * 100;
-    PW0[i + '0'][1] = i * 10;
-    PW[i + '0'][0] = i * 200;
-    PW[i + '0'][1] = i * 20;
-  }
 }
 
 inline int32_t GetNumber(const char *ptr, int pos) {
-  // return *(ptr + pos + 2) * 100 + *(ptr + pos + 3) * 10 - 110 * '0';
-  return PW0[*(ptr + pos + 2)][0] + PW0[*(ptr + pos + 3)][1];
+  // return (*(ptr + pos + 2) - '0') * 100;
+  return (*(ptr + pos + 2) - '0') * 100 + (*(ptr + pos + 3) - '0') * 10;
 }
 void HandleTrain(int pid, const char *buffer, long long start, long long end) {
   auto &data = ThreadData[pid];
@@ -103,8 +67,8 @@ void HandleTrain(int pid, const char *buffer, long long start, long long end) {
     }
 
     int32_t num = 0;
-    for (size_t i = 0, move = 0; i < FEATURES;
-         ptr += (48 + move), start += (48 + move)) {
+    for (size_t i = 0; i < FEATURES;) {
+      int32_t move = 0;
       for (size_t j = 0, pos = 0; j < 8; ++j, ++i, pos += 6) {
         if (*(ptr + pos) == '-') {
           ++move;
@@ -119,6 +83,8 @@ void HandleTrain(int pid, const char *buffer, long long start, long long end) {
           data.meansum0[i] += num;
         }
       }
+      ptr += (48 + move);
+      start += (48 + move);
     }
     ptr += 2;
     start += 2;
@@ -126,7 +92,7 @@ void HandleTrain(int pid, const char *buffer, long long start, long long end) {
 }
 void Train() {
   // 读文件
-  int fd = open(TRAIN.c_str(), O_RDONLY);
+  int fd = open(TRAIN, O_RDONLY);
   long long bufsize = SAMPLES * 6300;
   char *buffer = (char *)mmap(NULL, bufsize, PROT_READ, MAP_PRIVATE, fd, 0);
   close(fd);
@@ -164,7 +130,9 @@ void Train() {
     } else {
       ++ThreadData[0].zero;
     }
-    for (size_t i = 0, move = 0; i < FEATURES; ptr += (48 + move)) {
+    int32_t num = 0;
+    for (size_t i = 0; i < FEATURES;) {
+      int32_t move = 0;
       for (size_t j = 0, pos = 0; j < 8; ++j, ++i, pos += 6) {
         if (*(ptr + pos) == '-') {
           ++move;
@@ -179,6 +147,7 @@ void Train() {
           ThreadData[0].meansum0[i] += num;
         }
       }
+      ptr += (48 + move);
     }
     ptr += 2;
   }
@@ -192,14 +161,14 @@ void Train() {
   }
 }
 void Predict(int pid) {
-  long long bufsize = 20000 * 6000;
-  long long block = bufsize / 8;
+  long long bufsize = 120000000;
+  long long block = 15000000;
 
-  int fd = open(PREDICT.c_str(), O_RDONLY);
+  int fd = open(PREDICT, O_RDONLY);
   char *buffer = (char *)mmap(NULL, bufsize, PROT_READ, MAP_PRIVATE, fd, 0);
   close(fd);
 
-  int fd2 = open(RESULT.c_str(), O_RDWR | O_CREAT, 0666);
+  int fd2 = open(RESULT, O_RDWR | O_CREAT, 0666);
   char *result =
       (char *)mmap(NULL, 40000, PROT_READ | PROT_WRITE, MAP_SHARED, fd2, 0);
   close(fd2);
@@ -211,6 +180,7 @@ void Predict(int pid) {
 
   const char *ptr = buffer;
   int32_t distance = 0, num;
+
   for (size_t line = startline; line < endline; ++line) {
     if (ptr[2] >= '2') {
       result[line << 1] = '1';
@@ -221,15 +191,15 @@ void Predict(int pid) {
     distance = 0;
     for (size_t i = 0; i < FEATURES; ptr += 60) {
       for (size_t k = 0; k < 60; k += 6, ++i) {
-        // num = *(ptr + k + 2) * 200 + *(ptr + k + 3) * 20 - 220 * '0';
-        num = PW[*(ptr + k + 2)][0] + PW[*(ptr + k + 3)][1];
+        // num = (*(ptr + k + 2) - '0') * 200;
+        num = (*(ptr + k + 2) - '0') * 200 + (*(ptr + k + 3) - '0') * 20;
         distance += (num - MeanSum[i]) * MeanDelta[i];
       }
     }
     result[line << 1] = (distance < 0 ? '1' : '0');
     result[line << 1 | 1] = '\n';
   }
-  munmap(result, 40000);
+  // munmap(result, 40000);
 }
 
 int main() {
@@ -267,10 +237,11 @@ int main() {
   }
 
   if (pid <= 7) {
+    usleep(3);
     Predict(pid);
-    if (pid) exit(0);
+    exit(0);
   }
-
+  /*
   waitpid(child1, NULL, 0);
   waitpid(child2, NULL, 0);
   waitpid(child3, NULL, 0);
@@ -278,6 +249,6 @@ int main() {
   waitpid(child5, NULL, 0);
   waitpid(child6, NULL, 0);
   waitpid(child7, NULL, 0);
-
+  */
   return 0;
 }

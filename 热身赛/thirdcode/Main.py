@@ -76,7 +76,7 @@ class LR:
             ans = -x
             ans %= 1000
             ans = (ans - ans % 10)
-            return int(-ans)
+            return int(ans)
         else:
             ans = x
             ans %= 1000
@@ -105,8 +105,14 @@ class LR:
                 else:
                     self.Vec0 += data
                     zero += 1
-        self.Vec0 /= zero
-        self.Vec1 /= one
+        # self.Vec0 /= zero
+        # self.Vec1 /= one
+        self.Sum, self.Delta = [], []
+        for x1, x2 in zip(self.Vec0, self.Vec1):
+            x1 = int(x1 / zero)
+            x2 = int(x2 / one)
+            self.Sum.append(x1+x2)
+            self.Delta.append(x1-x2)
 
     def Predict(self):
         self.answer = []
@@ -122,8 +128,7 @@ class LR:
                     continue
                 dis = 0
                 for idx in range(1000):
-                    dis += (data[idx] - self.Vec1[idx])**2 - \
-                        (data[idx] - self.Vec0[idx])**2
+                    dis += (data[idx]*2-self.Sum[idx])*self.Delta[idx]
                 if dis < 0:
                     self.answer.append(1)
                 else:
@@ -159,7 +164,7 @@ if __name__ == "__main__":
     predict_file = "/projects/student/result.txt"
 
     lr = LR(train_file, test_file, predict_file)
-    lr.Train(2200)
+    lr.Train(589)
     lr.Predict()
 
     if debug:
