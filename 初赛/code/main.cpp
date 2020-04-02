@@ -29,12 +29,27 @@
 #include <vector>
 
 #ifdef LOCAL
-#define TRAIN "../data/std/test_data.txt"
-#define RESULT "../data/std/result.txt"
+#define TRAIN "../data/gen7w/test_data.txt"
+#define RESULT "../data/gen7w/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
 #endif
+
+class ScopeTime {
+ public:
+  ScopeTime() : m_begin(std::chrono::high_resolution_clock::now()) {}
+  void LogTime() const {
+    auto t = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::high_resolution_clock::now() - m_begin);
+    float elapsed = (float)(t.count() * 1.0) / 1000.0;
+    std::cerr << elapsed << "s\n";
+  }
+
+ private:
+  std::chrono::time_point<std::chrono::high_resolution_clock> m_begin;
+};
+
 std::ostream &operator<<(std::ostream &os, const std::vector<int> &mat) {
   os << "{";
   for (int i = 0; i < mat.size(); ++i) {
@@ -70,19 +85,19 @@ class XJBG {
 
  private:
   struct Edge {
-    int u, v, w;
-    int next;
-  } m_Edges[MAXM];
+    int v, w;
+  };
+  std::vector<Edge> m_Edges[MAXN];
   int m_edgeNum = 0;
   int m_dfn[MAXN];
   int m_low[MAXN];
-  int m_index[MAXN];
   int m_catrgory[MAXN];
   int m_stack[MAXN];
-  bool m_inStack[MAXN], m_vis[MAXN];
+  bool m_inStack[MAXN], m_vis[MAXN], m_NotCircle[MAXN];
   int m_tarjanCount = 0, m_stackTop = 0, m_scc = 0, m_useScc = 0;
 
   std::vector<int> m_Circles;
+  std::vector<int> m_TempPath;
   std::vector<std::vector<int>> m_Answer[5];
   int m_answers = 0;
 
@@ -96,28 +111,44 @@ class XJBG {
  private:
   inline void addEdge(int u, int v, int w);
   void tarjan(int fa, int u);
-  void findCircle(const int st, const int ctg, int u, int fa,
-                  std::vector<int> path);
+  void findCircle(const int &ctg, int u, int dep);
   void sortAnswer();
 };
 
-void XJBG::Init() { memset(m_index, -1, sizeof(m_index)); }
+void XJBG::Init() { m_TempPath = std::vector<int>(7, -1); }
 
 inline void XJBG::addEdge(int u, int v, int w) {
-  m_Edges[m_edgeNum] = Edge{u, v, w, m_index[u]};
-  m_index[u] = m_edgeNum++;
+  m_Edges[u].emplace_back(Edge{v, w});
+  ++m_edgeNum;
 }
 
 void XJBG::LoadData() {
-  std::ifstream fin(TRAIN);
-  int u, v, w;
-  char c;
-  while (fin >> u >> c >> v >> c >> w) {
-    addEdge(u, v, w);
-  }
-  std::cerr << "@ edge: " << m_edgeNum << "\n";
-  fin.close();
+  struct stat sb;
+  int fd = open(TRAIN, O_RDONLY);
+  fstat(fd, &sb);
+  long long bufsize = sb.st_size;
+  char *buffer = (char *)mmap(NULL, bufsize, PROT_READ, MAP_PRIVATE, fd, 0);
+  close(fd);
 
+  int temp[2], idx = 0, x = 0;
+  long long start = 0;
+  while (start < bufsize) {
+    if (*(buffer + start) == ',') {
+      temp[idx++] = x;
+      x = 0;
+    } else if (*(buffer + start) == '\n') {
+      addEdge(temp[0], temp[1], x);
+      idx = 0;
+      x = 0;
+    } else {
+      x = x * 10 + (*(buffer + start) - '0');
+    }
+    ++start;
+  }
+
+#ifdef LOCAL
+  std::cerr << "@ edge: " << m_edgeNum << "\n";
+#endif
 #ifdef TEST
   std::set<std::vector<int>> st;
   for (int i = 0; i < m_edgeNum; ++i) {
@@ -131,8 +162,9 @@ void XJBG::tarjan(int fa, int u) {
   m_dfn[u] = m_low[u] = ++m_tarjanCount;
   m_stack[m_stackTop++] = u;
   m_inStack[u] = 1;
-  for (int i = m_index[u]; i != -1; i = m_Edges[i].next) {
-    int v = m_Edges[i].v;
+
+  for (auto &it : m_Edges[u]) {
+    int v = it.v;
     if (!m_dfn[v]) {
       this->tarjan(u, v);
       m_low[u] = std::min(m_low[u], m_low[v]);
@@ -140,6 +172,7 @@ void XJBG::tarjan(int fa, int u) {
       m_low[u] = std::min(m_low[u], m_dfn[v]);
     }
   }
+
   if (m_dfn[u] == m_low[u]) {
     std::vector<int> tmp;
     int cur;
@@ -157,32 +190,29 @@ void XJBG::tarjan(int fa, int u) {
   }
 }
 
-void XJBG::findCircle(const int st, const int ctg, int fa, int u,
-                      std::vector<int> path) {
-  int sz = path.size();
-  if (sz > 7) return;
+void XJBG::findCircle(const int &ctg, int u, int dep) {
+  if (dep > 7 || m_vis[u] || m_catrgory[u] != ctg) return;
+  m_vis[u] = true;
 
-  for (int i = m_index[u]; i != -1; i = m_Edges[i].next) {
-    int v = m_Edges[i].v;
-    if (v == st && sz >= 3 && sz <= 7) {
-      m_Answer[sz - 3].emplace_back(path);
+  for (auto &it : m_Edges[u]) {
+    int v = it.v;
+
+    if (v == m_TempPath[0] && dep >= 3) {
+      m_Answer[dep - 3].emplace_back(m_TempPath);
       ++m_answers;
       continue;
     }
 
-    if (v == fa || m_catrgory[v] != ctg || m_vis[v]) continue;
-
-    path.emplace_back(v);
-    m_vis[v] = true;
-    this->findCircle(st, ctg, u, v, path);
-    path.pop_back();
-    m_vis[v] = false;
+    m_TempPath[dep] = v;
+    this->findCircle(ctg, v, dep + 1);
   }
+
+  m_vis[u] = false;
 }
 
 void XJBG::TarJan() {
   for (int i = 0; i < MAXN; ++i) {
-    if (!m_dfn[i] && m_index[i] != -1) {
+    if (!m_dfn[i] && !m_Edges[i].empty()) {
       this->tarjan(-1, i);
     }
   }
@@ -194,10 +224,11 @@ void XJBG::TarJan() {
 }
 
 void XJBG::FindPath() {
+  ScopeTime t;
   for (auto &v : m_Circles) {
+    m_TempPath[0] = v;
+    this->findCircle(m_catrgory[v], v, 1);
     m_vis[v] = true;
-    std::vector<int> path{v};
-    this->findCircle(v, m_catrgory[v], -1, v, path);
   }
 
 #ifdef LOCAL
@@ -205,7 +236,8 @@ void XJBG::FindPath() {
   for (int i = 3; i < 7; ++i) {
     std::cerr << m_Answer[i - 3].size() << ", ";
   }
-  std::cerr << m_Answer[7 - 3].size() << ")\n";
+  std::cerr << m_Answer[7 - 3].size() << ") ";
+  t.LogTime();
 #endif
 }
 
@@ -229,20 +261,21 @@ void XJBG::SaveAnswer() {
   this->sortAnswer();
   std::ofstream fout(RESULT);
   fout << m_answers << "\n";
-  for (auto &ans : m_Answer) {
-    for (auto &it : ans) {
-      for (int i = 0; i < it.size(); ++i) {
-        if (i != 0) fout << ",";
-        fout << it[i];
+  for (int i = 0; i < 5; ++i) {
+    for (auto &it : m_Answer[i]) {
+      for (int k = 0; k < i + 3; ++k) {
+        if (k != 0) fout << ",";
+        fout << it[k];
       }
       fout << "\n";
     }
   }
   fout.close();
-  usleep(600000);
 }
 
 int main() {
+  std::cerr << std::fixed << std::setprecision(3);
+
   XJBG *xjbg = new XJBG();
   xjbg->Init();
   xjbg->LoadData();
