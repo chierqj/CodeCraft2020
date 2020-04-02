@@ -75,6 +75,9 @@
     "memory_resource": "cpp",
     "filesystem": "cpp",
     "__tree": "cpp",
-    "map": "cpp"
+    "map": "cpp",
+    "condition_variable": "cpp",
+    "set": "cpp",
+    "unordered_set": "cpp"
   }
 }
