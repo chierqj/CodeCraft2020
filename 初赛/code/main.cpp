@@ -99,7 +99,7 @@ class XJBG {
   struct Edge {
     int v, w;
   };
-  std::vector<Edge> m_Edges[MAXN];              // 边
+  std::vector<Edge> m_Sons[MAXN];               // 边
   int m_edgeNum = 0;                            // 边数目
   int m_dfn[MAXN], m_low[MAXN], m_stack[MAXN];  // Tarjan
   int m_catrgory[MAXN];                         // 所在联通分量id
@@ -127,6 +127,7 @@ class XJBG {
   void sortAnswer();
   inline int GetID(int x);
   int GetMapID(int x);
+  void pretreatTravel(int &st, int u, int dep);
 };
 
 void XJBG::Init() { m_TempPath = std::vector<int>(7, -1); }
@@ -144,7 +145,7 @@ int XJBG::GetMapID(int x) {
 inline void XJBG::addEdge(int u, int v, int w) {
   u = this->GetMapID(u);
   v = this->GetMapID(v);
-  m_Edges[u].emplace_back(Edge{v, w});
+  m_Sons[u].emplace_back(Edge{v, w});
   ++m_edgeNum;
   ++m_inDegree[v];
   ++m_outDegree[u];
@@ -184,7 +185,7 @@ void XJBG::LoadData() {
 #ifdef TEST
   std::set<std::vector<int>> st;
   for (int i = 0; i < MAXN; ++i) {
-    for (auto &it : m_Edges[i]) {
+    for (auto &it : m_Sons[i]) {
       st.insert({i, it.v});
     }
   }
@@ -192,33 +193,20 @@ void XJBG::LoadData() {
 #endif
 }
 
+void XJBG::pretreatTravel(int &st, int u, int dep) {
+  if (dep > LIMIT_STEP) return;
+  m_StepArrive[st].insert(u);
+  for (auto &it : m_Sons[u]) {
+    int v = it.v;
+    if (m_vis[v] || m_catrgory[v] != m_catrgory[st]) continue;
+    pretreatTravel(st, v, dep + 1);
+  }
+}
 void XJBG::PreRunPoint() {
   ScopeTime t;
 
-  auto bfs = [&](int st) {
-    std::queue<std::pair<int, int>> Q;
-    std::vector<bool> vis(m_IDDom.size(), false);
-    Q.push(std::make_pair(st, 0));
-    vis[st] = true;
-    int ctg = m_catrgory[st];
-    while (!Q.empty()) {
-      auto head = Q.front();
-      Q.pop();
-      if (head.second > LIMIT_STEP) {
-        continue;
-      }
-      m_StepArrive[st].insert(head.first);
-      for (auto &it : m_Edges[head.first]) {
-        int v = it.v;
-        if (vis[v] || m_catrgory[v] != ctg) continue;
-        vis[v] = true;
-        Q.push(std::make_pair(v, head.second + 1));
-      }
-    }
-  };
   for (auto &v : m_Circles) {
-    bfs(v);
-    // std::cerr << i << ": " << m_StepArrive[i].size() << "\n";
+    pretreatTravel(v, v, 0);
   }
 
 #ifdef LOCAL
@@ -232,7 +220,7 @@ void XJBG::tarjan(int u) {
   m_stack[m_stackTop++] = u;
   m_inStack[u] = 1;
 
-  for (auto &it : m_Edges[u]) {
+  for (auto &it : m_Sons[u]) {
     int v = it.v;
     if (!m_dfn[v]) {
       this->tarjan(v);
@@ -279,7 +267,7 @@ void XJBG::findCircle(const int &ctg, int u, int dep) {
 
   m_vis[u] = true;
 
-  for (auto &it : m_Edges[u]) {
+  for (auto &it : m_Sons[u]) {
     int v = it.v;
     if (v == m_TempPath[0] && dep >= 3) {
       this->handelCircle(dep);
@@ -295,7 +283,7 @@ void XJBG::TarJan() {
   ScopeTime t;
 
   for (int i = 0; i < m_IDDom.size(); ++i) {
-    if (!m_dfn[i] && !m_Edges[i].empty()) {
+    if (!m_dfn[i] && !m_Sons[i].empty()) {
       this->tarjan(i);
     }
   }
