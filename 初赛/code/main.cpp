@@ -19,6 +19,7 @@
 #include <iomanip>
 #include <iostream>
 #include <numeric>
+#include <queue>
 #include <random>
 #include <set>
 #include <sstream>
@@ -26,12 +27,13 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
 #ifdef LOCAL
-#define TRAIN "../data/gen/test_data.txt"
-#define RESULT "../data/gen/result.txt"
+#define TRAIN "../data/1004812/test_data.txt"
+#define RESULT "../data/1004812/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -81,29 +83,33 @@ std::ostream &operator<<(std::ostream &os,
 
 class XJBG {
  private:
-  static const int MAXN = 560000 + 7;
-  std::unordered_map<int, int> m_IDToMap;
-  std::vector<int> m_IDDom;
+  static const int MAXN = 560000 + 7;      // 总点数
+  std::unordered_map<int, int> m_IDToMap;  // ID->MapID
+  std::vector<int> m_IDDom;                // MapID->ID
+
+  int m_answers = 0;                          // 总环数目
+  std::vector<int> m_Circles;                 // 大于3的联通分量的点
+  std::vector<int> m_TempPath;                // 递归过程中存路
+  std::vector<std::vector<int>> m_Answer[5];  // 长度3-7的环
+
+  const int LIMIT_STEP = 3;
+  std::unordered_set<int> m_StepArrive[MAXN];  // 一个点STEP步可以到达的结点
 
  private:
   struct Edge {
     int v, w;
   };
-  std::vector<Edge> m_Edges[MAXN];
-  int m_edgeNum = 0;
-  int m_dfn[MAXN];
-  int m_low[MAXN];
-  int m_catrgory[MAXN];
-  int m_stack[MAXN];
-  int m_inDegree[MAXN], m_outDegree[MAXN];
-  bool m_inStack[MAXN], m_vis[MAXN], m_inCircle[MAXN];
-
-  int m_tarjanCount = 0, m_stackTop = 0, m_scc = 0, m_useScc = 0;
-
-  std::vector<int> m_Circles;
-  std::vector<int> m_TempPath;
-  std::vector<std::vector<int>> m_Answer[5];
-  int m_answers = 0;
+  std::vector<Edge> m_Edges[MAXN];              // 边
+  int m_edgeNum = 0;                            // 边数目
+  int m_dfn[MAXN], m_low[MAXN], m_stack[MAXN];  // Tarjan
+  int m_catrgory[MAXN];                         // 所在联通分量id
+  int m_inDegree[MAXN], m_outDegree[MAXN];      // 出入度
+  bool m_inStack[MAXN];                         // Tarjan标记在不在栈内
+  bool m_vis[MAXN];                             // 找环标记
+  bool m_inCircle[MAXN];                        // 在不在找过的环内
+  int m_tarjanCount = 0;                        // Tarjan搜索顺序
+  int m_stackTop = 0;                           // Tarjan栈top标号
+  int m_scc = 0, m_useScc = 0;                  // 总联通分量和大于3的
 
  public:
   void Init();
@@ -111,6 +117,7 @@ class XJBG {
   void TarJan();
   void FindPath();
   void SaveAnswer();
+  void PreRunPoint();
 
  private:
   inline void addEdge(int u, int v, int w);
@@ -144,6 +151,8 @@ inline void XJBG::addEdge(int u, int v, int w) {
 }
 
 void XJBG::LoadData() {
+  ScopeTime t;
+
   struct stat sb;
   int fd = open(TRAIN, O_RDONLY);
   fstat(fd, &sb);
@@ -168,8 +177,9 @@ void XJBG::LoadData() {
   }
 
 #ifdef LOCAL
-  std::cerr << "@ point: " << m_IDDom.size() << "\n";
-  std::cerr << "@ edge: " << m_edgeNum << "\n";
+  std::cerr << "@ LoadData: (V: " << m_IDDom.size() << ", E: " << m_edgeNum
+            << ") #";
+  t.LogTime();
 #endif
 #ifdef TEST
   std::set<std::vector<int>> st;
@@ -179,6 +189,41 @@ void XJBG::LoadData() {
     }
   }
   std::cerr << "@ unique edge: " << st.size() << "\n";
+#endif
+}
+
+void XJBG::PreRunPoint() {
+  ScopeTime t;
+
+  auto bfs = [&](int st) {
+    std::queue<std::pair<int, int>> Q;
+    std::vector<bool> vis(m_IDDom.size(), false);
+    Q.push(std::make_pair(st, 0));
+    vis[st] = true;
+    int ctg = m_catrgory[st];
+    while (!Q.empty()) {
+      auto head = Q.front();
+      Q.pop();
+      if (head.second > LIMIT_STEP) {
+        continue;
+      }
+      m_StepArrive[st].insert(head.first);
+      for (auto &it : m_Edges[head.first]) {
+        int v = it.v;
+        if (vis[v] || m_catrgory[v] != ctg) continue;
+        vis[v] = true;
+        Q.push(std::make_pair(v, head.second + 1));
+      }
+    }
+  };
+  for (auto &v : m_Circles) {
+    bfs(v);
+    // std::cerr << i << ": " << m_StepArrive[i].size() << "\n";
+  }
+
+#ifdef LOCAL
+  std::cerr << "@ PreRun #";
+  t.LogTime();
 #endif
 }
 
@@ -222,11 +267,16 @@ void XJBG::handelCircle(const int &dep) {
   }
   m_Answer[dep - 3].emplace_back(tmp);
   ++m_answers;
-  if (m_answers % 10000 == 0) std::cerr << m_answers << "\n";
+  // if (m_answers % 10000 == 0) std::cerr << m_answers << "\n";
 }
 
 void XJBG::findCircle(const int &ctg, int u, int dep) {
   if (dep > 7 || m_vis[u] || m_catrgory[u] != ctg) return;
+  if (dep > (7 - LIMIT_STEP) &&
+      m_StepArrive[u].find(m_TempPath[0]) == m_StepArrive[u].end()) {
+    return;
+  }
+
   m_vis[u] = true;
 
   for (auto &it : m_Edges[u]) {
@@ -242,6 +292,8 @@ void XJBG::findCircle(const int &ctg, int u, int dep) {
 }
 
 void XJBG::TarJan() {
+  ScopeTime t;
+
   for (int i = 0; i < m_IDDom.size(); ++i) {
     if (!m_dfn[i] && !m_Edges[i].empty()) {
       this->tarjan(i);
@@ -253,12 +305,14 @@ void XJBG::TarJan() {
             });
 
 #ifdef LOCAL
-  std::cerr << "@ scc: " << m_scc << ", usescc: " << m_useScc << "\n";
+  std::cerr << "@ TarJan: (scc: " << m_scc << ", usescc: " << m_useScc << ") #";
+  t.LogTime();
 #endif
 }
 
 void XJBG::FindPath() {
   ScopeTime t;
+
   for (auto &v : m_Circles) {
     if (m_inCircle[v] && m_inDegree[v] == m_outDegree[v] &&
         m_inDegree[v] == 1) {
@@ -270,11 +324,11 @@ void XJBG::FindPath() {
   }
 
 #ifdef LOCAL
-  std::cerr << "@ total: " << m_answers << " (";
+  std::cerr << "@ Answer: " << m_answers << "(";
   for (int i = 3; i < 7; ++i) {
-    std::cerr << m_Answer[i - 3].size() << ", ";
+    std::cerr << m_Answer[i - 3].size() << ",";
   }
-  std::cerr << m_Answer[7 - 3].size() << ") ";
+  std::cerr << m_Answer[7 - 3].size() << ") #";
   t.LogTime();
 #endif
 }
@@ -322,6 +376,7 @@ int main() {
   xjbg->Init();
   xjbg->LoadData();
   xjbg->TarJan();
+  xjbg->PreRunPoint();
   xjbg->FindPath();
   xjbg->SaveAnswer();
   return 0;
