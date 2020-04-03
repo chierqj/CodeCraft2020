@@ -127,7 +127,8 @@ class XJBG {
   void sortAnswer();
   inline int GetID(int x);
   int GetMapID(int x);
-  void pretreatTravel(int &st, int u, int dep);
+  void pretreatTravelDFS(int &st, int u, int dep);
+  void pretreatTravelBFS(int &st);
 };
 
 void XJBG::Init() { m_TempPath = std::vector<int>(7, -1); }
@@ -193,20 +194,39 @@ void XJBG::LoadData() {
 #endif
 }
 
-void XJBG::pretreatTravel(int &st, int u, int dep) {
+void XJBG::pretreatTravelDFS(int &st, int u, int dep) {
   if (dep > LIMIT_STEP) return;
   m_StepArrive[st].insert(u);
   for (auto &it : m_Sons[u]) {
     int v = it.v;
     if (m_vis[v] || m_catrgory[v] != m_catrgory[st]) continue;
-    pretreatTravel(st, v, dep + 1);
+    pretreatTravelDFS(st, v, dep + 1);
+  }
+}
+void XJBG::pretreatTravelBFS(int &st) {
+  std::queue<std::pair<int, int>> Q;
+  std::vector<bool> vis(m_IDDom.size(), false);
+  Q.push(std::make_pair(st, 0));
+  vis[st] = true;
+  int ctg = m_catrgory[st];
+  while (!Q.empty()) {
+    auto head = Q.front();
+    Q.pop();
+    m_StepArrive[st].insert(head.first);
+    if (head.second >= LIMIT_STEP) continue;
+    for (auto &it : m_Sons[head.first]) {
+      int v = it.v;
+      if (vis[v] || m_catrgory[v] != ctg) continue;
+      vis[v] = true;
+      Q.push(std::make_pair(v, head.second + 1));
+    }
   }
 }
 void XJBG::PreRunPoint() {
   ScopeTime t;
-
   for (auto &v : m_Circles) {
-    pretreatTravel(v, v, 0);
+    // this->pretreatTravelDFS(v, v, 0);
+    this->pretreatTravelBFS(v);
   }
 
 #ifdef LOCAL
