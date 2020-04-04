@@ -32,8 +32,8 @@
 #include <vector>
 
 #ifdef LOCAL
-#define TRAIN "../data/1004812/test_data.txt"
-#define RESULT "../data/1004812/result.txt"
+#define TRAIN "../data/3512444/test_data.txt"
+#define RESULT "../data/3512444/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -92,8 +92,9 @@ class XJBG {
   std::vector<int> m_TempPath;                // 递归过程中存路
   std::vector<std::vector<int>> m_Answer[5];  // 长度3-7的环
 
-  const int LIMIT_STEP = 3;
-  std::vector<bool> m_StepArriveVec;  // 一个点STEP步可以到达的结点
+  static const int LIMIT_STEP = 3;
+  // std::vector<bool> m_StepArriveVec;  // 一个点STEP步可以到达的结点
+  std::vector<bool> m_StepArriveVec[LIMIT_STEP];  // 一个点STEP步可以到达的结点
 
  private:
   struct Edge {
@@ -254,7 +255,9 @@ void XJBG::pretreatTravelBFS(int &st) {
   while (!Q.empty()) {
     auto head = Q.front();
     Q.pop();
-    m_StepArriveVec[head.first] = true;
+    if (head.second <= 1) m_StepArriveVec[0][head.first] = true;
+    if (head.second <= 2) m_StepArriveVec[1][head.first] = true;
+    if (head.second <= 3) m_StepArriveVec[2][head.first] = true;
     if (head.second >= LIMIT_STEP) continue;
     for (auto &it : m_Fathers[head.first]) {
       int v = it.v;
@@ -265,22 +268,23 @@ void XJBG::pretreatTravelBFS(int &st) {
   }
 }
 
+void XJBG::handelCircle(const int &dep) {
+  m_Answer[dep - 3].emplace_back(m_TempPath);
+  ++m_answers;
+}
 bool XJBG::judgeReturn(const int &ctg, const int &u, const int &dep) {
   if (dep > 7 || m_vis[u] || m_catrgory[u] != ctg) return true;
-  if (dep > (7 - LIMIT_STEP) && !m_StepArriveVec[u]) {
+  if (dep == 7) {
+    if (m_StepArriveVec[0][u]) this->handelCircle(dep);
+    return true;
+  }
+  if (dep == 6 && !m_StepArriveVec[1][u]) {
+    return true;
+  }
+  if (dep == 5 && !m_StepArriveVec[2][u]) {
     return true;
   }
   return false;
-}
-void XJBG::handelCircle(const int &dep) {
-  std::vector<int> tmp;
-  for (int i = 0; i < dep; ++i) {
-    m_inCircle[m_TempPath[i]] = true;
-    tmp.emplace_back(this->GetID(m_TempPath[i]));
-  }
-  m_Answer[dep - 3].emplace_back(tmp);
-  ++m_answers;
-  // if (m_answers % 10000 == 0) std::cerr << m_answers / 10000 << "\n";
 }
 void XJBG::findCircle(const int &ctg, int u, int dep) {
   if (this->judgeReturn(ctg, u, dep)) {
@@ -303,11 +307,9 @@ void XJBG::FindPath() {
   ScopeTime t;
 
   for (auto &v : m_Circles) {
-    if (m_inCircle[v] && m_inDegree[v] == m_outDegree[v] &&
-        m_inDegree[v] == 1) {
-      continue;
+    for (auto &it : m_StepArriveVec) {
+      it = std::vector<bool>(m_IDDom.size(), false);
     }
-    m_StepArriveVec = std::vector<bool>(m_IDDom.size(), false);
     this->pretreatTravelBFS(v);
     m_TempPath[0] = v;
     this->findCircle(m_catrgory[v], v, 1);
@@ -325,8 +327,17 @@ void XJBG::FindPath() {
 }
 
 void XJBG::sortAnswer() {
+  int idx = 0;
   for (auto &it : m_Answer) {
-    std::sort(it.begin(), it.end());
+    std::sort(it.begin(), it.end(),
+              [&](const std::vector<int> &vt1, const std::vector<int> &vt2) {
+                for (int i = 0; i < idx + 3; ++i) {
+                  if (vt1[i] == vt2[i]) continue;
+                  return this->GetID(vt1[i]) < this->GetID(vt2[i]);
+                }
+                return false;
+              });
+    ++idx;
   }
 
 #ifdef TEST
@@ -352,7 +363,7 @@ void XJBG::SaveAnswer() {
     for (auto &it : m_Answer[i]) {
       for (int k = 0; k < i + 3; ++k) {
         if (k != 0) fout << ",";
-        fout << it[k];
+        fout << this->GetID(it[k]);
       }
       fout << "\n";
     }
@@ -368,6 +379,6 @@ int main() {
   xjbg->LoadData();
   xjbg->TarJan();
   xjbg->FindPath();
-  xjbg->SaveAnswer();
+  // xjbg->SaveAnswer();
   return 0;
 }
