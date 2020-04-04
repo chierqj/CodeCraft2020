@@ -93,13 +93,14 @@ class XJBG {
   std::vector<std::vector<int>> m_Answer[5];  // 长度3-7的环
 
   const int LIMIT_STEP = 3;
-  std::unordered_set<int> m_StepArrive[MAXN];  // 一个点STEP步可以到达的结点
+  std::vector<bool> m_StepArriveVec;  // 一个点STEP步可以到达的结点
 
  private:
   struct Edge {
     int v, w;
   };
   std::vector<Edge> m_Sons[MAXN];               // 边
+  std::vector<Edge> m_Fathers[MAXN];            // 边
   int m_edgeNum = 0;                            // 边数目
   int m_dfn[MAXN], m_low[MAXN], m_stack[MAXN];  // Tarjan
   int m_catrgory[MAXN];                         // 所在联通分量id
@@ -117,7 +118,6 @@ class XJBG {
   void TarJan();
   void FindPath();
   void SaveAnswer();
-  void PreRunPoint();
 
  private:
   inline void addEdge(int u, int v, int w);
@@ -127,8 +127,8 @@ class XJBG {
   void sortAnswer();
   inline int GetID(int x);
   int GetMapID(int x);
-  void pretreatTravelDFS(int &st, int u, int dep);
   void pretreatTravelBFS(int &st);
+  bool judgeReturn(const int &ctg, const int &u, const int &dep);
 };
 
 void XJBG::Init() { m_TempPath = std::vector<int>(7, -1); }
@@ -147,6 +147,7 @@ inline void XJBG::addEdge(int u, int v, int w) {
   u = this->GetMapID(u);
   v = this->GetMapID(v);
   m_Sons[u].emplace_back(Edge{v, w});
+  m_Fathers[v].emplace_back(Edge{u, w});
   ++m_edgeNum;
   ++m_inDegree[v];
   ++m_outDegree[u];
@@ -194,47 +195,6 @@ void XJBG::LoadData() {
 #endif
 }
 
-void XJBG::pretreatTravelDFS(int &st, int u, int dep) {
-  if (dep > LIMIT_STEP) return;
-  m_StepArrive[st].insert(u);
-  for (auto &it : m_Sons[u]) {
-    int v = it.v;
-    if (m_vis[v] || m_catrgory[v] != m_catrgory[st]) continue;
-    pretreatTravelDFS(st, v, dep + 1);
-  }
-}
-void XJBG::pretreatTravelBFS(int &st) {
-  std::queue<std::pair<int, int>> Q;
-  std::vector<bool> vis(m_IDDom.size(), false);
-  Q.push(std::make_pair(st, 0));
-  vis[st] = true;
-  int ctg = m_catrgory[st];
-  while (!Q.empty()) {
-    auto head = Q.front();
-    Q.pop();
-    m_StepArrive[st].insert(head.first);
-    if (head.second >= LIMIT_STEP) continue;
-    for (auto &it : m_Sons[head.first]) {
-      int v = it.v;
-      if (vis[v] || m_catrgory[v] != ctg) continue;
-      vis[v] = true;
-      Q.push(std::make_pair(v, head.second + 1));
-    }
-  }
-}
-void XJBG::PreRunPoint() {
-  ScopeTime t;
-  for (auto &v : m_Circles) {
-    // this->pretreatTravelDFS(v, v, 0);
-    this->pretreatTravelBFS(v);
-  }
-
-#ifdef LOCAL
-  std::cerr << "@ PreRun #";
-  t.LogTime();
-#endif
-}
-
 void XJBG::tarjan(int u) {
   m_dfn[u] = m_low[u] = ++m_tarjanCount;
   m_stack[m_stackTop++] = u;
@@ -266,39 +226,6 @@ void XJBG::tarjan(int u) {
     ++m_scc;
   }
 }
-
-void XJBG::handelCircle(const int &dep) {
-  std::vector<int> tmp;
-  for (int i = 0; i < dep; ++i) {
-    m_inCircle[m_TempPath[i]] = true;
-    tmp.emplace_back(this->GetID(m_TempPath[i]));
-  }
-  m_Answer[dep - 3].emplace_back(tmp);
-  ++m_answers;
-  // if (m_answers % 10000 == 0) std::cerr << m_answers << "\n";
-}
-
-void XJBG::findCircle(const int &ctg, int u, int dep) {
-  if (dep > 7 || m_vis[u] || m_catrgory[u] != ctg) return;
-  if (dep > (7 - LIMIT_STEP) &&
-      m_StepArrive[u].find(m_TempPath[0]) == m_StepArrive[u].end()) {
-    return;
-  }
-
-  m_vis[u] = true;
-
-  for (auto &it : m_Sons[u]) {
-    int v = it.v;
-    if (v == m_TempPath[0] && dep >= 3) {
-      this->handelCircle(dep);
-      continue;
-    }
-    m_TempPath[dep] = v;
-    this->findCircle(ctg, v, dep + 1);
-  }
-  m_vis[u] = false;
-}
-
 void XJBG::TarJan() {
   ScopeTime t;
 
@@ -318,6 +245,60 @@ void XJBG::TarJan() {
 #endif
 }
 
+void XJBG::pretreatTravelBFS(int &st) {
+  std::queue<std::pair<int, int>> Q;
+  std::vector<bool> vis(m_IDDom.size(), false);
+  Q.push(std::make_pair(st, 0));
+  vis[st] = true;
+  int ctg = m_catrgory[st];
+  while (!Q.empty()) {
+    auto head = Q.front();
+    Q.pop();
+    m_StepArriveVec[head.first] = true;
+    if (head.second >= LIMIT_STEP) continue;
+    for (auto &it : m_Fathers[head.first]) {
+      int v = it.v;
+      if (vis[v] || m_catrgory[v] != ctg) continue;
+      vis[v] = true;
+      Q.push(std::make_pair(v, head.second + 1));
+    }
+  }
+}
+
+bool XJBG::judgeReturn(const int &ctg, const int &u, const int &dep) {
+  if (dep > 7 || m_vis[u] || m_catrgory[u] != ctg) return true;
+  if (dep > (7 - LIMIT_STEP) && !m_StepArriveVec[u]) {
+    return true;
+  }
+  return false;
+}
+void XJBG::handelCircle(const int &dep) {
+  std::vector<int> tmp;
+  for (int i = 0; i < dep; ++i) {
+    m_inCircle[m_TempPath[i]] = true;
+    tmp.emplace_back(this->GetID(m_TempPath[i]));
+  }
+  m_Answer[dep - 3].emplace_back(tmp);
+  ++m_answers;
+  // if (m_answers % 10000 == 0) std::cerr << m_answers / 10000 << "\n";
+}
+void XJBG::findCircle(const int &ctg, int u, int dep) {
+  if (this->judgeReturn(ctg, u, dep)) {
+    return;
+  }
+  m_vis[u] = true;
+  for (auto &it : m_Sons[u]) {
+    int v = it.v;
+    if (v == m_TempPath[0] && dep >= 3) {
+      this->handelCircle(dep);
+      continue;
+    }
+    m_TempPath[dep] = v;
+    this->findCircle(ctg, v, dep + 1);
+  }
+  m_vis[u] = false;
+}
+
 void XJBG::FindPath() {
   ScopeTime t;
 
@@ -326,6 +307,8 @@ void XJBG::FindPath() {
         m_inDegree[v] == 1) {
       continue;
     }
+    m_StepArriveVec = std::vector<bool>(m_IDDom.size(), false);
+    this->pretreatTravelBFS(v);
     m_TempPath[0] = v;
     this->findCircle(m_catrgory[v], v, 1);
     m_vis[v] = true;
@@ -384,7 +367,6 @@ int main() {
   xjbg->Init();
   xjbg->LoadData();
   xjbg->TarJan();
-  xjbg->PreRunPoint();
   xjbg->FindPath();
   xjbg->SaveAnswer();
   return 0;

@@ -1,6 +1,6 @@
 import random
 
-n, m, scc = 1000000, 280000, 8000
+n, m, scc = 28500, 280000, 2
 file = "./gen/test_data.txt"
 
 
