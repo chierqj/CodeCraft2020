@@ -83,9 +83,12 @@ std::ostream &operator<<(std::ostream &os,
 
 class XJBG {
  public:
-  static const int NTHREAD = 4;            // 线程个数
-  static const int LIMIT_STEP = 3;         // 预估步长
-  static const int MAXN = 560000 + 7;      // 总点数
+  static const int NTHREAD = 4;        // 线程个数
+  static const int LIMIT_STEP = 3;     // 预估步长
+  static const int MAXN = 560000 + 7;  // 总点数
+  const int PARAM[NTHREAD] = {2, 3, 5, 40};
+
+ private:
   std::unordered_map<int, int> m_IDToMap;  // ID->MapID
   std::vector<int> m_IDDom;                // MapID->ID
   int m_answers = 0;                       // 总环数目
@@ -342,12 +345,14 @@ void XJBG::FindPath() {
     }
   };
 
-  int start = 0, block = m_Circles.size() / NTHREAD;
+  int sum = 0;
+  for (int i = 0; i < NTHREAD; ++i) sum += PARAM[i];
+  int start = 0, block = m_Circles.size() / sum;
   std::vector<std::thread> Threads(NTHREAD);
   for (int i = 0; i < NTHREAD; ++i) {
-    int end = (i == NTHREAD - 1 ? m_Circles.size() : start + block);
+    int end = (i == NTHREAD - 1 ? m_Circles.size() : start + block * PARAM[i]);
     Threads[i] = std::thread(foo, i, start, end);
-    start += block;
+    start += block * PARAM[i];
   }
   for (auto &it : Threads) it.join();
   for (auto &it : ThreadData) m_answers += it.answers;
@@ -356,11 +361,12 @@ void XJBG::FindPath() {
   std::cerr << "@ Answer: " << m_answers << " #";
   t.LogTime();
   for (int i = 0; i < NTHREAD; ++i) {
-    std::cerr << "* " << i << ": (";
+    const auto &data = ThreadData[i];
+    std::cerr << "* " << i << ": " << data.answers << "(";
     for (int j = 0; j < 4; ++j) {
-      std::cerr << ThreadData[i].Answer[j].size() << ", ";
+      std::cerr << data.Answer[j].size() << ", ";
     }
-    std::cerr << ThreadData[i].Answer[4].size() << ")\n";
+    std::cerr << data.Answer[4].size() << ")\n";
   }
 #endif
 }
@@ -371,7 +377,6 @@ void XJBG::SaveAnswer() {
   uint32_t bufsize = 80 * m_answers + 15;
   uint32_t idx = bufsize;
   char *buffer = new char[bufsize];
-  buffer[--idx] = 0;
   for (int len = 4; len >= 0; --len) {
     for (int thread = NTHREAD - 1; thread >= 0; --thread) {
       const auto &data = ThreadData[thread].Answer[len];
@@ -396,8 +401,13 @@ void XJBG::SaveAnswer() {
     x /= 10;
   }
 
-  FILE *fp = fopen(RESULT, "w");
-  fputs(&buffer[idx], fp);
+  long long length = bufsize - idx;
+  int fd = open(RESULT, O_RDWR | O_CREAT, 0666);
+  char *result =
+      (char *)mmap(NULL, length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  ftruncate(fd, length);
+  close(fd);
+  memcpy(result, buffer + idx, length);
 
 #ifdef LOCAL
   std::cerr << "@ WriteAnswer # ";
