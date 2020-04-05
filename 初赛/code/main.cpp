@@ -109,7 +109,7 @@ class XJBG {
   std::vector<Edge> m_Fathers[MAXN];            // 边
   int m_edgeNum = 0;                            // 边数目
   int m_dfn[MAXN], m_low[MAXN], m_stack[MAXN];  // Tarjan
-  int m_catrgory[MAXN];                         // 所在联通分量id
+  int m_category[MAXN];                         // 所在联通分量id
   int m_inDegree[MAXN], m_outDegree[MAXN];      // 出入度
   bool m_inStack[MAXN];                         // Tarjan标记在不在栈内
   bool m_inCircle[MAXN];                        // 在不在找过的环内
@@ -220,7 +220,7 @@ void XJBG::tarjan(int u) {
     do {
       cur = m_stack[--m_stackTop];
       m_inStack[cur] = 0;
-      m_catrgory[cur] = u;
+      m_category[cur] = u;
       tmp.emplace_back(cur);
     } while (cur != u);
     if (tmp.size() >= 3) {
@@ -254,17 +254,28 @@ void XJBG::pretreatTravelBFS(Node &Data, int &st) {
   std::vector<bool> vis(m_IDDom.size(), false);
   Q.push(std::make_pair(st, 0));
   vis[st] = true;
-  int ctg = m_catrgory[st];
+  int ctg = m_category[st];
   while (!Q.empty()) {
-    auto head = Q.front();
+    const auto &head = Q.front();
     Q.pop();
-    if (head.second <= 1) Data.stepArrive[0][head.first] = true;
-    if (head.second <= 2) Data.stepArrive[1][head.first] = true;
-    if (head.second <= 3) Data.stepArrive[2][head.first] = true;
-    if (head.second >= LIMIT_STEP) continue;
+    if (head.second == 1) {
+      Data.stepArrive[0][head.first] = true;
+      Data.stepArrive[1][head.first] = true;
+      Data.stepArrive[2][head.first] = true;
+    } else if (head.second == 2) {
+      Data.stepArrive[1][head.first] = true;
+      Data.stepArrive[2][head.first] = true;
+    } else if (head.second == 3) {
+      Data.stepArrive[2][head.first] = true;
+      continue;
+    }
     for (auto &it : m_Fathers[head.first]) {
       int v = it.v;
-      if (vis[v] || m_catrgory[v] != ctg) continue;
+      if (vis[v]) continue;
+      if (m_category[v] != ctg) {
+        Data.vis[v] = true;
+        continue;
+      }
       vis[v] = true;
       Q.push(std::make_pair(v, head.second + 1));
     }
@@ -275,35 +286,35 @@ void XJBG::handelCircle(Node &Data, const int &dep) {
   Data.Answer[dep - 3].emplace_back(Data.tempPath);
   ++Data.answers;
 }
-bool XJBG::judge(Node &Data, const int &ctg, const int &u, const int &dep) {
-  if (dep > 7 || Data.vis[u] || m_catrgory[u] != ctg) return true;
-  if (dep == 7) {
-    if (Data.stepArrive[0][u]) this->handelCircle(Data, dep);
+bool XJBG::judge(Node &Data, const int &ctg, const int &v, const int &dep) {
+  if (Data.vis[v] || dep > 6) return true;
+  if (dep == 4 && !Data.stepArrive[2][v]) {
     return true;
   }
-  if (dep == 6 && !Data.stepArrive[1][u]) {
+  if (dep == 5 && !Data.stepArrive[1][v]) {
     return true;
   }
-  if (dep == 5 && !Data.stepArrive[2][u]) {
+  if (dep == 6) {
+    if (Data.stepArrive[0][v]) this->handelCircle(Data, dep + 1);
     return true;
   }
   return false;
 }
 void XJBG::findCircle(Node &Data, const int &ctg, int u, int dep) {
-  if (this->judge(Data, ctg, u, dep)) {
-    return;
-  }
-  Data.vis[u] = true;
   for (auto &it : m_Sons[u]) {
     int v = it.v;
+    Data.tempPath[dep] = v;
     if (v == Data.tempPath[0] && dep >= 3) {
       this->handelCircle(Data, dep);
       continue;
     }
-    Data.tempPath[dep] = v;
+    if (this->judge(Data, ctg, v, dep)) {
+      continue;
+    }
+    Data.vis[v] = true;
     this->findCircle(Data, ctg, v, dep + 1);
+    Data.vis[v] = false;
   }
-  Data.vis[u] = false;
 }
 
 void XJBG::FindPath() {
@@ -326,8 +337,8 @@ void XJBG::FindPath() {
       int v = m_Circles[i];
       this->pretreatTravelBFS(Data, v);
       Data.tempPath[0] = v;
-      this->findCircle(Data, m_catrgory[v], v, 1);
       Data.vis[v] = true;
+      this->findCircle(Data, m_category[v], v, 1);
     }
   };
 
@@ -342,12 +353,15 @@ void XJBG::FindPath() {
   for (auto &it : ThreadData) m_answers += it.answers;
 
 #ifdef LOCAL
-  std::cerr << "@ Answer: " << m_answers << "(";
-  for (int i = 0; i < NTHREAD - 1; ++i) {
-    std::cerr << ThreadData[i].answers << ",";
-  }
-  std::cerr << ThreadData[NTHREAD - 1].answers << ") #";
+  std::cerr << "@ Answer: " << m_answers << " #";
   t.LogTime();
+  for (int i = 0; i < NTHREAD; ++i) {
+    std::cerr << "* " << i << ": (";
+    for (int j = 0; j < 4; ++j) {
+      std::cerr << ThreadData[i].Answer[j].size() << ", ";
+    }
+    std::cerr << ThreadData[i].Answer[4].size() << ")\n";
+  }
 #endif
 }
 
@@ -375,7 +389,6 @@ void XJBG::SaveAnswer() {
       }
     }
   }
-
   buffer[--idx] = '\n';
   int x = m_answers;
   while (x) {
