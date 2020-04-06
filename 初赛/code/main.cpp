@@ -83,10 +83,10 @@ std::ostream &operator<<(std::ostream &os,
 
 class XJBG {
  public:
-  static const int NTHREAD = 8;        // 线程个数
+  static const int NTHREAD = 4;        // 线程个数
   static const int LIMIT_STEP = 3;     // 预估步长
   static const int MAXN = 560000 + 7;  // 总点数
-  const int PARAM[NTHREAD] = {1, 2, 3, 4, 5, 6, 7, 8};
+  const int PARAM[NTHREAD] = {1, 2, 5, 10};
 
  private:
   std::unordered_map<int, int> m_IDToMap;  // ID->m_MapID
@@ -106,7 +106,8 @@ class XJBG {
 
   struct PreBuffer {
     char str[10];
-    int length = 0;
+    int start;
+    int length;
   };
   std::vector<PreBuffer> m_MapID;
 
@@ -383,16 +384,18 @@ void XJBG::preSave() {
   for (int i = 0; i < m_IDDom.size(); ++i) {
     int x = m_IDDom[i];
     if (x == 0) {
+      m_MapID[i].start = 9;
+      m_MapID[i].str[9] = '0';
       m_MapID[i].length = 1;
-      m_MapID[i].str[0] = '0';
       continue;
     }
-    int idx = 0;
+    int idx = 10;
     while (x) {
-      m_MapID[i].str[idx++] = x % 10 + '0';
+      m_MapID[i].str[--idx] = x % 10 + '0';
       x /= 10;
     }
-    m_MapID[i].length = idx;
+    m_MapID[i].start = idx;
+    m_MapID[i].length = 10 - idx;
   }
 }
 void XJBG::SaveAnswer() {
@@ -417,11 +420,10 @@ void XJBG::SaveAnswer() {
       for (auto &it : ans) {
         // 便利一行len+3个数字
         for (int i = 0; i < len + 3; ++i) {
-          const int &num = it[i];
+          auto &mpid = m_MapID[it[i]];
           if (i != 0) out.buffer[len][tidx++] = ',';
-          for (int j = m_MapID[num].length - 1; j >= 0; --j) {
-            out.buffer[len][tidx++] = m_MapID[num].str[j];
-          }
+          memcpy(out.buffer[len] + tidx, mpid.str + mpid.start, mpid.length);
+          tidx += mpid.length;
         }
         out.buffer[len][tidx++] = '\n';
       }
@@ -436,19 +438,19 @@ void XJBG::SaveAnswer() {
   }
   for (auto &it : Threads) it.join();
 
-  int x = m_answers, firIdx = 0;
+  int x = m_answers, firIdx = 12;
   char firBuf[12];
-  firBuf[firIdx++] = '\n';
+  firBuf[--firIdx] = '\n';
   if (x == 0) {
-    firBuf[firIdx++] = '0';
+    firBuf[--firIdx] = '0';
   } else {
     while (x) {
-      firBuf[firIdx++] = x % 10 + '0';
+      firBuf[--firIdx] = x % 10 + '0';
       x /= 10;
     }
   }
 
-  uint32_t bufsize = firIdx;
+  uint32_t bufsize = 12 - firIdx;
   for (auto &it : OutData) bufsize += it.totalLength;
   int fd = open(RESULT, O_RDWR | O_CREAT, 0666);
   char *result =
@@ -456,8 +458,8 @@ void XJBG::SaveAnswer() {
   ftruncate(fd, bufsize);
   close(fd);
 
-  uint32_t idx = 0;
-  for (int i = firIdx - 1; i >= 0; --i) result[idx++] = firBuf[i];
+  memcpy(result, firBuf + firIdx, 12 - firIdx);
+  uint32_t idx = 12 - firIdx;
   for (int len = 0; len < 5; ++len) {
     for (auto &data : OutData) {
       memcpy(result + idx, data.buffer[len], data.length[len]);
