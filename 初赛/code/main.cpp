@@ -83,10 +83,10 @@ std::ostream &operator<<(std::ostream &os,
 
 class XJBG {
  public:
-  static const int NTHREAD = 4;        // 线程个数
+  static const int NTHREAD = 8;        // 线程个数
   static const int LIMIT_STEP = 3;     // 预估步长
   static const int MAXN = 560000 + 7;  // 总点数
-  const int PARAM[NTHREAD] = {1, 2, 5, 10};
+  const int PARAM[NTHREAD] = {1, 2, 3, 4, 5, 6, 7, 8};
 
  private:
   std::unordered_map<int, int> m_IDToMap;  // ID->m_MapID
@@ -281,7 +281,7 @@ void XJBG::pretreatTravelBFS(Node &Data, int &st) {
     }
     for (auto &it : m_Fathers[head.first]) {
       int v = it.v;
-      if (vis[v]) continue;
+      if (vis[v] || Data.vis[v]) continue;
       if (m_category[v] != ctg) {
         Data.vis[v] = true;
         continue;
