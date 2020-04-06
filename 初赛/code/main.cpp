@@ -86,11 +86,11 @@ class XJBG {
   static const int NTHREAD = 4;        // 线程个数
   static const int LIMIT_STEP = 3;     // 预估步长
   static const int MAXN = 560000 + 7;  // 总点数
-  const int PARAM[NTHREAD] = {2, 3, 5, 7};
+  const int PARAM[NTHREAD] = {1, 2, 5, 10};
 
  private:
-  std::unordered_map<int, int> m_IDToMap;  // ID->MapID
-  std::vector<int> m_IDDom;                // MapID->ID
+  std::unordered_map<int, int> m_IDToMap;  // ID->m_MapID
+  std::vector<int> m_IDDom;                // m_MapID->ID
   int m_answers = 0;                       // 总环数目
   std::vector<int> m_Circles;              // 大于3的联通分量的点
 
@@ -103,6 +103,12 @@ class XJBG {
     Node() { tempPath = std::vector<int>(7, -1); }
   };
   std::vector<Node> ThreadData;  // 线程数据
+
+  struct PreBuffer {
+    char str[10];
+    int length = 0;
+  };
+  std::vector<PreBuffer> m_MapID;
 
  private:
   struct Edge {
@@ -136,6 +142,7 @@ class XJBG {
   bool judge(Node &Data, const int &ctg, const int &u, const int &dep);
   void handelCircle(Node &Data, const int &dep);
   void findCircle(Node &Data, const int &ctg, int u, int dep);
+  void preSave();
 };
 
 void XJBG::Init() { ThreadData = std::vector<Node>(NTHREAD); }
@@ -371,94 +378,92 @@ void XJBG::FindPath() {
 #endif
 }
 
-void XJBG::SaveAnswer() {
-  struct T {
-    char str[10];
-    int length = 0;
-  };
-  std::vector<T> MapID(m_IDDom.size());
+void XJBG::preSave() {
+  m_MapID.resize(m_IDDom.size());
   for (int i = 0; i < m_IDDom.size(); ++i) {
     int x = m_IDDom[i];
     if (x == 0) {
-      MapID[i].length = 1;
-      MapID[i].str[0] = '0';
+      m_MapID[i].length = 1;
+      m_MapID[i].str[0] = '0';
       continue;
     }
     int idx = 0;
     while (x) {
-      MapID[i].str[idx++] = x % 10 + '0';
+      m_MapID[i].str[idx++] = x % 10 + '0';
       x /= 10;
     }
-    MapID[i].length = idx;
+    m_MapID[i].length = idx;
   }
-
-  struct T1 {
-    char *buffer[5];
-    int length[5];
-  };
-  std::vector<T1> OutData(NTHREAD);
-
-  // auto foo = [&](int pid) {
-  //   const auto &data = ThreadData[pid];
-  //   auto &out = OutData[pid];
-  //   for (int len = 4; len >= 0; --len) {
-  //     out.buffer[len] = new char[data.Answer[len].size() * 80];
-  //     int idx = 0;
-  //     for (int i = data.Answer[len].size() - 1; i >= 0; --i) {
-  //       const auto &row = data.Answer[len][i];
-  //       buffer[idx++] = '\n';
-  //       for (int k = len + 2; k >= 0; --k) {
-  //         for (int kk = 0; kk < MapID[row[k]].length; ++kk) {
-  //           buffer[idx++] = MapID[row[k]].str[kk];
-  //         }
-  //         if (k != 0) buffer[idx++] = ',';
-  //       }
-  //     }
-  //   }
-  // };
-
+}
+void XJBG::SaveAnswer() {
   ScopeTime t;
+  this->preSave();
 
-  uint32_t bufsize = 80 * m_answers + 15;
-  uint32_t idx = 0;
-  char *buffer = new char[bufsize];
+  struct T {
+    char *buffer[5];
+    uint32_t length[5];
+    uint32_t totalLength = 0;
+  };
+  std::vector<T> OutData(NTHREAD);
 
-  int x = m_answers;
-  if (x == 0) {
-    buffer[idx++] = '0';
-  } else {
-    char tmp[10];
-    int ti = 0;
-    while (x) {
-      tmp[ti++] = x % 10 + '0';
-      x /= 10;
-    }
-    for (int i = ti - 1; i >= 0; --i) buffer[idx++] = tmp[i];
-  }
-  buffer[idx++] = '\n';
-  for (int len = 0; len < 5; ++len) {
-    for (auto &data : ThreadData) {
-      const auto &ans = data.Answer[len];
+  auto foo = [&](int pid) {
+    const auto &ThData = ThreadData[pid];
+    auto &out = OutData[pid];
+    for (int len = 0; len < 5; ++len) {
+      const auto &ans = ThData.Answer[len];
+      uint32_t tbufsize = (uint32_t)ans.size() * (len + 3) * 11;
+      out.buffer[len] = new char[tbufsize];
+      uint32_t tidx = 0;
       for (auto &it : ans) {
         // 便利一行len+3个数字
         for (int i = 0; i < len + 3; ++i) {
           const int &num = it[i];
-          if (i != 0) buffer[idx++] = ',';
-          for (int j = MapID[num].length - 1; j >= 0; --j) {
-            buffer[idx++] = MapID[num].str[j];
+          if (i != 0) out.buffer[len][tidx++] = ',';
+          for (int j = m_MapID[num].length - 1; j >= 0; --j) {
+            out.buffer[len][tidx++] = m_MapID[num].str[j];
           }
         }
-        buffer[idx++] = '\n';
+        out.buffer[len][tidx++] = '\n';
       }
+      out.length[len] = tidx;
+      out.totalLength += tidx;
+    }
+  };
+
+  std::vector<std::thread> Threads(NTHREAD);
+  for (int i = 0; i < NTHREAD; ++i) {
+    Threads[i] = std::thread(foo, i);
+  }
+  for (auto &it : Threads) it.join();
+
+  int x = m_answers, firIdx = 0;
+  char firBuf[12];
+  firBuf[firIdx++] = '\n';
+  if (x == 0) {
+    firBuf[firIdx++] = '0';
+  } else {
+    while (x) {
+      firBuf[firIdx++] = x % 10 + '0';
+      x /= 10;
     }
   }
 
+  uint32_t bufsize = firIdx;
+  for (auto &it : OutData) bufsize += it.totalLength;
   int fd = open(RESULT, O_RDWR | O_CREAT, 0666);
   char *result =
-      (char *)mmap(NULL, idx, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-  ftruncate(fd, idx);
+      (char *)mmap(NULL, bufsize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  ftruncate(fd, bufsize);
   close(fd);
-  memcpy(result, buffer, idx);
+
+  uint32_t idx = 0;
+  for (int i = firIdx - 1; i >= 0; --i) result[idx++] = firBuf[i];
+  for (int len = 0; len < 5; ++len) {
+    for (auto &data : OutData) {
+      memcpy(result + idx, data.buffer[len], data.length[len]);
+      idx += data.length[len];
+    }
+  }
 
 #ifdef LOCAL
   std::cerr << "@ WriteAnswer # ";
