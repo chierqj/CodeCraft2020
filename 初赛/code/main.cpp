@@ -33,8 +33,8 @@
 #include <vector>
 
 #ifdef LOCAL
-#define TRAIN "../data/3512444/test_data.txt"
-#define RESULT "../data/3512444/result.txt"
+#define TRAIN "../data/2755223/test_data.txt"
+#define RESULT "../data/2755223/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -84,10 +84,11 @@ std::ostream &operator<<(std::ostream &os,
 
 class XJBG {
  public:
-  static const int NTHREAD = 4;        // 线程个数
+  static const int NTHREAD = 1;        // 线程个数
   static const int LIMIT_STEP = 3;     // 预估步长
   static const int MAXN = 560000 + 7;  // 总点数
-  const int PARAM[NTHREAD] = {1, 1, 3, 6};
+  // const int PARAM[NTHREAD] = {1, 1, 3, 6};
+  const int PARAM[NTHREAD] = {1};
 
  private:
   std::unordered_map<int, int> m_IDToMap;  // ID->m_MapID
@@ -98,9 +99,11 @@ class XJBG {
   struct Node {
     int answers;                              // 环个数
     std::vector<int> tempPath;                // dfs临时路径
-    std::vector<bool> stepArrive[3];          // 预估步长
     std::vector<std::vector<int>> Answer[5];  // 结果
-    bool vis[MAXN];                           // 标记访问
+
+    std::vector<std::pair<int, int>> stepPath[3];  //
+    std::vector<bool> stepArrive[3];               // 预估步长
+    bool vis[MAXN];                                // 标记访问
     Node() { tempPath = std::vector<int>(7, -1); }
   };
   std::vector<Node> ThreadData;  // 线程数据
@@ -140,11 +143,10 @@ class XJBG {
   int GetMapID(int x);
   inline void addEdge(int u, int v, int w);
   void tarjan(int u);
-  void pretreatTravelBFS(Node &Data, int &st);
-  bool judge(Node &Data, const int &u, const int &dep);
-  void handleCircle(Node &Data, const int &dep);
-  void findCircle(Node &Data, int u, int dep);
   void preSave();
+
+  void backSearch(Node &Data, const int &ctg, int u, int dep);
+  void forwardSearch(Node &Data, int u, int dep);
 };
 
 void XJBG::Init() { ThreadData = std::vector<Node>(NTHREAD); }
@@ -261,64 +263,56 @@ void XJBG::TarJan() {
 #endif
 }
 
-void XJBG::pretreatTravelBFS(Node &Data, int &st) {
-  std::queue<std::tuple<int, int>> Q;
-  std::vector<bool> vis(m_IDDom.size(), false);
-  Q.push(std::make_pair(st, 0));
-  vis[st] = true;
-  int ctg = m_category[st];
-  while (!Q.empty()) {
-    const auto &head = Q.front();
-    int u = std::get<0>(head), dep = std::get<1>(head);
-    Q.pop();
-    Data.stepArrive[2][u] = true;
-    if (dep < 3) Data.stepArrive[1][u] = true;
-    if (dep < 2) Data.stepArrive[0][u] = true;
-    if (dep == 3) continue;
-    for (auto &it : m_Fathers[u]) {
-      int v = it.v;
-      if (Data.vis[v] || vis[v]) continue;
-      if (m_category[v] != ctg) {
-        Data.vis[v] = true;
-        continue;
-      }
-      vis[v] = true;
-      Q.push(std::make_pair(v, dep + 1));
-    }
-  }
-}
+/*************************************************/
+void XJBG::backSearch(Node &Data, const int &ctg, int u, int dep) {
+  for (auto &it : m_Fathers[u]) {
+    int v = it.v;
+    if (m_category[v] != ctg) Data.vis[v] = true;
+    if (Data.vis[v]) continue;
 
-void XJBG::handleCircle(Node &Data, const int &dep) {
-  Data.Answer[dep - 3].emplace_back(Data.tempPath);
-  ++Data.answers;
-}
-bool XJBG::judge(Node &Data, const int &v, const int &dep) {
-  if (Data.vis[v] || dep > 6) {
-    return true;
-  } else if (dep == 4 && !Data.stepArrive[2][v]) {
-    return true;
-  } else if (dep == 5 && !Data.stepArrive[1][v]) {
-    return true;
-  } else if (dep == 6) {
-    if (Data.stepArrive[0][v]) this->handleCircle(Data, dep + 1);
-    return true;
-  } else {
-    return false;
+    Data.stepPath[dep].emplace_back(std::make_pair(v, u));
+    Data.stepArrive[dep][v] = true;
+
+    if (dep == 2) continue;
+    Data.vis[v] = true;
+    this->backSearch(Data, ctg, v, dep + 1);
+    Data.vis[v] = false;
   }
 }
-void XJBG::findCircle(Node &Data, int u, int dep) {
+void XJBG::forwardSearch(Node &Data, int u, int dep) {
+  const auto &path1 = Data.stepPath[1];
+  const auto &path2 = Data.stepPath[2];
+  Data.tempPath[dep] = u;
   for (auto &it : m_Sons[u]) {
     int v = it.v;
-    Data.tempPath[dep] = v;
-    if (dep > 2 && v == Data.tempPath[0]) {
-      this->handleCircle(Data, dep);
-      continue;
+    if (Data.vis[v] || v == Data.tempPath[0]) continue;
+    std::pair<int, int> s1{v, 0};
+    std::pair<int, int> s2{v, MAXN};
+    // 只有正向一步，才找三环
+    if (dep == 0 && Data.stepArrive[1][v]) {
+      auto beg = std::lower_bound(path1.begin(), path1.end(), s1);
+      auto end = std::upper_bound(path1.begin(), path1.end(), s2);
+      Data.answers += end - beg;
     }
-    if (this->judge(Data, v, dep)) {
-      continue;
+    // 正向不是1步，两个队列都看一下
+    if (Data.stepArrive[2][v]) {
+      auto beg = std::lower_bound(path2.begin(), path2.end(), s1);
+      auto end = std::upper_bound(path2.begin(), path2.end(), s2);
+      for (auto &pit = beg; pit != end; ++pit) {
+        int tv = pit->second;
+        std::pair<int, int> ts1{tv, 0};
+        std::pair<int, int> ts2{tv, MAXN};
+        auto beg1 = std::lower_bound(path1.begin(), path1.end(), ts1);
+        auto end1 = std::upper_bound(path1.begin(), path1.end(), ts2);
+        for (auto &pit1 = beg1; pit1 != end1; ++pit1) {
+          if (Data.vis[pit1->first] || Data.vis[pit1->second]) continue;
+          ++Data.answers;
+        }
+      }
     }
+    if (dep == 3) continue;
     Data.vis[v] = true;
-    this->findCircle(Data, v, dep + 1);
+    this->forwardSearch(Data, v, dep + 1);
     Data.vis[v] = false;
   }
 }
@@ -337,14 +331,19 @@ void XJBG::FindPath() {
     auto &Data = ThreadData[pid];
     for (int i = 0; i < start; ++i) Data.vis[m_Circles[i]] = true;
     for (int i = start; i < end; ++i) {
-      for (auto &it : Data.stepArrive) {
-        it = std::vector<bool>(m_IDDom.size(), false);
+      for (int j = 0; j < 3; ++j) {
+        Data.stepPath[j].clear();
+        Data.stepArrive[j] = std::vector<bool>(m_Circles.size(), false);
       }
       int v = m_Circles[i];
-      this->pretreatTravelBFS(Data, v);
-      Data.tempPath[0] = v;
       Data.vis[v] = true;
-      this->findCircle(Data, v, 1);
+      this->backSearch(Data, m_category[v], v, 0);
+
+      for (auto &it : Data.stepPath) {
+        std::sort(it.begin(), it.end());
+        it.erase(std::unique(it.begin(), it.end()), it.end());
+      }
+      this->forwardSearch(Data, v, 0);
     }
   };
 
