@@ -33,8 +33,8 @@
 #include <vector>
 
 #ifdef LOCAL
-#define TRAIN "../data/2755223/test_data.txt"
-#define RESULT "../data/2755223/result.txt"
+#define TRAIN "../data/3512444/test_data.txt"
+#define RESULT "../data/3512444/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -97,13 +97,13 @@ class XJBG {
   std::vector<int> m_Circles;              // 大于3的联通分量的点
 
   struct Node {
-    int answers;                              // 环个数
-    std::vector<int> tempPath;                // dfs临时路径
-    std::vector<std::vector<int>> Answer[5];  // 结果
-
-    std::vector<std::pair<int, int>> stepPath[3];  //
+    int answers;                                   // 环个数
+    std::vector<int> tempPath;                     // dfs临时路径
     std::vector<bool> stepArrive[3];               // 预估步长
+    std::vector<std::vector<int>> Answer[5];       // 结果
     bool vis[MAXN];                                // 标记访问
+    std::vector<std::pair<int, int>> stepPath[3];  // 存边
+    int testCount = 0;
     Node() { tempPath = std::vector<int>(7, -1); }
   };
   std::vector<Node> ThreadData;  // 线程数据
@@ -145,8 +145,8 @@ class XJBG {
   void tarjan(int u);
   void preSave();
 
-  void backSearch(Node &Data, const int &ctg, int u, int dep);
-  void forwardSearch(Node &Data, int u, int dep);
+  void backBFS(Node &Data, int &st);
+  void forwordDFS(Node &Data, int u, int dep);
 };
 
 void XJBG::Init() { ThreadData = std::vector<Node>(NTHREAD); }
@@ -162,6 +162,7 @@ int XJBG::GetMapID(int x) {
   return sz;
 }
 inline void XJBG::addEdge(int u, int v, int w) {
+  if (u == v) return;
   u = this->GetMapID(u);
   v = this->GetMapID(v);
   m_Sons[u].emplace_back(Edge{v, w});
@@ -263,56 +264,89 @@ void XJBG::TarJan() {
 #endif
 }
 
-/*************************************************/
-void XJBG::backSearch(Node &Data, const int &ctg, int u, int dep) {
-  for (auto &it : m_Fathers[u]) {
-    int v = it.v;
-    if (m_category[v] != ctg) Data.vis[v] = true;
-    if (Data.vis[v]) continue;
+void XJBG::backBFS(Node &Data, int &st) {
+  std::queue<std::tuple<int, int>> Q;
+  std::vector<bool> vis(m_IDDom.size(), false);
+  Q.push(std::make_pair(st, 0));
+  vis[st] = true;
+  int ctg = m_category[st];
+  while (!Q.empty()) {
+    const auto &head = Q.front();
+    int u = std::get<0>(head), dep = std::get<1>(head);
+    Q.pop();
 
-    Data.stepPath[dep].emplace_back(std::make_pair(v, u));
-    Data.stepArrive[dep][v] = true;
+    Data.stepArrive[2][u] = true;
+    if (dep < 3) Data.stepArrive[1][u] = true;
+    if (dep < 2) Data.stepArrive[0][u] = true;
+    if (dep == 3) continue;
 
-    if (dep == 2) continue;
-    Data.vis[v] = true;
-    this->backSearch(Data, ctg, v, dep + 1);
-    Data.vis[v] = false;
+    for (auto &it : m_Fathers[u]) {
+      int v = it.v;
+      Data.stepPath[dep].emplace_back(std::make_pair(v, u));
+      if (m_category[v] != ctg) Data.vis[v] = true;
+      if (Data.vis[v] || vis[v]) continue;
+      vis[v] = true;
+      Q.push(std::make_pair(v, dep + 1));
+    }
   }
 }
-void XJBG::forwardSearch(Node &Data, int u, int dep) {
-  const auto &path1 = Data.stepPath[1];
-  const auto &path2 = Data.stepPath[2];
-  Data.tempPath[dep] = u;
+
+// 1->2->3->4->5->6->7
+void XJBG::forwordDFS(Node &Data, int u, int dep) {
+  const auto &path2 = Data.stepPath[1];
+  const auto &path3 = Data.stepPath[2];
+
   for (auto &it : m_Sons[u]) {
     int v = it.v;
-    if (Data.vis[v] || v == Data.tempPath[0]) continue;
-    std::pair<int, int> s1{v, 0};
-    std::pair<int, int> s2{v, MAXN};
-    // 只有正向一步，才找三环
-    if (dep == 0 && Data.stepArrive[1][v]) {
-      auto beg = std::lower_bound(path1.begin(), path1.end(), s1);
-      auto end = std::upper_bound(path1.begin(), path1.end(), s2);
-      Data.answers += end - beg;
+    Data.tempPath[dep] = v;
+    // 长度为3,4的环
+    if ((dep == 3 || dep == 4) && v == Data.tempPath[0]) {
+      Data.Answer[dep - 3].emplace_back(Data.tempPath);
+      ++Data.answers;
+      continue;
     }
-    // 正向不是1步，两个队列都看一下
-    if (Data.stepArrive[2][v]) {
-      auto beg = std::lower_bound(path2.begin(), path2.end(), s1);
-      auto end = std::upper_bound(path2.begin(), path2.end(), s2);
-      for (auto &pit = beg; pit != end; ++pit) {
-        int tv = pit->second;
-        std::pair<int, int> ts1{tv, 0};
-        std::pair<int, int> ts2{tv, MAXN};
-        auto beg1 = std::lower_bound(path1.begin(), path1.end(), ts1);
-        auto end1 = std::upper_bound(path1.begin(), path1.end(), ts2);
-        for (auto &pit1 = beg1; pit1 != end1; ++pit1) {
-          if (Data.vis[pit1->first] || Data.vis[pit1->second]) continue;
+    if (Data.vis[v]) continue;
+    if (dep == 4) {
+      // 长度为5的环
+      if (Data.stepArrive[0][v]) {
+        Data.Answer[2].emplace_back(Data.tempPath);
+        ++Data.answers;
+      }
+      // 长度为6的环
+      if (Data.stepArrive[1][v]) {
+        std::pair<int, int> s{v, 0}, e{v, MAXN};
+        auto beg1 = std::lower_bound(path2.begin(), path2.end(), s);
+        if (beg1 == path2.end()) continue;
+        auto end1 = std::upper_bound(path2.begin(), path2.end(), e);
+        for (auto &it1 = beg1; it1 != end1; ++it1) {
+          if (Data.vis[it1->second]) continue;
+          Data.Answer[3].emplace_back(Data.tempPath);
           ++Data.answers;
         }
       }
+      // 长度为7的环
+      if (Data.stepArrive[2][v]) {
+        std::pair<int, int> s{v, 0}, e{v, MAXN};
+        auto beg1 = std::lower_bound(path3.begin(), path3.end(), s);
+        if (beg1 == path3.end()) continue;
+        auto end1 = std::upper_bound(path3.begin(), path3.end(), e);
+        for (auto &it1 = beg1; it1 != end1; ++it1) {
+          if (Data.vis[it1->second]) continue;
+          std::pair<int, int> s2{it1->second, 0}, e2{it1->second, MAXN};
+          auto beg2 = std::lower_bound(path2.begin(), path2.end(), s2);
+          if (beg2 == path2.end()) continue;
+          auto end2 = std::upper_bound(path2.begin(), path2.end(), e2);
+          for (auto &it2 = beg2; it2 != end2; ++it2) {
+            if (Data.vis[it2->second]) continue;
+            Data.Answer[4].emplace_back(Data.tempPath);
+            ++Data.answers;
+          }
+        }
+      }
+      continue;
     }
-    if (dep == 3) continue;
     Data.vis[v] = true;
-    this->forwardSearch(Data, v, dep + 1);
+    this->forwordDFS(Data, v, dep + 1);
     Data.vis[v] = false;
   }
 }
@@ -325,25 +359,35 @@ void XJBG::FindPath() {
               [&](const Edge &e1, const Edge &e2) {
                 return this->GetID(e1.v) < this->GetID(e2.v);
               });
+    std::sort(m_Fathers[v].begin(), m_Fathers[v].end(),
+              [&](const Edge &e1, const Edge &e2) {
+                return this->GetID(e1.v) < this->GetID(e2.v);
+              });
   }
 
   auto foo = [&](int pid, int start, int end) {
     auto &Data = ThreadData[pid];
     for (int i = 0; i < start; ++i) Data.vis[m_Circles[i]] = true;
     for (int i = start; i < end; ++i) {
-      for (int j = 0; j < 3; ++j) {
-        Data.stepPath[j].clear();
-        Data.stepArrive[j] = std::vector<bool>(m_Circles.size(), false);
-      }
       int v = m_Circles[i];
-      Data.vis[v] = true;
-      this->backSearch(Data, m_category[v], v, 0);
-
-      for (auto &it : Data.stepPath) {
-        std::sort(it.begin(), it.end());
-        it.erase(std::unique(it.begin(), it.end()), it.end());
+      for (int j = 0; j < 3; ++j) {
+        Data.stepArrive[j] = std::vector<bool>(m_IDDom.size(), false);
+        Data.stepPath[j].clear();
       }
-      this->forwardSearch(Data, v, 0);
+
+      Data.tempPath[0] = v;
+      Data.vis[v] = true;
+      this->backBFS(Data, v);
+
+      for (auto &it : Data.stepPath) std::sort(it.begin(), it.end());
+
+      this->forwordDFS(Data, v, 1);
+
+      // if (i >= 50 && i <= 60) {
+      //   std::cerr << Data.stepPath[0].size() << ",";
+      //   std::cerr << Data.stepPath[1].size() << ",";
+      //   std::cerr << Data.stepPath[2].size() << "\n";
+      // }
     }
   };
 
