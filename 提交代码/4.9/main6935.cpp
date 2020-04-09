@@ -33,8 +33,8 @@
 #include <vector>
 
 #ifdef LOCAL
-#define TRAIN "../data/3512444/test_data.txt"
-#define RESULT "../data/3512444/result.txt"
+#define TRAIN "../data/1004812/test_data.txt"
+#define RESULT "../data/1004812/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -87,7 +87,6 @@ class XJBG {
   static const int NTHREAD = 8;        // 线程个数
   static const int LIMIT_STEP = 3;     // 预估步长
   static const int MAXN = 560000 + 7;  // 总点数
-  // const int PARAM[NTHREAD] = {1, 1, 3, 6};
   const int PARAM[NTHREAD] = {1, 2, 3, 4, 5, 6, 7, 8};
   // const int PARAM[NTHREAD] = {1};
 
@@ -182,26 +181,20 @@ void XJBG::LoadData() {
   char *buffer = (char *)mmap(NULL, bufsize, PROT_READ, MAP_PRIVATE, fd, 0);
   close(fd);
 
-  int u = 0, v = 0, w = 0;
-  char *ptr = buffer;
-  while (ptr - buffer < bufsize) {
-    while (*ptr != ',') {
-      u = u * 10 + *ptr - '0';
-      ++ptr;
+  int temp[2], idx = 0, x = 0;
+  long long start = 0;
+  while (start < bufsize) {
+    if (*(buffer + start) == ',') {
+      temp[idx++] = x;
+      x = 0;
+    } else if (*(buffer + start) == '\n') {
+      addEdge(temp[0], temp[1], x);
+      idx = 0;
+      x = 0;
+    } else {
+      x = x * 10 + (*(buffer + start) - '0');
     }
-    ++ptr;
-    while (*ptr != ',') {
-      v = v * 10 + *ptr - '0';
-      ++ptr;
-    }
-    ++ptr;
-    while (*ptr != '\n') {
-      w = w * 10 + *ptr - '0';
-      ++ptr;
-    }
-    ++ptr;
-    addEdge(u, v, w);
-    u = v = w = 0;
+    ++start;
   }
 
 #ifdef LOCAL

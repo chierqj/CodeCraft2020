@@ -87,7 +87,6 @@ class XJBG {
   static const int NTHREAD = 8;        // 线程个数
   static const int LIMIT_STEP = 3;     // 预估步长
   static const int MAXN = 560000 + 7;  // 总点数
-  // const int PARAM[NTHREAD] = {1, 1, 3, 6};
   const int PARAM[NTHREAD] = {1, 2, 3, 4, 5, 6, 7, 8};
   // const int PARAM[NTHREAD] = {1};
 
@@ -182,26 +181,20 @@ void XJBG::LoadData() {
   char *buffer = (char *)mmap(NULL, bufsize, PROT_READ, MAP_PRIVATE, fd, 0);
   close(fd);
 
-  int u = 0, v = 0, w = 0;
-  char *ptr = buffer;
-  while (ptr - buffer < bufsize) {
-    while (*ptr != ',') {
-      u = u * 10 + *ptr - '0';
-      ++ptr;
+  int temp[2], idx = 0, x = 0;
+  long long start = 0;
+  while (start < bufsize) {
+    if (*(buffer + start) == ',') {
+      temp[idx++] = x;
+      x = 0;
+    } else if (*(buffer + start) == '\n') {
+      addEdge(temp[0], temp[1], x);
+      idx = 0;
+      x = 0;
+    } else {
+      x = x * 10 + (*(buffer + start) - '0');
     }
-    ++ptr;
-    while (*ptr != ',') {
-      v = v * 10 + *ptr - '0';
-      ++ptr;
-    }
-    ++ptr;
-    while (*ptr != '\n') {
-      w = w * 10 + *ptr - '0';
-      ++ptr;
-    }
-    ++ptr;
-    addEdge(u, v, w);
-    u = v = w = 0;
+    ++start;
   }
 
 #ifdef LOCAL
@@ -315,67 +308,20 @@ bool XJBG::judge(Node &Data, const int &v, const int &dep) {
     return false;
   }
 }
-
 void XJBG::findCircle(Node &Data, int u, int dep) {
-  Data.tempPath[0] = u;
-  for (auto &it1 : m_Sons[u]) {
-    int v1 = it1.v;
-    if (Data.vis[v1]) continue;
-    Data.tempPath[1] = v1;
-    Data.vis[v1] = true;
-    for (auto &it2 : m_Sons[v1]) {
-      int v2 = it2.v;
-      if (Data.vis[v2]) continue;
-      Data.tempPath[2] = v2;
-      Data.vis[v2] = true;
-      for (auto &it3 : m_Sons[v2]) {
-        int v3 = it3.v;
-        Data.tempPath[3] = v3;
-        if (v3 == u) {
-          this->handleCircle(Data, 3);
-          continue;
-        }
-        if (Data.vis[v3]) continue;
-        Data.vis[v3] = true;
-        for (auto &it4 : m_Sons[v3]) {
-          int v4 = it4.v;
-          Data.tempPath[4] = v4;
-          if (v4 == u) {
-            this->handleCircle(Data, 4);
-            continue;
-          }
-          if (Data.vis[v4] || !Data.stepArrive[2][v4]) continue;
-          Data.vis[v4] = true;
-          for (auto &it5 : m_Sons[v4]) {
-            int v5 = it5.v;
-            Data.tempPath[5] = v5;
-            if (v5 == u) {
-              this->handleCircle(Data, 5);
-              continue;
-            }
-            if (Data.vis[v5] || !Data.stepArrive[1][v5]) continue;
-            Data.vis[v5] = true;
-            for (auto &it6 : m_Sons[v5]) {
-              int v6 = it6.v;
-              Data.tempPath[6] = v6;
-              if (v6 == u) {
-                this->handleCircle(Data, 6);
-                continue;
-              }
-              if (Data.vis[v6]) continue;
-              if (Data.stepArrive[0][v6]) {
-                this->handleCircle(Data, 7);
-              }
-            }
-            Data.vis[v5] = false;
-          }
-          Data.vis[v4] = false;
-        }
-        Data.vis[v3] = false;
-      }
-      Data.vis[v2] = false;
+  for (auto &it : m_Sons[u]) {
+    int v = it.v;
+    Data.tempPath[dep] = v;
+    if (dep > 2 && v == Data.tempPath[0]) {
+      this->handleCircle(Data, dep);
+      continue;
     }
-    Data.vis[v1] = false;
+    if (this->judge(Data, v, dep)) {
+      continue;
+    }
+    Data.vis[v] = true;
+    this->findCircle(Data, v, dep + 1);
+    Data.vis[v] = false;
   }
 }
 
@@ -537,6 +483,5 @@ int main() {
   xjbg->TarJan();
   xjbg->FindPath();
   xjbg->SaveAnswer();
-  // sleep(3);
   return 0;
 }
