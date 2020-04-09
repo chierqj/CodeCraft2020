@@ -13,7 +13,7 @@ class HuaweirankItem(scrapy.Item):
     # name = scrapy.Field()
     division = scrapy.Field()
     score = scrapy.Field()
-    rank = scrapy.Field()
+    # rank = scrapy.Field()
     team_name = scrapy.Field()
     users = scrapy.Field()
     submit_time = scrapy.Field()

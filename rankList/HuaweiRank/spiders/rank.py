@@ -8,15 +8,6 @@ class RankSpider(scrapy.Spider):
     name = 'rank'
     allowed_domains = ['competition.huaweicloud.com']
 
-    '''
-        score = scrapy.Field()
-        rank = scrapy.Field()
-        team_name = scrapy.Field()
-        user_list = scrapy.Field()
-        submit_time = scrapy.Field()
-
-    '''
-
     def start_requests(self):
         nav_list = [
             (1000036574, 136710),
@@ -29,7 +20,7 @@ class RankSpider(scrapy.Spider):
             (1000036582, 136718),
             (1000036583, 136719)
         ]
-        urls = ['https://competition.huaweicloud.com/competition/v1/competitions/ranking/{0}?stage_id={1}&page_no=1&page_size=32'.format(
+        urls = ['https://competition.huaweicloud.com/competition/v1/competitions/ranking/{0}?stage_id={1}&page_no=1&page_size=64'.format(
             it[0], it[1]) for it in nav_list]
         divisions = ["京津东北赛区", "上合赛区", "杭厦赛区", "江山赛区",
                      "成渝赛区", "西北赛区", "武长赛区", "粤港澳赛区", "海外赛区"]
@@ -47,7 +38,7 @@ class RankSpider(scrapy.Spider):
             item = HuaweirankItem()
             item['division'] = division
             item['score'] = it.get('score', -1)
-            item['rank'] = it.get('ranking', -1)
+            # item['rank'] = it.get('ranking', -1)
             item['team_name'] = it.get('teamName', "null")
             item['submit_time'] = it.get('submitTime', "null")
             users = []
