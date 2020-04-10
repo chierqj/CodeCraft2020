@@ -82,7 +82,6 @@ struct ThreadData {
   std::vector<bool> OneReachable;           // 一步可达
   std::vector<bool> TwoReachable;           // 两步可达
   std::vector<bool> ThreeReachable;         // 三步可达
-  std::vector<int> distance;                // 最近距离
   std::vector<std::vector<int>> Answer[5];  // 结果
   std::vector<bool> vis;                    // 标记
   char *buffer[5];                          // 答案
@@ -100,7 +99,8 @@ class XJBG {
  public:
   static const int MAXN = 280000 + 7;        // 总点数
   static const int NTHREAD = 4;              // 线程个数
-  const int PARAM[NTHREAD] = {2, 3, 5, 40};  // 线程权重
+  const int PARAM[NTHREAD] = {1, 2, 4, 20};  // 线程权重
+  // const int PARAM[NTHREAD] = {2, 3, 5, 40};  // 线程权重
   // const int PARAM[NTHREAD] = {1};            // 线程权重
 
  public:
@@ -133,9 +133,7 @@ class XJBG {
   int m_dfn[MAXN], m_low[MAXN];                 // Tarjan
   std::stack<int> m_stack;                      // Tarjan
   int m_category[MAXN];                         // 所在联通分量id
-  int m_inDegree[MAXN], m_outDegree[MAXN];      // 出入度
   bool m_inStack[MAXN];                         // Tarjan标记在不在栈内
-  bool m_inCircle[MAXN];                        // 在不在找过的环内
   int m_tarjanCount = 0;                        // Tarjan搜索顺序
   int m_stackTop = 0;                           // Tarjan栈top标号
   int m_scc = 0, m_useScc = 0;                  // 总联通分量和大于3的
@@ -146,11 +144,7 @@ inline void XJBG::addEdge(int u, int v, int w) {
   m_Edges[u][0][m_CountSons[u]] = v;
   m_Edges[u][2][m_CountSons[u]++] = w;
   m_Edges[v][1][m_CountFathers[v]++] = u;
-
   ++m_edgeNum;
-  ++m_inDegree[v];
-  ++m_outDegree[u];
-
   m_maxID = std::max(m_maxID, std::max(u, v) + 1);
 }
 
@@ -402,7 +396,7 @@ void XJBG::handleThreadSearch(int pid, int start, int end) {
   auto &Data = ThreadsData[pid];
   Data.vis = std::vector<bool>(m_maxID, false);
   for (int i = 0; i < start; ++i) Data.vis[m_Circles[i]] = true;
-  Data.distance = std::vector<int>(m_maxID, 0);
+
   for (int i = start; i < end; ++i) {
     Data.OneReachable = std::vector<bool>(m_maxID, false);
     Data.TwoReachable = std::vector<bool>(m_maxID, false);
