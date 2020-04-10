@@ -21,6 +21,7 @@
 #include <functional>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <numeric>
 #include <queue>
 #include <sstream>
@@ -34,8 +35,8 @@
 using namespace std;
 
 #ifdef TEST
-#define TRAIN "../data/3512444/test_data.txt"
-#define RESULT "../data/3512444/result.txt"
+#define TRAIN "../data/std/test_data.txt"
+#define RESULT "../data/std/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -90,7 +91,7 @@ class FastFind {
   };
   stack<int> sk;
   unordered_map<int, int> mp;
-  vector<bool> con[4];
+  vector<bool> con[5];
   vector<node> G[MAXN];
   vector<node> Pre[MAXN];
   stringID outID[MAXN];
@@ -100,7 +101,12 @@ class FastFind {
   vector<bool> vis;
   vector<int> path;
   vector<vector<int>> answer[8];
+  map<int, int> fk;
+  int mxNum = 0;
   int del = 0;
+  vector<int> newG[MAXN];
+  vector<bool> pointVis;
+  vector<bool> conVis;
 };
 
 void FastFind::Add(int x, int y, int val) {
@@ -237,25 +243,44 @@ void FastFind::FindCircle(int x, int dep) {
     }
     return;
   }
-
   vis[x] = true;
-  for (auto &it : G[x]) {
-    v = it.to;
-    if (used[v]) {
-      continue;
+  if (dep > 3) {
+    if (conVis[x]) {
+      sort(newG[x].begin(), newG[x].end(), [&](const int &a, const int &b) {
+        return this->ID[a] < this->ID[b];
+      });
+      conVis[x] = false;
     }
-    if (v == start && dep > 1) {
-      answer[dep + 1].emplace_back(path);
-      continue;
+    for (auto &it : newG[x]) {
+      if (used[it]) {
+        continue;
+      }
+      if (it == start) {
+        answer[dep + 1].emplace_back(path);
+        continue;
+      }
+      if (vis[it]) continue;
+      if (con[6 - dep][it]) this->FindCircle(it, dep + 1);
     }
-    if (vis[v]) continue;
-    if (dep > 2) {
-      if (con[6 - dep][v]) this->FindCircle(v, dep + 1);
-    } else {
-      if (dep == 2) {
-        if (this->Judge(v)) this->FindCircle(v, dep + 1);
-      } else
-        this->FindCircle(v, dep + 1);
+  } else {
+    for (auto &it : G[x]) {
+      v = it.to;
+      if (used[v]) {
+        continue;
+      }
+      if (v == start && dep > 1) {
+        answer[dep + 1].emplace_back(path);
+        continue;
+      }
+      if (vis[v]) continue;
+      if (dep > 2) {
+        if (con[6 - dep][v]) this->FindCircle(v, dep + 1);
+      } else {
+        if (dep == 2) {
+          if (this->Judge(v)) this->FindCircle(v, dep + 1);
+        } else
+          this->FindCircle(v, dep + 1);
+      }
     }
   }
   vis[x] = false;
@@ -266,10 +291,20 @@ void FastFind::Connect(int x, int dep) {
   vis[x] = true;
   for (auto &it : Pre[x]) {
     int v = it.to;
+    if (!conVis[x]) {
+      if (pointVis[v])
+        newG[v].emplace_back(x);
+      else {
+        pointVis[v] = true;
+        newG[v].clear();
+        newG[v].emplace_back(x);
+      }
+    }
     if (vis[v]) continue;
     for (int j = dep + 1; j <= 3; j++) con[j][v] = true;
     this->Connect(v, dep + 1);
   }
+  conVis[x] = true;
   vis[x] = false;
 }
 void FastFind::Sort() {
@@ -285,24 +320,21 @@ void FastFind::Sort() {
 void FastFind::Search() {
   int x;
   this->Sort();
-  int cnt = 0;
   for (int i = 1; i <= pointNum; i++) {
     x = belong[dfsID[i]];
     if (beNum[x] > 2) {
+      conVis = vector<bool>(pointNum + 1, false);
+      pointVis = vector<bool>(pointNum + 1, false);
       for (int j = 1; j <= 3; j++) {
         con[j] = vector<bool>(pointNum + 1, false);
       }
       Connect(dfsID[i], 0);
+      conVis = vector<bool>(pointNum + 1, true);
       start = dfsID[i];
       FindCircle(dfsID[i], 0);
     }
     used[dfsID[i]] = true;
   }
-  // std::cerr << answer[3].size() << "\n";
-  // std::cerr << answer[4].size() << "\n";
-  // std::cerr << answer[5].size() << "\n";
-  // std::cerr << answer[6].size() << "\n";
-  // std::cerr << answer[7].size() << "\n";
 }
 
 void FastFind::toString(int x, stringID &s) {
@@ -375,13 +407,13 @@ void FastFind::Run() {
   this->Search();
   for (int i = 3; i <= 7; i++) {
     total += answer[i].size();
-    // cout << answer[i].size() << "\n";
+    cout << answer[i].size() << "\n";
   }
-  // cout << "----del: " << del << " ---\n";
-  // cout << "----环个数: " << total << " -----\n";
-  // ScopeTime t;
+  cout << "----del: " << del << " ---\n";
+  cout << "----环个数: " << total << " -----\n";
+  ScopeTime t;
   WriteAnswer();
-  // t.LogTime();
+  t.LogTime();
 }
 
 int main() {

@@ -84,10 +84,11 @@ std::ostream &operator<<(std::ostream &os,
 
 class XJBG {
  public:
-  static const int NTHREAD = 8;        // 线程个数
+  static const int NTHREAD = 4;        // 线程个数
   static const int LIMIT_STEP = 3;     // 预估步长
   static const int MAXN = 560000 + 7;  // 总点数
-  const int PARAM[NTHREAD] = {1, 2, 3, 4, 5, 6, 7, 8};
+  const int PARAM[NTHREAD] = {1, 1, 3, 6};
+  // const int PARAM[NTHREAD] = {1, 2, 3, 4, 5, 6, 7, 8};
   // const int PARAM[NTHREAD] = {1};
 
  private:
@@ -101,7 +102,8 @@ class XJBG {
     std::vector<int> tempPath;                // dfs临时路径
     std::vector<bool> stepArrive[3];          // 预估步长
     std::vector<std::vector<int>> Answer[5];  // 结果
-    bool vis[MAXN];                           // 标记访问
+    std::vector<int> stepPath[MAXN];
+    bool vis[MAXN];  // 标记访问
     Node() { tempPath = std::vector<int>(7, -1); }
   };
   std::vector<Node> ThreadData;  // 线程数据
@@ -164,6 +166,7 @@ int XJBG::GetMapID(int x) {
 inline void XJBG::addEdge(int u, int v, int w) {
   u = this->GetMapID(u);
   v = this->GetMapID(v);
+  if (u == v) std::cerr << "fuck\n";
   m_Sons[u].emplace_back(Edge{v, w});
   m_Fathers[v].emplace_back(Edge{u, w});
   ++m_edgeNum;
@@ -181,20 +184,26 @@ void XJBG::LoadData() {
   char *buffer = (char *)mmap(NULL, bufsize, PROT_READ, MAP_PRIVATE, fd, 0);
   close(fd);
 
-  int temp[2], idx = 0, x = 0;
-  long long start = 0;
-  while (start < bufsize) {
-    if (*(buffer + start) == ',') {
-      temp[idx++] = x;
-      x = 0;
-    } else if (*(buffer + start) == '\n') {
-      addEdge(temp[0], temp[1], x);
-      idx = 0;
-      x = 0;
-    } else {
-      x = x * 10 + (*(buffer + start) - '0');
+  int u = 0, v = 0, w = 0;
+  char *ptr = buffer;
+  while (ptr - buffer < bufsize) {
+    while (*ptr != ',') {
+      u = u * 10 + *ptr - '0';
+      ++ptr;
     }
-    ++start;
+    ++ptr;
+    while (*ptr != ',') {
+      v = v * 10 + *ptr - '0';
+      ++ptr;
+    }
+    ++ptr;
+    while (*ptr != '\n') {
+      w = w * 10 + *ptr - '0';
+      ++ptr;
+    }
+    ++ptr;
+    addEdge(u, v, w);
+    u = v = w = 0;
   }
 
 #ifdef LOCAL
@@ -266,12 +275,19 @@ void XJBG::TarJan() {
 void XJBG::pretreatTravelBFS(Node &Data, int &st) {
   std::queue<std::tuple<int, int>> Q;
   std::vector<bool> vis(m_IDDom.size(), false);
-  Q.push(std::make_pair(st, 0));
+  std::vector<bool> fir(m_IDDom.size(), true);
+
+  std::vector<int> tmp;
   vis[st] = true;
+  Q.push(std::make_pair(st, 0));
   int ctg = m_category[st];
+  int cnt = 0;
   while (!Q.empty()) {
     const auto &head = Q.front();
     int u = std::get<0>(head), dep = std::get<1>(head);
+    // if (this->GetID(st) == 2311) {
+    //   std::cerr << this->GetID(u) << ", " << dep << "\n";
+    // }
     Q.pop();
     Data.stepArrive[2][u] = true;
     if (dep < 3) Data.stepArrive[1][u] = true;
@@ -279,15 +295,45 @@ void XJBG::pretreatTravelBFS(Node &Data, int &st) {
     if (dep == 3) continue;
     for (auto &it : m_Fathers[u]) {
       int v = it.v;
-      if (Data.vis[v] || vis[v]) continue;
       if (m_category[v] != ctg) {
         Data.vis[v] = true;
         continue;
       }
+      if (!vis[v]) {
+        Data.stepPath[v] = {u};
+        tmp.emplace_back(v);
+      } else {
+        Data.stepPath[v].emplace_back(u);
+      }
+      // 如果used或者加入到过队列
+      if (Data.vis[v] || vis[v]) continue;
       vis[v] = true;
       Q.push(std::make_pair(v, dep + 1));
     }
   }
+  for (auto &it : tmp) {
+    std::sort(Data.stepPath[it].begin(), Data.stepPath[it].end(),
+              [&](const int &a, const int &b) {
+                return this->GetID(a) < this->GetID(b);
+              });
+  }
+  // if (this->GetID(st) == 2311) {
+  //   std::cerr << m_Fathers[st].size() << "\n";
+  //   std::cerr << "fuck\n";
+  //   std::cerr << Data.stepPath[this->GetMapID(3871)] << "\n";
+  // }
+  // if (this->GetID(st) == 24744) {
+  //   int x = 1462749572;
+  //   std::cerr << Data.stepArrive[0][this->GetMapID(x)] << "\n";
+  // }
+  // static int p = 0;
+  // if (p++ < 20) {
+  //   int x = 0;
+  //   for (auto &v : tmp) {
+  //     x += Data.stepPath[v].size();
+  //   }
+  //   std::cout << this->GetID(st) << " " << x << "\n";
+  // }
 }
 
 void XJBG::handleCircle(Node &Data, const int &dep) {
@@ -308,7 +354,25 @@ bool XJBG::judge(Node &Data, const int &v, const int &dep) {
     return false;
   }
 }
-
+/*
+void XJBG::findCircle(Node &Data, int u, int dep) {
+  for (auto &it : m_Sons[u]) {
+    int v = it.v;
+    Data.tempPath[dep] = v;
+    if (dep > 2 && v == Data.tempPath[0]) {
+      this->handleCircle(Data, dep);
+      continue;
+    }
+    if (this->judge(Data, v, dep)) {
+      continue;
+    }
+    Data.vis[v] = true;
+    this->findCircle(Data, v, dep + 1);
+    Data.vis[v] = false;
+  }
+}
+*/
+// 0, 1, 2, 3, 4, 5, 6, 0
 void XJBG::findCircle(Node &Data, int u, int dep) {
   Data.tempPath[0] = u;
   for (auto &it1 : m_Sons[u]) {
@@ -330,6 +394,41 @@ void XJBG::findCircle(Node &Data, int u, int dep) {
         }
         if (Data.vis[v3]) continue;
         Data.vis[v3] = true;
+
+        // 0->1->2->3->[4]->5->6->1
+        for (auto &s4 : m_Sons[v3]) {
+          Data.tempPath[4] = s4.v;
+          if (s4.v == u) {
+            this->handleCircle(Data, 4);
+            continue;
+          }
+          if (Data.vis[s4.v] || !Data.stepArrive[2][s4.v]) continue;
+          Data.vis[s4.v] = true;
+          for (auto &s5 : Data.stepPath[s4.v]) {
+            Data.tempPath[5] = s5;
+            if (s5 == u) {
+              this->handleCircle(Data, 5);
+              continue;
+            }
+            if (Data.vis[s5] || !Data.stepArrive[1][s5]) continue;
+            Data.vis[s5] = true;
+            for (auto &s6 : Data.stepPath[s5]) {
+              Data.tempPath[6] = s6;
+              if (s6 == u) {
+                this->handleCircle(Data, 6);
+                continue;
+              }
+              if (Data.vis[s6]) continue;
+              if (Data.stepArrive[0][s6]) {
+                this->handleCircle(Data, 7);
+              }
+            }
+            Data.vis[s5] = false;
+          }
+          Data.vis[s4.v] = false;
+        }
+
+        /*
         for (auto &it4 : m_Sons[v3]) {
           int v4 = it4.v;
           Data.tempPath[4] = v4;
@@ -364,6 +463,7 @@ void XJBG::findCircle(Node &Data, int u, int dep) {
           }
           Data.vis[v4] = false;
         }
+        */
         Data.vis[v3] = false;
       }
       Data.vis[v2] = false;
@@ -389,8 +489,10 @@ void XJBG::FindPath() {
       for (auto &it : Data.stepArrive) {
         it = std::vector<bool>(m_IDDom.size(), false);
       }
+
       int v = m_Circles[i];
       this->pretreatTravelBFS(Data, v);
+
       Data.tempPath[0] = v;
       Data.vis[v] = true;
       this->findCircle(Data, v, 1);
@@ -423,7 +525,7 @@ void XJBG::FindPath() {
     std::cerr << data.Answer[4].size() << ")\n";
     tmp[4] += data.Answer[4].size();
   }
-  std::cerr << "* " << tmp << "\n";
+  std::cerr << "* tol: " << tmp << "\n";
 #endif
 }
 

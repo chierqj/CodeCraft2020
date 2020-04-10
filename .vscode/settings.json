@@ -79,6 +79,7 @@
     "condition_variable": "cpp",
     "set": "cpp",
     "unordered_set": "cpp",
-    "queue": "cpp"
+    "queue": "cpp",
+    "hash_map": "cpp"
   }
 }

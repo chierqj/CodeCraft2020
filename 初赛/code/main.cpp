@@ -74,83 +74,67 @@ std::ostream &operator<<(std::ostream &os,
   return os;
 }
 
-/*
-	本端账号ID和对端账号ID为一个32位的正整数
-	转账金额为一个32位的正整数
-	转账记录最多为28万条
-	每个账号平均转账记录数< 10
-	账号A给账号B最多转账一次
-*/
+struct ThreadData {
+  int answers = 0;                          // 环个数
+  int start = 0;                            // 起点
+  int startctg = 0;                         // sccID
+  std::vector<int> tempPath;                // dfs临时路径
+  std::vector<bool> OneReachable;           // 一步可达
+  std::vector<bool> TwoReachable;           // 两步可达
+  std::vector<bool> ThreeReachable;         // 三步可达
+  std::vector<int> distance;                // 最近距离
+  std::vector<std::vector<int>> Answer[5];  // 结果
+  std::vector<bool> vis;
+  ThreadData(int n) {
+    tempPath = std::vector<int>(7, -1);
+    vis = std::vector<bool>(n, false);
+  }
+};
 
 class XJBG {
  public:
-  static const int NTHREAD = 8;        // 线程个数
-  static const int LIMIT_STEP = 3;     // 预估步长
-  static const int MAXN = 560000 + 7;  // 总点数
-  // const int PARAM[NTHREAD] = {1, 1, 3, 6};
-  const int PARAM[NTHREAD] = {1, 2, 3, 4, 5, 6, 7, 8};
-  // const int PARAM[NTHREAD] = {1};
-
- private:
-  std::unordered_map<int, int> m_IDToMap;  // ID->m_MapID
-  std::vector<int> m_IDDom;                // m_MapID->ID
-  int m_answers = 0;                       // 总环数目
-  std::vector<int> m_Circles;              // 大于3的联通分量的点
-
-  struct Node {
-    int answers;                              // 环个数
-    std::vector<int> tempPath;                // dfs临时路径
-    std::vector<bool> stepArrive[3];          // 预估步长
-    std::vector<std::vector<int>> Answer[5];  // 结果
-    bool vis[MAXN];                           // 标记访问
-    Node() { tempPath = std::vector<int>(7, -1); }
-  };
-  std::vector<Node> ThreadData;  // 线程数据
-
-  struct PreBuffer {
-    char str[10];
-    int start;
-    int length;
-  };
-  std::vector<PreBuffer> m_MapID;
-
- private:
-  struct Edge {
-    int v, w;
-  };
-  std::vector<Edge> m_Sons[MAXN];     // 边
-  std::vector<Edge> m_Fathers[MAXN];  // 边
-  int m_edgeNum = 0;                  // 边数目
-  int m_dfn[MAXN], m_low[MAXN];       // Tarjan
-  std::stack<int> m_stack;
-  int m_category[MAXN];                     // 所在联通分量id
-  int m_inDegree[MAXN], m_outDegree[MAXN];  // 出入度
-  bool m_inStack[MAXN];                     // Tarjan标记在不在栈内
-  bool m_inCircle[MAXN];                    // 在不在找过的环内
-  int m_tarjanCount = 0;                    // Tarjan搜索顺序
-  int m_stackTop = 0;                       // Tarjan栈top标号
-  int m_scc = 0, m_useScc = 0;              // 总联通分量和大于3的
+  static const int MAXN = 560000 + 7;        // 总点数
+  static const int NTHREAD = 4;              // 线程个数
+  const int PARAM[NTHREAD] = {2, 3, 5, 40};  // 线程权重
+  // const int PARAM[NTHREAD] = {1};            // 线程权重
 
  public:
-  void Init();
-  void LoadData();
-  void TarJan();
-  void FindPath();
-  void SaveAnswer();
+  void LoadData();    // 加载数据
+  void TarJan();      // TarJan
+  void FindCircle();  // 找环
+  void SaveAnswer();  // 保存答案
 
  private:
-  inline int GetID(int x);
-  int GetMapID(int x);
-  inline void addEdge(int u, int v, int w);
-  void tarjan(int u);
-  void pretreatTravelBFS(Node &Data, int &st);
-  bool judge(Node &Data, const int &u, const int &dep);
-  void handleCircle(Node &Data, const int &dep);
-  void findCircle(Node &Data, int u, int dep);
-  void preSave();
+  void SortEdge();                                             // 儿子排序
+  inline int GetID(int x);                                     // 获取ID
+  int GetMapID(int x);                                         // 获取映射ID
+  inline void addEdge(int u, int v, int w);                    // 加边
+  void doTarJan(int u);                                        // tarjan
+  bool judge(ThreadData &Data, const int &u, const int &dep);  // dfs剪枝
+  inline void SaveCircle(ThreadData &Data, const int &dep);    // 保存环
+  void BackSearch(ThreadData &Data, int &st, int dep);         // 反向剪枝
+  void doFindCircle(ThreadData &Data, int u, int dep);         // 正向找环
+
+ private:
+  std::unordered_map<int, int> m_IDToMap;       // ID->MapID
+  std::vector<int> m_IDDom;                     // MapID->ID
+  int m_answers = 0;                            // 总环数目
+  std::vector<int> m_Circles;                   // 大于3的联通分量的点
+  std::vector<ThreadData> ThreadsData;          // 线程数据
+  int m_Edges[MAXN][3][100];                    // u->[son, father, weight]
+  int m_CountSons[MAXN], m_CountFathers[MAXN];  // 边数目
+  int m_edgeNum = 0;                            // 边数目
+  int m_dfn[MAXN], m_low[MAXN];                 // Tarjan
+  std::stack<int> m_stack;                      // Tarjan
+  int m_category[MAXN];                         // 所在联通分量id
+  int m_inDegree[MAXN], m_outDegree[MAXN];      // 出入度
+  bool m_inStack[MAXN];                         // Tarjan标记在不在栈内
+  bool m_inCircle[MAXN];                        // 在不在找过的环内
+  int m_tarjanCount = 0;                        // Tarjan搜索顺序
+  int m_stackTop = 0;                           // Tarjan栈top标号
+  int m_scc = 0, m_useScc = 0;                  // 总联通分量和大于3的
 };
 
-void XJBG::Init() { ThreadData = std::vector<Node>(NTHREAD); }
 inline int XJBG::GetID(int x) { return m_IDDom[x]; }
 int XJBG::GetMapID(int x) {
   auto it = m_IDToMap.find(x);
@@ -165,8 +149,11 @@ int XJBG::GetMapID(int x) {
 inline void XJBG::addEdge(int u, int v, int w) {
   u = this->GetMapID(u);
   v = this->GetMapID(v);
-  m_Sons[u].emplace_back(Edge{v, w});
-  m_Fathers[v].emplace_back(Edge{u, w});
+
+  m_Edges[u][0][m_CountSons[u]] = v;
+  m_Edges[u][2][m_CountSons[u]++] = w;
+  m_Edges[v][1][m_CountFathers[v]++] = u;
+
   ++m_edgeNum;
   ++m_inDegree[v];
   ++m_outDegree[u];
@@ -220,15 +207,15 @@ void XJBG::LoadData() {
 #endif
 }
 
-void XJBG::tarjan(int u) {
+void XJBG::doTarJan(int u) {
   m_dfn[u] = m_low[u] = ++m_tarjanCount;
   m_inStack[u] = true;
   m_stack.push(u);
 
-  for (auto &it : m_Sons[u]) {
-    int v = it.v;
+  for (int i = 0; i < m_CountSons[u]; ++i) {
+    int v = m_Edges[u][0][i];
     if (!m_dfn[v]) {
-      this->tarjan(v);
+      this->doTarJan(v);
       m_low[u] = std::min(m_low[u], m_low[v]);
     } else if (m_inStack[v]) {
       m_low[u] = std::min(m_low[u], m_dfn[v]);
@@ -244,7 +231,7 @@ void XJBG::tarjan(int u) {
       m_inStack[cur] = false;
       if (cur == u) break;
     }
-    if (tmp.size() >= 3) {
+    if (tmp.size() > 2) {
       ++m_useScc;
       m_Circles.insert(m_Circles.end(), tmp.begin(), tmp.end());
     }
@@ -255,8 +242,8 @@ void XJBG::TarJan() {
   ScopeTime t;
 
   for (int i = 0; i < m_IDDom.size(); ++i) {
-    if (!m_dfn[i] && !m_Sons[i].empty()) {
-      this->tarjan(i);
+    if (!m_dfn[i] && m_CountSons[i] > 0) {
+      this->doTarJan(i);
     }
   }
   std::sort(m_Circles.begin(), m_Circles.end(),
@@ -270,192 +257,174 @@ void XJBG::TarJan() {
 #endif
 }
 
-void XJBG::pretreatTravelBFS(Node &Data, int &st) {
-  std::queue<std::tuple<int, int>> Q;
-  std::vector<bool> vis(m_IDDom.size(), false);
-  Q.push(std::make_pair(st, 0));
-  vis[st] = true;
-  int ctg = m_category[st];
-  while (!Q.empty()) {
-    const auto &head = Q.front();
-    int u = std::get<0>(head), dep = std::get<1>(head);
-    Q.pop();
-    Data.stepArrive[2][u] = true;
-    if (dep < 3) Data.stepArrive[1][u] = true;
-    if (dep < 2) Data.stepArrive[0][u] = true;
-    if (dep == 3) continue;
-    for (auto &it : m_Fathers[u]) {
-      int v = it.v;
-      if (Data.vis[v] || vis[v]) continue;
-      if (m_category[v] != ctg) {
-        Data.vis[v] = true;
-        continue;
-      }
-      vis[v] = true;
-      Q.push(std::make_pair(v, dep + 1));
+void XJBG::BackSearch(ThreadData &Data, int &u, int dep) {
+  for (int i = 0; i < m_CountFathers[u]; ++i) {
+    int v = m_Edges[u][1][i];
+    if (m_category[v] != Data.startctg) {
+      Data.vis[v] = true;
+      continue;
     }
+    if (Data.vis[v]) continue;
+    Data.distance[v] = std::min(Data.distance[v], dep + 1);
+    if (dep == 0) {
+      Data.OneReachable[v] = true;
+      Data.TwoReachable[v] = true;
+      Data.ThreeReachable[v] = true;
+    } else if (dep == 1) {
+      Data.TwoReachable[v] = true;
+      Data.ThreeReachable[v] = true;
+    } else if (dep == 2) {
+      Data.ThreeReachable[v] = true;
+      continue;
+    }
+    Data.vis[v] = true;
+    this->BackSearch(Data, v, dep + 1);
+    Data.vis[v] = false;
   }
 }
 
-void XJBG::handleCircle(Node &Data, const int &dep) {
+// 0,1,2,3,4,5,6,0
+inline void XJBG::SaveCircle(ThreadData &Data, const int &dep) {
   Data.Answer[dep - 3].emplace_back(Data.tempPath);
   ++Data.answers;
 }
-bool XJBG::judge(Node &Data, const int &v, const int &dep) {
-  if (Data.vis[v] || dep > 6) {
-    return true;
-  } else if (dep == 4 && !Data.stepArrive[2][v]) {
-    return true;
-  } else if (dep == 5 && !Data.stepArrive[1][v]) {
-    return true;
-  } else if (dep == 6) {
-    if (Data.stepArrive[0][v]) this->handleCircle(Data, dep + 1);
-    return true;
-  } else {
-    return false;
-  }
-}
 
-void XJBG::findCircle(Node &Data, int u, int dep) {
-  Data.tempPath[0] = u;
-  for (auto &it1 : m_Sons[u]) {
-    int v1 = it1.v;
-    if (Data.vis[v1]) continue;
-    Data.tempPath[1] = v1;
-    Data.vis[v1] = true;
-    for (auto &it2 : m_Sons[v1]) {
-      int v2 = it2.v;
-      if (Data.vis[v2]) continue;
-      Data.tempPath[2] = v2;
-      Data.vis[v2] = true;
-      for (auto &it3 : m_Sons[v2]) {
-        int v3 = it3.v;
-        Data.tempPath[3] = v3;
-        if (v3 == u) {
-          this->handleCircle(Data, 3);
-          continue;
-        }
-        if (Data.vis[v3]) continue;
-        Data.vis[v3] = true;
-        for (auto &it4 : m_Sons[v3]) {
-          int v4 = it4.v;
-          Data.tempPath[4] = v4;
-          if (v4 == u) {
-            this->handleCircle(Data, 4);
-            continue;
-          }
-          if (Data.vis[v4] || !Data.stepArrive[2][v4]) continue;
-          Data.vis[v4] = true;
-          for (auto &it5 : m_Sons[v4]) {
-            int v5 = it5.v;
-            Data.tempPath[5] = v5;
-            if (v5 == u) {
-              this->handleCircle(Data, 5);
-              continue;
-            }
-            if (Data.vis[v5] || !Data.stepArrive[1][v5]) continue;
-            Data.vis[v5] = true;
-            for (auto &it6 : m_Sons[v5]) {
-              int v6 = it6.v;
-              Data.tempPath[6] = v6;
-              if (v6 == u) {
-                this->handleCircle(Data, 6);
-                continue;
-              }
-              if (Data.vis[v6]) continue;
-              if (Data.stepArrive[0][v6]) {
-                this->handleCircle(Data, 7);
-              }
-            }
-            Data.vis[v5] = false;
-          }
-          Data.vis[v4] = false;
-        }
-        Data.vis[v3] = false;
+// 1,2,3,4,5,6,7,1
+bool XJBG::judge(ThreadData &Data, const int &v, const int &dep) {
+  if (Data.vis[v]) return true;
+
+  switch (dep) {
+    case 4:
+      if (!Data.ThreeReachable[v] || Data.distance[v] > 3) return true;
+      return false;
+      break;
+    case 5:
+      if (!Data.TwoReachable[v] || Data.distance[v] > 2) return true;
+      return false;
+      break;
+    case 6:
+      if (Data.OneReachable[v]) {
+        this->SaveCircle(Data, dep + 1);
       }
-      Data.vis[v2] = false;
+      return true;
+      break;
+    default:
+      return false;
+      break;
+  }
+}
+void XJBG::doFindCircle(ThreadData &Data, int u, int dep) {
+  for (int i = 0; i < m_CountSons[u]; ++i) {
+    int v = m_Edges[u][0][i];
+    Data.tempPath[dep] = v;
+    if (dep > 2 && v == Data.start) {
+      this->SaveCircle(Data, dep);
+      continue;
+    } else if (this->judge(Data, v, dep)) {
+      continue;
     }
-    Data.vis[v1] = false;
+    Data.vis[v] = true;
+    this->doFindCircle(Data, v, dep + 1);
+    Data.vis[v] = false;
   }
 }
 
-void XJBG::FindPath() {
+void XJBG::SortEdge() {
+  for (auto &v : m_Circles) {
+    int count = m_CountSons[v];
+    for (int j = 0; j < count; ++j) {
+      int minIndex = j;
+      for (int k = minIndex + 1; k < count; ++k) {
+        if (GetID(m_Edges[v][0][k]) < GetID(m_Edges[v][0][minIndex])) {
+          minIndex = k;
+        }
+      }
+      std::swap(m_Edges[v][0][j], m_Edges[v][0][minIndex]);
+      std::swap(m_Edges[v][2][j], m_Edges[v][2][minIndex]);
+    }
+  }
+}
+
+void XJBG::FindCircle() {
   ScopeTime t;
 
-  for (auto &v : m_Circles) {
-    std::sort(m_Sons[v].begin(), m_Sons[v].end(),
-              [&](const Edge &e1, const Edge &e2) {
-                return this->GetID(e1.v) < this->GetID(e2.v);
-              });
-  }
+  this->SortEdge();
 
   auto foo = [&](int pid, int start, int end) {
-    auto &Data = ThreadData[pid];
+    auto &Data = ThreadsData[pid];
+
+    Data.vis = std::vector<bool>(m_IDDom.size(), false);
     for (int i = 0; i < start; ++i) Data.vis[m_Circles[i]] = true;
+    Data.distance = std::vector<int>(m_IDDom.size(), 0);
     for (int i = start; i < end; ++i) {
-      for (auto &it : Data.stepArrive) {
-        it = std::vector<bool>(m_IDDom.size(), false);
-      }
+      Data.OneReachable = std::vector<bool>(m_IDDom.size(), false);
+      Data.TwoReachable = std::vector<bool>(m_IDDom.size(), false);
+      Data.ThreeReachable = std::vector<bool>(m_IDDom.size(), false);
+
       int v = m_Circles[i];
-      this->pretreatTravelBFS(Data, v);
-      Data.tempPath[0] = v;
+      Data.start = v;
+      Data.startctg = m_category[v];
       Data.vis[v] = true;
-      this->findCircle(Data, v, 1);
+      this->BackSearch(Data, v, 0);
+      Data.tempPath[0] = v;
+      this->doFindCircle(Data, v, 1);
     }
   };
+
+  std::vector<std::thread> Threads(NTHREAD);
+  ThreadsData = std::vector<ThreadData>(NTHREAD, ThreadData(m_IDDom.size()));
 
   int sum = 0;
   for (int i = 0; i < NTHREAD; ++i) sum += PARAM[i];
   int start = 0, block = m_Circles.size() / sum;
-  std::vector<std::thread> Threads(NTHREAD);
+
   for (int i = 0; i < NTHREAD; ++i) {
     int end = (i == NTHREAD - 1 ? m_Circles.size() : start + block * PARAM[i]);
     Threads[i] = std::thread(foo, i, start, end);
     start += block * PARAM[i];
   }
   for (auto &it : Threads) it.join();
-  for (auto &it : ThreadData) m_answers += it.answers;
+  for (auto &it : ThreadsData) m_answers += it.answers;
 
 #ifdef LOCAL
   std::cerr << "@ Answer: " << m_answers << " #";
   t.LogTime();
-  std::vector<int> tmp(5, 0);
   for (int i = 0; i < NTHREAD; ++i) {
-    const auto &data = ThreadData[i];
+    const auto &data = ThreadsData[i];
     std::cerr << "* " << i << ": " << data.answers << "(";
     for (int j = 0; j < 4; ++j) {
       std::cerr << data.Answer[j].size() << ", ";
-      tmp[j] += data.Answer[j].size();
     }
     std::cerr << data.Answer[4].size() << ")\n";
-    tmp[4] += data.Answer[4].size();
   }
-  std::cerr << "* " << tmp << "\n";
 #endif
 }
 
-void XJBG::preSave() {
-  m_MapID.resize(m_IDDom.size());
+void XJBG::SaveAnswer() {
+  ScopeTime t;
+
+  struct PreBuffer {
+    char str[10];
+    int start;
+    int length;
+  };
+  std::vector<PreBuffer> MapID(m_IDDom.size());
   for (int i = 0; i < m_IDDom.size(); ++i) {
     int x = m_IDDom[i];
     if (x == 0) {
-      m_MapID[i].start = 9;
-      m_MapID[i].str[9] = '0';
-      m_MapID[i].length = 1;
+      MapID[i].start = 9;
+      MapID[i].str[9] = '0';
+      MapID[i].length = 1;
       continue;
     }
     int idx = 10;
     while (x) {
-      m_MapID[i].str[--idx] = x % 10 + '0';
+      MapID[i].str[--idx] = x % 10 + '0';
       x /= 10;
     }
-    m_MapID[i].start = idx;
-    m_MapID[i].length = 10 - idx;
+    MapID[i].start = idx;
+    MapID[i].length = 10 - idx;
   }
-}
-void XJBG::SaveAnswer() {
-  ScopeTime t;
-  this->preSave();
 
   struct T {
     char *buffer[5];
@@ -465,7 +434,7 @@ void XJBG::SaveAnswer() {
   std::vector<T> OutData(NTHREAD);
 
   auto foo = [&](int pid) {
-    const auto &ThData = ThreadData[pid];
+    const auto &ThData = ThreadsData[pid];
     auto &out = OutData[pid];
     for (int len = 0; len < 5; ++len) {
       const auto &ans = ThData.Answer[len];
@@ -475,7 +444,7 @@ void XJBG::SaveAnswer() {
       for (auto &it : ans) {
         // 便利一行len+3个数字
         for (int i = 0; i < len + 3; ++i) {
-          auto &mpid = m_MapID[it[i]];
+          auto &mpid = MapID[it[i]];
           if (i != 0) out.buffer[len][tidx++] = ',';
           memcpy(out.buffer[len] + tidx, mpid.str + mpid.start, mpid.length);
           tidx += mpid.length;
@@ -532,11 +501,9 @@ int main() {
   std::cerr << std::fixed << std::setprecision(3);
 
   XJBG *xjbg = new XJBG();
-  xjbg->Init();
   xjbg->LoadData();
   xjbg->TarJan();
-  xjbg->FindPath();
+  xjbg->FindCircle();
   xjbg->SaveAnswer();
-  // sleep(3);
   return 0;
 }
