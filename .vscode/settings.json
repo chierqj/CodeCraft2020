@@ -80,6 +80,7 @@
     "set": "cpp",
     "unordered_set": "cpp",
     "queue": "cpp",
-    "hash_map": "cpp"
+    "hash_map": "cpp",
+    "future": "cpp"
   }
 }

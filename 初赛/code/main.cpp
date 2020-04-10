@@ -33,8 +33,8 @@
 #include <vector>
 
 #ifdef LOCAL
-#define TRAIN "../data/3512444/test_data.txt"
-#define RESULT "../data/3512444/result.txt"
+#define TRAIN "../data/1004812/test_data.txt"
+#define RESULT "../data/1004812/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -93,7 +93,7 @@ struct ThreadData {
 
 class XJBG {
  public:
-  static const int MAXN = 560000 + 7;        // 总点数
+  static const int MAXN = 280000 + 7;        // 总点数
   static const int NTHREAD = 4;              // 线程个数
   const int PARAM[NTHREAD] = {2, 3, 5, 40};  // 线程权重
   // const int PARAM[NTHREAD] = {1};            // 线程权重
@@ -105,10 +105,8 @@ class XJBG {
   void SaveAnswer();  // 保存答案
 
  private:
-  void SortEdge();                                             // 儿子排序
-  inline int GetID(int x);                                     // 获取ID
-  int GetMapID(int x);                                         // 获取映射ID
   inline void addEdge(int u, int v, int w);                    // 加边
+  void SortEdge();                                             // 儿子排序
   void doTarJan(int u);                                        // tarjan
   bool judge(ThreadData &Data, const int &u, const int &dep);  // dfs剪枝
   inline void SaveCircle(ThreadData &Data, const int &dep);    // 保存环
@@ -116,8 +114,7 @@ class XJBG {
   void doFindCircle(ThreadData &Data, int u, int dep);         // 正向找环
 
  private:
-  std::unordered_map<int, int> m_IDToMap;       // ID->MapID
-  std::vector<int> m_IDDom;                     // MapID->ID
+  int m_maxID = 0;
   int m_answers = 0;                            // 总环数目
   std::vector<int> m_Circles;                   // 大于3的联通分量的点
   std::vector<ThreadData> ThreadsData;          // 线程数据
@@ -135,21 +132,7 @@ class XJBG {
   int m_scc = 0, m_useScc = 0;                  // 总联通分量和大于3的
 };
 
-inline int XJBG::GetID(int x) { return m_IDDom[x]; }
-int XJBG::GetMapID(int x) {
-  auto it = m_IDToMap.find(x);
-  if (it != m_IDToMap.end()) {
-    return it->second;
-  }
-  int sz = m_IDDom.size();
-  m_IDToMap.insert({x, sz});
-  m_IDDom.emplace_back(x);
-  return sz;
-}
 inline void XJBG::addEdge(int u, int v, int w) {
-  u = this->GetMapID(u);
-  v = this->GetMapID(v);
-
   m_Edges[u][0][m_CountSons[u]] = v;
   m_Edges[u][2][m_CountSons[u]++] = w;
   m_Edges[v][1][m_CountFathers[v]++] = u;
@@ -157,6 +140,8 @@ inline void XJBG::addEdge(int u, int v, int w) {
   ++m_edgeNum;
   ++m_inDegree[v];
   ++m_outDegree[u];
+
+  m_maxID = std::max(m_maxID, std::max(u, v) + 1);
 }
 
 void XJBG::LoadData() {
@@ -192,8 +177,7 @@ void XJBG::LoadData() {
   }
 
 #ifdef LOCAL
-  std::cerr << "@ LoadData: (V: " << m_IDDom.size() << ", E: " << m_edgeNum
-            << ") #";
+  std::cerr << "@ LoadData: (V: " << m_maxID << ", E: " << m_edgeNum << ") #";
   t.LogTime();
 #endif
 #ifdef TEST
@@ -241,15 +225,12 @@ void XJBG::doTarJan(int u) {
 void XJBG::TarJan() {
   ScopeTime t;
 
-  for (int i = 0; i < m_IDDom.size(); ++i) {
+  for (int i = 0; i < m_maxID; ++i) {
     if (!m_dfn[i] && m_CountSons[i] > 0) {
       this->doTarJan(i);
     }
   }
-  std::sort(m_Circles.begin(), m_Circles.end(),
-            [&](const int &x, const int &y) {
-              return this->GetID(x) < this->GetID(y);
-            });
+  std::sort(m_Circles.begin(), m_Circles.end());
 
 #ifdef LOCAL
   std::cerr << "@ TarJan: (scc: " << m_scc << ", usescc: " << m_useScc << ") #";
@@ -335,7 +316,7 @@ void XJBG::SortEdge() {
     for (int j = 0; j < count; ++j) {
       int minIndex = j;
       for (int k = minIndex + 1; k < count; ++k) {
-        if (GetID(m_Edges[v][0][k]) < GetID(m_Edges[v][0][minIndex])) {
+        if (m_Edges[v][0][k] < m_Edges[v][0][minIndex]) {
           minIndex = k;
         }
       }
@@ -353,13 +334,13 @@ void XJBG::FindCircle() {
   auto foo = [&](int pid, int start, int end) {
     auto &Data = ThreadsData[pid];
 
-    Data.vis = std::vector<bool>(m_IDDom.size(), false);
+    Data.vis = std::vector<bool>(m_maxID, false);
     for (int i = 0; i < start; ++i) Data.vis[m_Circles[i]] = true;
-    Data.distance = std::vector<int>(m_IDDom.size(), 0);
+    Data.distance = std::vector<int>(m_maxID, 0);
     for (int i = start; i < end; ++i) {
-      Data.OneReachable = std::vector<bool>(m_IDDom.size(), false);
-      Data.TwoReachable = std::vector<bool>(m_IDDom.size(), false);
-      Data.ThreeReachable = std::vector<bool>(m_IDDom.size(), false);
+      Data.OneReachable = std::vector<bool>(m_maxID, false);
+      Data.TwoReachable = std::vector<bool>(m_maxID, false);
+      Data.ThreeReachable = std::vector<bool>(m_maxID, false);
 
       int v = m_Circles[i];
       Data.start = v;
@@ -372,7 +353,7 @@ void XJBG::FindCircle() {
   };
 
   std::vector<std::thread> Threads(NTHREAD);
-  ThreadsData = std::vector<ThreadData>(NTHREAD, ThreadData(m_IDDom.size()));
+  ThreadsData = std::vector<ThreadData>(NTHREAD, ThreadData(m_maxID));
 
   int sum = 0;
   for (int i = 0; i < NTHREAD; ++i) sum += PARAM[i];
@@ -408,9 +389,9 @@ void XJBG::SaveAnswer() {
     int start;
     int length;
   };
-  std::vector<PreBuffer> MapID(m_IDDom.size());
-  for (int i = 0; i < m_IDDom.size(); ++i) {
-    int x = m_IDDom[i];
+  std::vector<PreBuffer> MapID(m_maxID);
+  for (int i = 0; i < m_maxID; ++i) {
+    int x = i;
     if (x == 0) {
       MapID[i].start = 9;
       MapID[i].str[9] = '0';
