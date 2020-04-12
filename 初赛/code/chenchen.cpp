@@ -33,7 +33,7 @@ using namespace std::chrono;
 #define MMAX 280000
 #define CHILDRENCORE 3  //子进程数目
 
-// #define TEST
+#define TEST
 //#define TIME
 
 #ifdef TIME
@@ -41,8 +41,8 @@ steady_clock::time_point start = steady_clock::now();
 #endif
 
 #ifdef TEST
-#define testFile "../data/3512444/test_data.txt"
-#define resultFile "../data/3512444/result.txt"
+#define testFile "../data/1004812/test_data.txt"
+#define resultFile "../data/1004812/result.txt"
 #else
 #define testFile "/data/test_data.txt"
 #define resultFile "/projects/student/result.txt"
@@ -487,7 +487,7 @@ int main() {
   if (ChildrenNum != 0) {
     exit(0);
   }
-  sleep(5);
+  // sleep(5);
 #ifdef TIME
   cout << "输出结束,时间：";
   cout
