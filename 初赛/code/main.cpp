@@ -77,6 +77,42 @@ std::ostream &operator<<(std::ostream &os,
   os << "]";
   return os;
 }
+template <typename T>
+struct Vector {
+  T *a;
+  int n;
+  Vector() {
+    a = nullptr;
+    n = 0;
+  }
+  void emplace_back(T x) {
+    if ((n & -n) == n) {
+      a = (T *)realloc(a, (n * 2 + 1) * sizeof(T));
+    }
+    a[n++] = x;
+  }
+  void init(int num, T val) {
+    a = nullptr;
+    n = 0;
+    for (int i = 0; i < num; ++i) {
+      if ((n & -n) == n) {
+        a = (T *)realloc(a, (n * 2 + 1) * sizeof(T));
+      }
+      a[n++] = val;
+    }
+  }
+  T &operator[](int idx) { return a[idx]; }
+  // struct Iterator {
+  //   int index;
+  //   Vector &outer;
+  //   Iterator(Vector &o, int i) : outer(o), index(i) {}
+  //   void operator++() { index++; }
+  //   T operator*() const { return outer[index]; }
+  //   bool operator!=(const Iterator &i) { return i.index != index; }
+  // };
+  // Iterator begin() { return Iterator(*this, 0); }
+  // Iterator end() { return Iterator(*this, n); }
+};
 
 class XJBG {
   struct PreBuffer {
@@ -107,6 +143,7 @@ class XJBG {
   static const int MAXN = 200000 + 7;        // 总点数
   static const int NTHREAD = 4;              // 线程个数
   const int PARAM[NTHREAD] = {2, 3, 5, 40};  // 线程权重
+  // const int PARAM[NTHREAD] = {1, 2, 4, 20};  // 线程权重
  private:
   int m_maxID = 0;                              // 最大点
   std::vector<int> m_Circles;                   // 大于3的联通分量的点
@@ -123,18 +160,19 @@ class XJBG {
   std::vector<PreBuffer> m_MapID;               // 预处理答案
 
  private:
-  int m_answers = 0;                          // 环个数
-  int m_start = 0;                            // 起点
-  int m_startctg = 0;                         // sccID
-  std::vector<int> m_tempPath;                // dfs临时路径
-  std::vector<bool> m_OneReachable;           // 一步可达
-  std::vector<bool> m_TwoReachable;           // 两步可达
-  std::vector<bool> m_ThreeReachable;         // 三步可达
-  std::vector<std::vector<int>> m_Answer[5];  // 结果
-  std::vector<bool> m_vis;                    // 标记
-  char *m_buffer[5];                          // 答案
-  uint32_t m_length[5];                       // 答案长度
-  uint32_t m_totalLength = 0;                 // 答案总长度
+  int m_answers = 0;                   // 环个数
+  int m_start = 0;                     // 起点
+  int m_startctg = 0;                  // sccID
+  std::vector<bool> m_OneReachable;    // 一步可达
+  std::vector<bool> m_TwoReachable;    // 两步可达
+  std::vector<bool> m_ThreeReachable;  // 三步可达
+  Vector<int> m_tempPath;              // dfs临时路径
+  Vector<char *> m_Answer[5];          // 结果
+  Vector<int> m_Count[5];              // 答案个数
+  std::vector<bool> m_vis;             // 标记
+  char *m_buffer[5];                   // 答案
+  uint32_t m_length[5];                // 答案长度
+  uint32_t m_totalLength = 0;          // 答案总长度
 
  private:
   int m_TotalAnswers = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | 0600);
@@ -254,7 +292,6 @@ void XJBG::BackSearch(int &u, int dep) {
       continue;
     }
     if (m_vis[v]) continue;
-    // m_distance[v] = std::min(m_distance[v], dep + 1);
     if (dep == 0) {
       m_OneReachable[v] = true;
       m_TwoReachable[v] = true;
@@ -274,7 +311,21 @@ void XJBG::BackSearch(int &u, int dep) {
 
 // 0,1,2,3,4,5,6,0
 inline void XJBG::SaveCircle(const int &dep) {
-  m_Answer[dep - 3].emplace_back(m_tempPath);
+  int x = dep;
+  for (int i = 0; i < dep; ++i) {
+    x += m_MapID[m_tempPath[i]].length;
+  }
+  char *buf = new char[x];
+  int idx = 0;
+  for (int i = 0; i < dep; ++i) {
+    auto &mpid = m_MapID[m_tempPath[i]];
+    if (i != 0) buf[idx++] = ',';
+    memcpy(buf + idx, mpid.str + mpid.start, mpid.length);
+    idx += mpid.length;
+  }
+  buf[idx++] = '\n';
+  m_Answer[dep - 3].emplace_back(buf);
+  m_Count[dep - 3].emplace_back(idx);
   ++m_answers;
 }
 
@@ -350,7 +401,7 @@ void XJBG::FindCircle(int pid) {
   for (int i = 0; i < pid; ++i) st += PARAM[i] * block;
   int ed = (pid == NTHREAD - 1 ? m_Circles.size() : st + block * PARAM[pid]);
 
-  m_tempPath = std::vector<int>(7, -1);
+  m_tempPath.init(7, -1);
   m_vis = std::vector<bool>(m_maxID, false);
   for (int i = 0; i < st; ++i) m_vis[m_Circles[i]] = true;
 
@@ -399,19 +450,13 @@ void XJBG::PreSave() {
 }
 void XJBG::createAnswerBuffers(int pid) {
   for (int len = 0; len < 5; ++len) {
-    const auto &ans = m_Answer[len];
-    uint32_t tbufsize = (uint32_t)ans.size() * (len + 3) * 11;
+    auto &ans = m_Answer[len];
+    uint32_t tbufsize = (uint32_t)ans.n * (len + 3) * 11;
     m_buffer[len] = new char[tbufsize];
     uint32_t tidx = 0;
-    for (auto &it : ans) {
-      // 便利一行len+3个数字
-      for (int i = 0; i < len + 3; ++i) {
-        auto &mpid = m_MapID[it[i]];
-        if (i != 0) m_buffer[len][tidx++] = ',';
-        memcpy(m_buffer[len] + tidx, mpid.str + mpid.start, mpid.length);
-        tidx += mpid.length;
-      }
-      m_buffer[len][tidx++] = '\n';
+    for (int k = 0; k < ans.n; ++k) {
+      memcpy(m_buffer[len] + tidx, ans[k], m_Count[len][k]);
+      tidx += m_Count[len][k];
     }
     m_length[len] = tidx;
     m_totalLength += tidx;
@@ -468,6 +513,11 @@ void XJBG::SaveAnswer(int pid) {
       m_FlagForkPtr[pid] = len;
     }
   }
+#ifdef LOCAL
+  if (pid == 0) {
+    std::cerr << "TotalAnswer: " << *m_TotalAnswersPtr << "\n";
+  }
+#endif
 }
 
 void XJBG::WaitFork() {
