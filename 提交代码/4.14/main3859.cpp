@@ -128,7 +128,6 @@ class XJBG {
 
  public:
   void LoadData();           // 加载数据
-  void TarJan();             // TarJan
   void FindCircle(int pid);  // 找环
   void PreSave();            // 预处理ID
   void SaveAnswer(int pid);  // 保存答案
@@ -138,16 +137,16 @@ class XJBG {
 
  private:
   inline void addEdge(int u, int v, int w);  // 加边
-  void doTarJan(int u);                      // tarjan
   void BackSearch(int &st, int dep);         // 反向剪枝
   void doFindCircle(int u, int dep);         // 正向找环
   void createAnswerBuffers(int pid);         // 解析int
   inline void connectBuffer(char *buffer, int &node, int &idx, char c);
 
  public:
-  static const int MAXN = 200000 + 7;                   // 总点数
-  static const int NTHREAD = 8;                         // 线程个数
-  const int PARAM[NTHREAD] = {1, 2, 3, 4, 5, 6, 7, 8};  // 线程权重
+  static const int MAXN = 200000 + 7;  // 总点数
+  static const int NTHREAD = 16;       // 线程个数
+  const int PARAM[NTHREAD] = {1, 2,  3,  4,  5,  6,  7,  8,
+                              9, 10, 11, 12, 13, 14, 15, 16};  // 线程权重
   // const int PARAM[NTHREAD] = {2, 3, 5, 40};  // 线程权重
 
  private:
@@ -156,14 +155,7 @@ class XJBG {
   int m_CountSons[MAXN], m_CountFathers[MAXN];  // 边数目
   int m_edgeNum = 0;                            // 边数目
   std::vector<PreBuffer> m_MapID;               // 预处理答案
-  int m_dfn[MAXN], m_low[MAXN];                 // Tarjan
-  std::stack<int> m_stack;                      // Tarjan
-  int m_category[MAXN];                         // 所在联通分量id
-  bool m_inStack[MAXN];                         // Tarjan标记在不在栈内
-  int m_tarjanCount = 0;                        // Tarjan搜索顺序
-  int m_stackTop = 0;                           // Tarjan栈top标号
-  int m_scc = 0, m_useScc = 0;                  // 总联通分量和大于3的
-  std::vector<int> m_Circles;                   // 大于3的联通分量的点
+  std::vector<int> m_Circles;                   // 点集合
 
  private:
   int m_answers = 0;                   // 环个数
@@ -240,55 +232,14 @@ void XJBG::LoadData() {
     u = v = w = 0;
   }
 
+  for (int i = 0; i < m_maxID; ++i) {
+    if (m_CountSons[i] > 0 && m_CountFathers[i] > 0) {
+      m_Circles.emplace_back(i);
+    }
+  }
+
 #ifdef TEST
   std::cerr << "@ LoadData: (V: " << m_maxID << ", E: " << m_edgeNum << ") #";
-  t.LogTime();
-#endif
-}
-
-void XJBG::doTarJan(int u) {
-  m_dfn[u] = m_low[u] = ++m_tarjanCount;
-  m_inStack[u] = true;
-  m_stack.push(u);
-
-  for (int i = 0; i < m_CountSons[u]; ++i) {
-    int v = m_Edges[u][0][i];
-    if (!m_dfn[v]) {
-      this->doTarJan(v);
-      m_low[u] = std::min(m_low[u], m_low[v]);
-    } else if (m_inStack[v]) {
-      m_low[u] = std::min(m_low[u], m_dfn[v]);
-    }
-  }
-
-  if (m_dfn[u] == m_low[u]) {
-    std::vector<int> tmp;
-    while (true) {
-      int cur = m_stack.top();
-      m_stack.pop();
-      tmp.emplace_back(cur);
-      m_inStack[cur] = false;
-      if (cur == u) break;
-    }
-    if (tmp.size() > 2) {
-      ++m_useScc;
-      m_Circles.insert(m_Circles.end(), tmp.begin(), tmp.end());
-    }
-    ++m_scc;
-  }
-}
-void XJBG::TarJan() {
-  ScopeTime t;
-
-  for (int i = 0; i < m_maxID; ++i) {
-    if (!m_dfn[i] && m_CountSons[i] > 0) {
-      this->doTarJan(i);
-    }
-  }
-  std::sort(m_Circles.begin(), m_Circles.end());
-
-#ifdef TEST
-  std::cerr << "@ TarJan: (scc: " << m_scc << ", usescc: " << m_useScc << ") #";
   t.LogTime();
 #endif
 }
@@ -461,9 +412,9 @@ void XJBG::FindCircle(int pid) {
   int ed = (pid == NTHREAD - 1 ? m_Circles.size() : st + block * PARAM[pid]);
 
   for (int i = st; i < ed; ++i) {
-    m_OneReachable = std::vector<bool>(m_Circles.size(), false);
-    m_TwoReachable = std::vector<bool>(m_Circles.size(), false);
-    m_ThreeReachable = std::vector<bool>(m_Circles.size(), false);
+    m_OneReachable = std::vector<bool>(m_maxID, false);
+    m_TwoReachable = std::vector<bool>(m_maxID, false);
+    m_ThreeReachable = std::vector<bool>(m_maxID, false);
     int v = m_Circles[i];
     m_start = v;
     this->BackSearch(v, 0);
@@ -586,7 +537,6 @@ int main() {
 
   XJBG *xjbg = new XJBG();
   xjbg->LoadData();
-  xjbg->TarJan();
   xjbg->PreSave();
   xjbg->SortEdge();
 

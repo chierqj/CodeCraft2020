@@ -143,10 +143,9 @@ class XJBG {
   inline void connectBuffer(char *buffer, int &node, int &idx, char c);
 
  public:
-  static const int MAXN = 200000 + 7;  // 总点数
-  static const int NTHREAD = 16;       // 线程个数
-  const int PARAM[NTHREAD] = {1, 2,  3,  4,  5,  6,  7,  8,
-                              9, 10, 11, 12, 13, 14, 15, 16};  // 线程权重
+  static const int MAXN = 200000 + 7;                   // 总点数
+  static const int NTHREAD = 8;                         // 线程个数
+  const int PARAM[NTHREAD] = {1, 2, 3, 4, 5, 6, 7, 8};  // 线程权重
   // const int PARAM[NTHREAD] = {2, 3, 5, 40};  // 线程权重
 
  private:
