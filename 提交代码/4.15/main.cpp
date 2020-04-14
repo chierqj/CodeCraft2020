@@ -164,16 +164,24 @@ class XJBG {
   int m_TotalAnswers = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | 0600);
   int m_FlagFork = shmget(IPC_PRIVATE, NTHREAD * sizeof(int), IPC_CREAT | 0600);
   int m_FlagSave = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | 0600);
+  uint32_t m_TotalBufferSize =
+      shmget(IPC_PRIVATE, sizeof(uint32_t), IPC_CREAT | 0600);
+  uint32_t m_BufferStart =
+      shmget(IPC_PRIVATE, sizeof(uint32_t), IPC_CREAT | 0600);
 
   int *m_TotalAnswersPtr;
   int *m_FlagForkPtr;
   int *m_FlagSavePtr;
+  uint32_t *m_TotalBufferSizePtr;
+  uint32_t *m_BufferStartPtr;
 };
 
 void XJBG::GetShmPtr() {
   m_TotalAnswersPtr = (int *)shmat(m_TotalAnswers, NULL, 0);
   m_FlagForkPtr = (int *)shmat(m_FlagFork, NULL, 0);
   m_FlagSavePtr = (int *)shmat(m_FlagSave, NULL, 0);
+  m_TotalBufferSizePtr = (uint32_t *)shmat(m_TotalBufferSize, NULL, 0);
+  m_BufferStartPtr = (uint32_t *)shmat(m_BufferStart, NULL, 0);
 }
 
 inline void XJBG::addEdge(int u, int v, int w) {
@@ -258,6 +266,7 @@ inline void XJBG::connectBuffer(int dep, int node, char c) {
 }
 
 void XJBG::doFindCircle(int st) {
+  int sz0 = m_MapID[st].length;
   for (int it1 = 0; it1 < m_CountSons[st]; ++it1) {
     int v1 = m_Edges[st][0][it1];
     if (v1 <= st) continue;
@@ -378,6 +387,10 @@ void XJBG::FindCircle(int pid) {
     }
   }
 
+  for (int i = 0; i < 5; ++i) {
+    *m_TotalBufferSizePtr += m_AnswerLength[i];
+  }
+
   *m_TotalAnswersPtr += m_answers;
   m_FlagForkPtr[pid] = -1;
 #ifdef TEST
@@ -407,6 +420,7 @@ void XJBG::PreSave() {
     m_MapID[v].length = 10 - idx;
   }
 }
+
 void XJBG::SaveAnswer(int pid) {
 #ifdef TEST
   std::cerr << m_debug[pid] << pid << ": SaveStart\n";
@@ -425,19 +439,27 @@ void XJBG::SaveAnswer(int pid) {
       }
     }
 
-    FILE *fp = fopen(RESULT, "w");
-    fwrite(firBuf + firIdx, 1, 12 - firIdx, fp);
-    fclose(fp);
+    int fd = open(RESULT, O_RDWR | O_CREAT, 0666);
+    uint32_t bufsize = *m_TotalBufferSizePtr + (12 - firIdx);
+    ftruncate(fd, bufsize);
+    char *result =
+        (char *)mmap(NULL, bufsize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    close(fd);
+    memcpy(result, firBuf + firIdx, 12 - firIdx);
+    *m_BufferStartPtr = 12 - firIdx;
     *m_FlagSavePtr = 0;
   }
 
   for (int len = 0; len < 5; ++len) {
     while (*m_FlagSavePtr != pid * 5 + len) usleep(1);
-
-    FILE *fp = fopen(RESULT, "at");
-    fwrite(m_Answer[len], 1, m_AnswerLength[len], fp);
-    fclose(fp);
-
+    struct stat sb;
+    int fd = open(RESULT, O_RDWR | O_CREAT, 0666);
+    fstat(fd, &sb);
+    char *result = (char *)mmap(NULL, sb.st_size, PROT_READ | PROT_WRITE,
+                                MAP_SHARED, fd, 0);
+    close(fd);
+    memcpy(result + *m_BufferStartPtr, m_Answer[len], m_AnswerLength[len]);
+    *m_BufferStartPtr += m_AnswerLength[len];
     if (pid == NTHREAD - 1) {
       *m_FlagSavePtr = len + 1;
     } else {

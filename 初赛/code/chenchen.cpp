@@ -61,8 +61,11 @@ float SLICE[5] = {0, 0.042, 0.097, 0.25, 1};  //{0,0.027,0.10,0.25,1};
 
 int circleTimes = 0;
 
-int Circle[5][3500000][7];
-int CircleCount[5];
+// int Circle[5][3500000][7];
+// int CircleCount[5];
+char* Circle[5];
+
+void foo() { Circle[0] = new char[3000000 * 80]; }
 
 struct dictOne {
   int start;
