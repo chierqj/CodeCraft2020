@@ -451,7 +451,6 @@ void XJBG::SaveAnswer(int pid) {
 #ifdef LOCAL
   if (pid == 0) {
     std::cerr << "TotalAnswer: " << *m_TotalAnswersPtr << "\n";
-    std::cerr << "TotalBufferSize: " << *m_TotalBufferSizePtr << "\n";
   }
 #endif
 }
