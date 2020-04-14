@@ -116,7 +116,7 @@ struct Vector {
 
 class XJBG {
   struct PreBuffer {
-    char str[10];
+    char str[11];
     int start;
     int length;
   };
@@ -139,8 +139,7 @@ class XJBG {
   inline void addEdge(int u, int v, int w);            // 加边
   void BackSearch(int st, int dep, Vector<int> &tmp);  // 反向剪枝
   void doFindCircle(int st);                           // 正向找环
-  inline void connectBuffer(char *answer, uint32_t *length, int node,
-                            char c);  // dfs拼buffer
+  inline void connectBuffer(char *answer, uint32_t *length, int node);
 
  public:
   static const int MAXN = 200000 + 7;  // 总点数
@@ -168,6 +167,7 @@ class XJBG {
   uint32_t *m_AnswerLength2;                    // 长度为5的环buffer长度
   uint32_t *m_AnswerLength3;                    // 长度为6的环buffer长度
   uint32_t *m_AnswerLength4;                    // 长度为7的环buffer长度
+  char *m_ThreeCircle;                          // 预存长度为3的环
 
  private:
   int m_TotalAnswers = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | 0600);
@@ -262,17 +262,19 @@ void XJBG::BackSearch(int st, int dep, Vector<int> &tmp) {
   }
 }
 
-inline void XJBG::connectBuffer(char *answer, uint32_t *length, int node,
-                                char c) {
+inline void XJBG::connectBuffer(char *answer, uint32_t *length, int node) {
   const auto &mpid = m_MapID[node];
   memcpy(answer + (*length), mpid.str + mpid.start, mpid.length);
   (*length) += mpid.length;
-  answer[(*length)++] = c;
 }
 
 void XJBG::doFindCircle(int st) {
   int v1, v2, v3, v4, v5, v6, v7;
   int count0 = m_CountSons[st], count1, count2, count3, count4, count5;
+
+  const auto &mpid0 = m_MapID[st];
+  memcpy(m_ThreeCircle, mpid0.str + mpid0.start, mpid0.length);
+  int startIdx = mpid0.length;
 
   for (int it1 = 0; it1 < count0; ++it1) {
     v1 = m_Edges[st][0][it1];
@@ -285,21 +287,31 @@ void XJBG::doFindCircle(int st) {
       for (int it3 = 0; it3 < count2; ++it3) {
         v3 = m_Edges[v2][0][it3];
         if (v3 == st) {
-          connectBuffer(m_Answer0, m_AnswerLength0, st, ',');
-          connectBuffer(m_Answer0, m_AnswerLength0, v1, ',');
-          connectBuffer(m_Answer0, m_AnswerLength0, v2, '\n');
+          connectBuffer(m_Answer0, m_AnswerLength0, st);
+          connectBuffer(m_Answer0, m_AnswerLength0, v1);
+          connectBuffer(m_Answer0, m_AnswerLength0, v2);
+          *(m_Answer0 + (*m_AnswerLength0) - 1) = '\n';
           ++m_answers;
           continue;
         }
         if (v3 < st || v3 == v1) continue;
         count3 = m_CountSons[v3];
+
+        int idx = startIdx;
+        const auto &mpid1 = m_MapID[v1];
+        const auto &mpid2 = m_MapID[v2];
+        memcpy(m_ThreeCircle + idx, mpid1.str + mpid1.start, mpid1.length);
+        idx += mpid1.length;
+        memcpy(m_ThreeCircle + idx, mpid2.str + mpid2.start, mpid2.length);
+        idx += mpid2.length;
+
         for (int it4 = 0; it4 < count3; ++it4) {
           v4 = m_Edges[v3][0][it4];
           if (v4 == st) {
-            connectBuffer(m_Answer1, m_AnswerLength1, st, ',');
-            connectBuffer(m_Answer1, m_AnswerLength1, v1, ',');
-            connectBuffer(m_Answer1, m_AnswerLength1, v2, ',');
-            connectBuffer(m_Answer1, m_AnswerLength1, v3, '\n');
+            memcpy(m_Answer1 + (*m_AnswerLength1), m_ThreeCircle, idx);
+            (*m_AnswerLength1) += idx;
+            connectBuffer(m_Answer1, m_AnswerLength1, v3);
+            *(m_Answer1 + (*m_AnswerLength1) - 1) = '\n';
             ++m_answers;
             continue;
           }
@@ -309,11 +321,11 @@ void XJBG::doFindCircle(int st) {
           for (int it5 = 0; it5 < count4; ++it5) {
             v5 = m_Edges[v4][0][it5];
             if (v5 == st) {
-              connectBuffer(m_Answer2, m_AnswerLength2, st, ',');
-              connectBuffer(m_Answer2, m_AnswerLength2, v1, ',');
-              connectBuffer(m_Answer2, m_AnswerLength2, v2, ',');
-              connectBuffer(m_Answer2, m_AnswerLength2, v3, ',');
-              connectBuffer(m_Answer2, m_AnswerLength2, v4, '\n');
+              memcpy(m_Answer2 + (*m_AnswerLength2), m_ThreeCircle, idx);
+              (*m_AnswerLength2) += idx;
+              connectBuffer(m_Answer2, m_AnswerLength2, v3);
+              connectBuffer(m_Answer2, m_AnswerLength2, v4);
+              *(m_Answer2 + (*m_AnswerLength2) - 1) = '\n';
               ++m_answers;
               continue;
             }
@@ -324,25 +336,25 @@ void XJBG::doFindCircle(int st) {
             for (int it6 = 0; it6 < count5; ++it6) {
               v6 = m_Edges[v5][0][it6];
               if (v6 == st) {
-                connectBuffer(m_Answer3, m_AnswerLength3, st, ',');
-                connectBuffer(m_Answer3, m_AnswerLength3, v1, ',');
-                connectBuffer(m_Answer3, m_AnswerLength3, v2, ',');
-                connectBuffer(m_Answer3, m_AnswerLength3, v3, ',');
-                connectBuffer(m_Answer3, m_AnswerLength3, v4, ',');
-                connectBuffer(m_Answer3, m_AnswerLength3, v5, '\n');
+                memcpy(m_Answer3 + (*m_AnswerLength3), m_ThreeCircle, idx);
+                (*m_AnswerLength3) += idx;
+                connectBuffer(m_Answer3, m_AnswerLength3, v3);
+                connectBuffer(m_Answer3, m_AnswerLength3, v4);
+                connectBuffer(m_Answer3, m_AnswerLength3, v5);
+                *(m_Answer3 + (*m_AnswerLength3) - 1) = '\n';
                 ++m_answers;
                 continue;
               }
               if (v6 < st || v6 == v4 || v6 == v3 || v6 == v2 || v6 == v1)
                 continue;
               if (m_Reachable[v6] & 1) {
-                connectBuffer(m_Answer4, m_AnswerLength4, st, ',');
-                connectBuffer(m_Answer4, m_AnswerLength4, v1, ',');
-                connectBuffer(m_Answer4, m_AnswerLength4, v2, ',');
-                connectBuffer(m_Answer4, m_AnswerLength4, v3, ',');
-                connectBuffer(m_Answer4, m_AnswerLength4, v4, ',');
-                connectBuffer(m_Answer4, m_AnswerLength4, v5, ',');
-                connectBuffer(m_Answer4, m_AnswerLength4, v6, '\n');
+                memcpy(m_Answer4 + (*m_AnswerLength4), m_ThreeCircle, idx);
+                (*m_AnswerLength4) += idx;
+                connectBuffer(m_Answer4, m_AnswerLength4, v3);
+                connectBuffer(m_Answer4, m_AnswerLength4, v4);
+                connectBuffer(m_Answer4, m_AnswerLength4, v5);
+                connectBuffer(m_Answer4, m_AnswerLength4, v6);
+                *(m_Answer4 + (*m_AnswerLength4) - 1) = '\n';
                 ++m_answers;
               }
             }
@@ -386,6 +398,7 @@ void XJBG::FindCircle(int pid) {
   m_Answer2 = new char[3000000 * 55];
   m_Answer3 = new char[3000000 * 66];
   m_Answer4 = new char[3000000 * 77];
+  m_ThreeCircle = new char[33];
   m_AnswerLength0 = new uint32_t;
   m_AnswerLength1 = new uint32_t;
   m_AnswerLength2 = new uint32_t;
@@ -419,17 +432,19 @@ void XJBG::PreSave() {
     int x = v;
     if (x == 0) {
       m_MapID[v].start = 9;
+      m_MapID[v].str[10] = ',';
       m_MapID[v].str[9] = '0';
-      m_MapID[v].length = 1;
+      m_MapID[v].length = 2;
       continue;
     }
-    int idx = 10;
+    int idx = 11;
+    m_MapID[v].str[--idx] = ',';
     while (x) {
       m_MapID[v].str[--idx] = x % 10 + '0';
       x /= 10;
     }
     m_MapID[v].start = idx;
-    m_MapID[v].length = 10 - idx;
+    m_MapID[v].length = 11 - idx;
   }
 }
 void XJBG::SaveAnswer(int pid) {
