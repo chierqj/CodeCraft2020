@@ -167,7 +167,6 @@ class XJBG {
   uint32_t *m_AnswerLength2;                    // 长度为5的环buffer长度
   uint32_t *m_AnswerLength3;                    // 长度为6的环buffer长度
   uint32_t *m_AnswerLength4;                    // 长度为7的环buffer长度
-  char *m_ThreeCircle;                          // 预存长度为3的环
 
  private:
   int m_TotalAnswers = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | 0600);
@@ -272,10 +271,6 @@ void XJBG::doFindCircle(int st) {
   int v1, v2, v3, v4, v5, v6, v7;
   int count0 = m_CountSons[st], count1, count2, count3, count4, count5;
 
-  const auto &mpid0 = m_MapID[st];
-  memcpy(m_ThreeCircle, mpid0.str + mpid0.start, mpid0.length);
-  int startIdx = mpid0.length;
-
   for (int it1 = 0; it1 < count0; ++it1) {
     v1 = m_Edges[st][0][it1];
     if (v1 <= st) continue;
@@ -296,20 +291,12 @@ void XJBG::doFindCircle(int st) {
         }
         if (v3 < st || v3 == v1) continue;
         count3 = m_CountSons[v3];
-
-        int idx = startIdx;
-        const auto &mpid1 = m_MapID[v1];
-        const auto &mpid2 = m_MapID[v2];
-        memcpy(m_ThreeCircle + idx, mpid1.str + mpid1.start, mpid1.length);
-        idx += mpid1.length;
-        memcpy(m_ThreeCircle + idx, mpid2.str + mpid2.start, mpid2.length);
-        idx += mpid2.length;
-
         for (int it4 = 0; it4 < count3; ++it4) {
           v4 = m_Edges[v3][0][it4];
           if (v4 == st) {
-            memcpy(m_Answer1 + (*m_AnswerLength1), m_ThreeCircle, idx);
-            (*m_AnswerLength1) += idx;
+            connectBuffer(m_Answer1, m_AnswerLength1, st);
+            connectBuffer(m_Answer1, m_AnswerLength1, v1);
+            connectBuffer(m_Answer1, m_AnswerLength1, v2);
             connectBuffer(m_Answer1, m_AnswerLength1, v3);
             *(m_Answer1 + (*m_AnswerLength1) - 1) = '\n';
             ++m_answers;
@@ -321,8 +308,9 @@ void XJBG::doFindCircle(int st) {
           for (int it5 = 0; it5 < count4; ++it5) {
             v5 = m_Edges[v4][0][it5];
             if (v5 == st) {
-              memcpy(m_Answer2 + (*m_AnswerLength2), m_ThreeCircle, idx);
-              (*m_AnswerLength2) += idx;
+              connectBuffer(m_Answer2, m_AnswerLength2, st);
+              connectBuffer(m_Answer2, m_AnswerLength2, v1);
+              connectBuffer(m_Answer2, m_AnswerLength2, v2);
               connectBuffer(m_Answer2, m_AnswerLength2, v3);
               connectBuffer(m_Answer2, m_AnswerLength2, v4);
               *(m_Answer2 + (*m_AnswerLength2) - 1) = '\n';
@@ -336,8 +324,9 @@ void XJBG::doFindCircle(int st) {
             for (int it6 = 0; it6 < count5; ++it6) {
               v6 = m_Edges[v5][0][it6];
               if (v6 == st) {
-                memcpy(m_Answer3 + (*m_AnswerLength3), m_ThreeCircle, idx);
-                (*m_AnswerLength3) += idx;
+                connectBuffer(m_Answer3, m_AnswerLength3, st);
+                connectBuffer(m_Answer3, m_AnswerLength3, v1);
+                connectBuffer(m_Answer3, m_AnswerLength3, v2);
                 connectBuffer(m_Answer3, m_AnswerLength3, v3);
                 connectBuffer(m_Answer3, m_AnswerLength3, v4);
                 connectBuffer(m_Answer3, m_AnswerLength3, v5);
@@ -348,8 +337,9 @@ void XJBG::doFindCircle(int st) {
               if (v6 < st || v6 == v4 || v6 == v3 || v6 == v2 || v6 == v1)
                 continue;
               if (m_Reachable[v6] & 1) {
-                memcpy(m_Answer4 + (*m_AnswerLength4), m_ThreeCircle, idx);
-                (*m_AnswerLength4) += idx;
+                connectBuffer(m_Answer4, m_AnswerLength4, st);
+                connectBuffer(m_Answer4, m_AnswerLength4, v1);
+                connectBuffer(m_Answer4, m_AnswerLength4, v2);
                 connectBuffer(m_Answer4, m_AnswerLength4, v3);
                 connectBuffer(m_Answer4, m_AnswerLength4, v4);
                 connectBuffer(m_Answer4, m_AnswerLength4, v5);
@@ -398,7 +388,6 @@ void XJBG::FindCircle(int pid) {
   m_Answer2 = new char[3000000 * 55];
   m_Answer3 = new char[3000000 * 66];
   m_Answer4 = new char[3000000 * 77];
-  m_ThreeCircle = new char[33];
   m_AnswerLength0 = new uint32_t;
   m_AnswerLength1 = new uint32_t;
   m_AnswerLength2 = new uint32_t;
@@ -416,7 +405,7 @@ void XJBG::FindCircle(int pid) {
   }
 
   *m_TotalAnswersPtr += m_answers;
-  m_FlagForkPtr[pid] = -1;
+  m_FlagForkPtr[pid] = 1;
 #ifdef TEST
   std::cerr << m_debug[pid] << pid << ": FindEnd\n";
   std::cerr << m_debug[pid] << pid << ": " << m_answers << "\n";
@@ -537,7 +526,7 @@ void XJBG::WaitFork() {
   while (true) {
     int x = 0;
     for (int i = 0; i < NTHREAD; ++i) x += m_FlagForkPtr[i];
-    if (x == -NTHREAD) {
+    if (x == NTHREAD) {
       return;
     }
     usleep(1);
