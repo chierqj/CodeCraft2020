@@ -167,6 +167,7 @@ class XJBG {
   uint32_t *m_AnswerLength2;                    // 长度为5的环buffer长度
   uint32_t *m_AnswerLength3;                    // 长度为6的环buffer长度
   uint32_t *m_AnswerLength4;                    // 长度为7的环buffer长度
+  char *m_ThreeCircle = new char[33];
 
  private:
   int m_TotalAnswers = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | 0600);
@@ -239,6 +240,8 @@ void XJBG::LoadData() {
 void XJBG::BackSearch(int st, int dep, Vector<int> &tmp) {
   int v1, v2, v3;
   int count0 = m_CountFathers[st], count1, count2;
+  m_Reachable[st] = 7;
+  tmp.emplace_back(st);
   for (int i = 0; i < count0; ++i) {
     v1 = m_Edges[st][1][i];
     if (v1 <= st) continue;
@@ -271,62 +274,75 @@ void XJBG::doFindCircle(int st) {
   int v1, v2, v3, v4, v5, v6, v7;
   int count0 = m_CountSons[st], count1, count2, count3, count4, count5;
 
+  const auto &mpid0 = m_MapID[st];
+  memcpy(m_ThreeCircle, mpid0.str + mpid0.start, mpid0.length);
+  int IDX0 = mpid0.length, IDX1 = 0, IDX2 = 0, IDX3 = 0, IDX4 = 0, IDX5 = 0;
+
   for (int it1 = 0; it1 < count0; ++it1) {
     v1 = m_Edges[st][0][it1];
     if (v1 <= st) continue;
     count1 = m_CountSons[v1];
+
+    const auto &mpid1 = m_MapID[v1];
+    memcpy(m_ThreeCircle + IDX0, mpid1.str + mpid1.start, mpid1.length);
+    IDX1 = IDX0 + mpid1.length;
+
     for (int it2 = 0; it2 < count1; ++it2) {
       v2 = m_Edges[v1][0][it2];
       if (v2 <= st) continue;
       count2 = m_CountSons[v2];
+
+      const auto &mpid2 = m_MapID[v2];
+      memcpy(m_ThreeCircle + IDX1, mpid2.str + mpid2.start, mpid2.length);
+      IDX2 = IDX1 + mpid2.length;
+
       for (int it3 = 0; it3 < count2; ++it3) {
         v3 = m_Edges[v2][0][it3];
+        if (v3 < st || v3 == v1) continue;
+
         if (v3 == st) {
-          connectBuffer(m_Answer0, m_AnswerLength0, st);
-          connectBuffer(m_Answer0, m_AnswerLength0, v1);
-          connectBuffer(m_Answer0, m_AnswerLength0, v2);
+          memcpy(m_Answer0 + (*m_AnswerLength0), m_ThreeCircle, IDX2);
+          (*m_AnswerLength0) += IDX2;
           *(m_Answer0 + (*m_AnswerLength0) - 1) = '\n';
           ++m_answers;
           continue;
         }
-        if (v3 < st || v3 == v1) continue;
         count3 = m_CountSons[v3];
         for (int it4 = 0; it4 < count3; ++it4) {
           v4 = m_Edges[v3][0][it4];
+          if (v4 < st || v4 == v2 || v4 == v1 || !(m_Reachable[v4] & 4))
+            continue;
           if (v4 == st) {
-            connectBuffer(m_Answer1, m_AnswerLength1, st);
-            connectBuffer(m_Answer1, m_AnswerLength1, v1);
-            connectBuffer(m_Answer1, m_AnswerLength1, v2);
+            memcpy(m_Answer1 + (*m_AnswerLength1), m_ThreeCircle, IDX2);
+            (*m_AnswerLength1) += IDX2;
             connectBuffer(m_Answer1, m_AnswerLength1, v3);
             *(m_Answer1 + (*m_AnswerLength1) - 1) = '\n';
             ++m_answers;
             continue;
           }
-          if (v4 < st || v4 == v2 || v4 == v1 || !(m_Reachable[v4] & 4))
-            continue;
           count4 = m_CountSons[v4];
           for (int it5 = 0; it5 < count4; ++it5) {
             v5 = m_Edges[v4][0][it5];
+            if (v5 < st || v5 == v3 || v5 == v2 || v5 == v1 ||
+                !(m_Reachable[v5] & 2))
+              continue;
             if (v5 == st) {
-              connectBuffer(m_Answer2, m_AnswerLength2, st);
-              connectBuffer(m_Answer2, m_AnswerLength2, v1);
-              connectBuffer(m_Answer2, m_AnswerLength2, v2);
+              memcpy(m_Answer2 + (*m_AnswerLength2), m_ThreeCircle, IDX2);
+              (*m_AnswerLength2) += IDX2;
               connectBuffer(m_Answer2, m_AnswerLength2, v3);
               connectBuffer(m_Answer2, m_AnswerLength2, v4);
               *(m_Answer2 + (*m_AnswerLength2) - 1) = '\n';
               ++m_answers;
               continue;
             }
-            if (v5 < st || v5 == v3 || v5 == v2 || v5 == v1 ||
-                !(m_Reachable[v5] & 2))
-              continue;
             count5 = m_CountSons[v5];
             for (int it6 = 0; it6 < count5; ++it6) {
               v6 = m_Edges[v5][0][it6];
+              if (v6 < st || v6 == v4 || v6 == v3 || v6 == v2 || v6 == v1)
+                continue;
               if (v6 == st) {
-                connectBuffer(m_Answer3, m_AnswerLength3, st);
-                connectBuffer(m_Answer3, m_AnswerLength3, v1);
-                connectBuffer(m_Answer3, m_AnswerLength3, v2);
+                memcpy(m_Answer3 + (*m_AnswerLength3), m_ThreeCircle, IDX2);
+                (*m_AnswerLength3) += IDX2;
                 connectBuffer(m_Answer3, m_AnswerLength3, v3);
                 connectBuffer(m_Answer3, m_AnswerLength3, v4);
                 connectBuffer(m_Answer3, m_AnswerLength3, v5);
@@ -334,12 +350,9 @@ void XJBG::doFindCircle(int st) {
                 ++m_answers;
                 continue;
               }
-              if (v6 < st || v6 == v4 || v6 == v3 || v6 == v2 || v6 == v1)
-                continue;
               if (m_Reachable[v6] & 1) {
-                connectBuffer(m_Answer4, m_AnswerLength4, st);
-                connectBuffer(m_Answer4, m_AnswerLength4, v1);
-                connectBuffer(m_Answer4, m_AnswerLength4, v2);
+                memcpy(m_Answer4 + (*m_AnswerLength4), m_ThreeCircle, IDX2);
+                (*m_AnswerLength4) += IDX2;
                 connectBuffer(m_Answer4, m_AnswerLength4, v3);
                 connectBuffer(m_Answer4, m_AnswerLength4, v4);
                 connectBuffer(m_Answer4, m_AnswerLength4, v5);
