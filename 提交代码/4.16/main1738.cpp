@@ -130,7 +130,6 @@ class XJBG {
   void FindCircle(int pid);  // 找环
   void PreSave();            // 预处理ID
   void SaveAnswer(int pid);  // 保存答案
-  void SortEdge();           // 儿子排序
   void WaitFork();           // 等待进程
   void GetShmPtr();          // 获取共享数据句柄
 
@@ -229,6 +228,7 @@ void XJBG::LoadData() {
 
   for (int i = 0; i < m_maxID; ++i) {
     if (m_CountSons[i] > 0 && m_CountFathers[i] > 0) {
+      std::sort(m_Sons[i], m_Sons[i] + m_CountSons[i]);
       m_Circles.emplace_back(i);
     }
   }
@@ -387,22 +387,6 @@ void XJBG::doFindCircle(int st) {
           }
         }
       }
-    }
-  }
-}
-
-void XJBG::SortEdge() {
-  for (int i = 0; i < m_Circles.n; ++i) {
-    int v = m_Circles[i];
-    int count = m_CountSons[v];
-    for (int j = 0; j < count; ++j) {
-      int minIndex = j;
-      for (int k = minIndex + 1; k < count; ++k) {
-        if (m_Sons[v][k] < m_Sons[v][minIndex]) {
-          minIndex = k;
-        }
-      }
-      std::swap(m_Sons[v][j], m_Sons[v][minIndex]);
     }
   }
 }
@@ -580,7 +564,6 @@ int main() {
   XJBG *xjbg = new XJBG();
   xjbg->LoadData();
   xjbg->PreSave();
-  xjbg->SortEdge();
 
   pid_t Children[XJBG::NTHREAD - 1] = {0};
   int pid = 0;
