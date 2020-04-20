@@ -106,7 +106,7 @@ class XJBG {
   inline void spliceBeginEnd(char *ans, uint32_t *cur, uint32_t len);
 
  public:
-  static const int MAXN = 100000 + 7;  // 总点数
+  static const int MAXN = 200000 + 7;  // 总点数
   static const int NTHREAD = 16;       // 线程个数
   const int PARAM[NTHREAD] = {1, 2,  3,  4,  5,  6,  7,  8,
                               9, 10, 11, 12, 13, 14, 15, 16};  // 线程权重
@@ -120,22 +120,22 @@ class XJBG {
   int m_edgeNum = 0;                            // 边数目
   PreBuffer m_MapID[MAXN];                      // 预处理答案
   int m_Jobs[MAXN];                             // 点集合
-  int m_JobsCount = 0;                          // 点个数
-  int m_answers = 0;                            // 环个数
-  char *m_Reachable;                            // 可达
-  char *m_Answer0 = new char[3000000 * 18];     // 长度为3的环
-  char *m_Answer1 = new char[3000000 * 24];     // 长度为4的环
-  char *m_Answer2 = new char[3000000 * 30];     // 长度为5的环
-  char *m_Answer3 = new char[3000000 * 36];     // 长度为6的环
-  char *m_Answer4 = new char[3000000 * 42];     // 长度为7的环
-  uint32_t *m_AnswerLength0 = new uint32_t;     // 长度为3的环buffer长度
-  uint32_t *m_AnswerLength1 = new uint32_t;     // 长度为4的环buffer长度
-  uint32_t *m_AnswerLength2 = new uint32_t;     // 长度为5的环buffer长度
-  uint32_t *m_AnswerLength3 = new uint32_t;     // 长度为6的环buffer长度
-  uint32_t *m_AnswerLength4 = new uint32_t;     // 长度为7的环buffer长度
-  char *m_ThreeCircle = new char[18];           // 前缀长度为3的环
-  int m_TempPoint[2500];                        // 反向存那些点
-  int m_TempCount = 0;                          // 反向点的个数
+  int m_JobsCount = 0;
+  int m_answers = 0;                         // 环个数
+  char *m_Reachable;                         // 可达
+  char *m_Answer0 = new char[3000000 * 21];  // 长度为3的环
+  char *m_Answer1 = new char[3000000 * 28];  // 长度为4的环
+  char *m_Answer2 = new char[3000000 * 35];  // 长度为5的环
+  char *m_Answer3 = new char[3000000 * 42];  // 长度为6的环
+  char *m_Answer4 = new char[3000000 * 49];  // 长度为7的环
+  uint32_t *m_AnswerLength0 = new uint32_t;  // 长度为3的环buffer长度
+  uint32_t *m_AnswerLength1 = new uint32_t;  // 长度为4的环buffer长度
+  uint32_t *m_AnswerLength2 = new uint32_t;  // 长度为5的环buffer长度
+  uint32_t *m_AnswerLength3 = new uint32_t;  // 长度为6的环buffer长度
+  uint32_t *m_AnswerLength4 = new uint32_t;  // 长度为7的环buffer长度
+  char *m_ThreeCircle = new char[22];        // 前缀长度为3的环
+  int m_TempPoint[3000];                     // 反向存那些点
+  int m_TempCount = 0;                       // 反向点的个数
 
  private:
   int m_TotalAnswers = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | 0600);
@@ -154,7 +154,7 @@ void XJBG::GetShmPtr() {
 }
 
 inline void XJBG::addEdge(int u, int v, int w) {
-  if (u >= MAXN - 7 || v >= MAXN - 7) return;
+  if (u >= 100000 || v >= 100000) return;
   m_Sons[u][m_CountSons[u]++] = v;
   m_Fathers[v][m_CountFathers[v]++] = u;
   ++m_edgeNum;
@@ -399,15 +399,15 @@ void XJBG::ParseInteger(int val) {
     mpid.length = 2;
     return;
   }
-  char tmp[7];
-  int idx = 7;
+  char tmp[10];
+  int idx = 10;
   tmp[--idx] = ',';
   while (x) {
     tmp[--idx] = x % 10 + '0';
     x /= 10;
   }
-  memcpy(mpid.str, tmp + idx, 7 - idx);
-  mpid.length = 7 - idx;
+  memcpy(mpid.str, tmp + idx, 10 - idx);
+  mpid.length = 10 - idx;
 }
 void XJBG::SaveAnswer(int pid) {
 #ifdef TEST
@@ -534,6 +534,6 @@ int main() {
   delete xjbg;
 #endif
   if (pid != 0) exit(0);
-  exit(0);
-  // return 0;
+
+  return 0;
 }
