@@ -50,8 +50,12 @@ struct PreBuffer {
 };
 static const uint32_t MAXN = 50000 + 7;  // 总点数
 static const uint32_t NTHREAD = 8;       // 线程个数
-const uint32_t ST[8] = {0, 6250, 9980, 10001, 11002, 17000, 25000, 28000};
-const uint32_t ED[8] = {6250, 9980, 10001, 11002, 17000, 25000, 28000, MAXN};
+// const uint32_t PARAM[NTHREAD] = {6250,  9980,  10001, 11002,
+//                                  17000, 25000, 28000};  // 线程权重
+// const uint32_t PARAM_SUM = 25;                          // blockSize
+const uint32_t ST[NTHREAD] = {0, 6250, 9980, 10001, 11002, 17000, 25000, 28000};
+const uint32_t ED[NTHREAD] = {6250,  9980,  10001, 11002,
+                              17000, 25000, 28000, MAXN};
 uint32_t m_TotalAnswers = shmget(IPC_PRIVATE, 4, IPC_CREAT | 0600);
 uint32_t m_FlagFork = shmget(IPC_PRIVATE, NTHREAD * 4, IPC_CREAT | 0600);
 uint32_t m_FlagSave = shmget(IPC_PRIVATE, 4, IPC_CREAT | 0600);
@@ -86,6 +90,13 @@ inline void GetShmPtr() {
   m_FlagSavePtr = (uint32_t *)shmat(m_FlagSave, NULL, 0);
 }
 
+inline void addEdge(uint32_t u, uint32_t v, uint32_t w) {
+  if (u >= MAXN - 7 || v >= MAXN - 7) return;
+  m_Sons[u][m_CountSons[u]++] = v;
+  m_Fathers[v][m_CountFathers[v]++] = u;
+  m_maxID = std::max(m_maxID, std::max(u, v) + 1);
+}
+
 void ParseInteger(uint32_t val) {
   uint32_t x = val;
   auto &mpid = m_MapID[val];
@@ -118,13 +129,6 @@ void handleLoadData(int start, int end) {
   }
 }
 
-inline void addEdge(uint32_t u, uint32_t v) {
-  if (u >= MAXN - 7 || v >= MAXN - 7) return;
-  m_Sons[u][m_CountSons[u]++] = v;
-  m_Fathers[v][m_CountFathers[v]++] = u;
-  m_maxID = std::max(m_maxID, std::max(u, v) + 1);
-}
-
 void LoadData() {
   struct stat sb;
   uint32_t fd = open(TRAIN, O_RDONLY);
@@ -148,8 +152,8 @@ void LoadData() {
     ++ptr;
     while (*ptr != '\n') ++ptr;
     ++ptr;
-    addEdge(u, v);
-    u = v = 0;
+    addEdge(u, v, w);
+    u = v = w = 0;
   }
 
   std::thread Th[4];
@@ -331,6 +335,9 @@ void doFindCircle(uint32_t st) {
 }
 
 void FindCircle(uint32_t pid) {
+  // uint32_t block = MAXN / PARAM_SUM, st = 0;
+  // for (uint32_t i = 0; i < pid; ++i) st += PARAM[i] * block;
+  // uint32_t ed = (pid == NTHREAD - 1 ? m_maxID : st + block * PARAM[pid]);
   uint32_t st = ST[pid];
   uint32_t ed = std::min(ED[pid], m_maxID);
   for (uint32_t i = st; i < ed; ++i) {

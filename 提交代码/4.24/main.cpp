@@ -48,10 +48,10 @@ struct PreBuffer {
   char str[10];
   uint32_t length;
 };
-static const uint32_t MAXN = 50000 + 7;  // 总点数
-static const uint32_t NTHREAD = 8;       // 线程个数
-const uint32_t ST[8] = {0, 6250, 9980, 10001, 11002, 17000, 25000, 28000};
-const uint32_t ED[8] = {6250, 9980, 10001, 11002, 17000, 25000, 28000, MAXN};
+static const uint32_t MAXN = 50000 + 7;                  // 总点数
+static const uint32_t NTHREAD = 8;                       // 线程个数
+const uint32_t PARAM[NTHREAD] = {3, 2, 3, 5, 4, 8, 13};  // 线程权重
+const uint32_t PARAM_SUM = 100;                          // blockSize
 uint32_t m_TotalAnswers = shmget(IPC_PRIVATE, 4, IPC_CREAT | 0600);
 uint32_t m_FlagFork = shmget(IPC_PRIVATE, NTHREAD * 4, IPC_CREAT | 0600);
 uint32_t m_FlagSave = shmget(IPC_PRIVATE, 4, IPC_CREAT | 0600);
@@ -59,6 +59,7 @@ uint32_t *m_TotalAnswersPtr;                       // share answers
 uint32_t *m_FlagForkPtr;                           // share flag
 uint32_t *m_FlagSavePtr;                           // share save
 uint32_t m_maxID = 0;                              // 最大点
+uint32_t m_JobsCount = 0;                          // 点个数
 uint32_t m_answers = 0;                            // 环个数
 uint32_t m_TempCount = 0;                          // 反向点的个数
 uint32_t *m_AnswerLength0 = new uint32_t;          // 长度为3的环
@@ -70,6 +71,7 @@ char *m_ThreeCircle = new char[18];                // 长度为3的环
 uint32_t m_TempPoint[2500];                        // 反向存那些点
 char *m_Reachable = new char[MAXN];                // 可达
 char m_dis[MAXN];                                  // distance
+uint32_t m_Jobs[MAXN];                             // 点集合
 PreBuffer m_MapID[MAXN];                           // 预处理答案
 uint32_t m_CountSons[MAXN], m_CountFathers[MAXN];  // 边数目
 uint32_t m_Sons[MAXN][30];                         // 子结点
@@ -84,6 +86,13 @@ inline void GetShmPtr() {
   m_TotalAnswersPtr = (uint32_t *)shmat(m_TotalAnswers, NULL, 0);
   m_FlagForkPtr = (uint32_t *)shmat(m_FlagFork, NULL, 0);
   m_FlagSavePtr = (uint32_t *)shmat(m_FlagSave, NULL, 0);
+}
+
+inline void addEdge(uint32_t u, uint32_t v, uint32_t w) {
+  if (u >= MAXN - 7 || v >= MAXN - 7) return;
+  m_Sons[u][m_CountSons[u]++] = v;
+  m_Fathers[v][m_CountFathers[v]++] = u;
+  m_maxID = std::max(m_maxID, std::max(u, v) + 1);
 }
 
 void ParseInteger(uint32_t val) {
@@ -108,21 +117,13 @@ void ParseInteger(uint32_t val) {
 
 void handleLoadData(int start, int end) {
   for (uint32_t i = start; i < end; ++i) {
-    if (m_CountSons[i] > 0 && m_CountFathers[i] > 0) {
-      std::sort(m_Sons[i], m_Sons[i] + m_CountSons[i]);
-      std::sort(m_Fathers[i], m_Fathers[i] + m_CountFathers[i],
-                [&](const uint32_t &a, const uint32_t &b) { return a > b; });
-      ParseInteger(i);
-      m_dis[i] = 9;
-    }
+    const int &v = m_Jobs[i];
+    std::sort(m_Sons[v], m_Sons[v] + m_CountSons[v]);
+    std::sort(m_Fathers[v], m_Fathers[v] + m_CountFathers[v],
+              [&](const uint32_t &a, const uint32_t &b) { return a > b; });
+    ParseInteger(v);
+    m_dis[v] = 9;
   }
-}
-
-inline void addEdge(uint32_t u, uint32_t v) {
-  if (u >= MAXN - 7 || v >= MAXN - 7) return;
-  m_Sons[u][m_CountSons[u]++] = v;
-  m_Fathers[v][m_CountFathers[v]++] = u;
-  m_maxID = std::max(m_maxID, std::max(u, v) + 1);
 }
 
 void LoadData() {
@@ -146,16 +147,25 @@ void LoadData() {
       ++ptr;
     }
     ++ptr;
-    while (*ptr != '\n') ++ptr;
+    while (*ptr != '\n') {
+      // w = w * 10 + *ptr - '0';
+      ++ptr;
+    }
     ++ptr;
-    addEdge(u, v);
-    u = v = 0;
+    addEdge(u, v, w);
+    u = v = w = 0;
+  }
+
+  for (uint32_t i = 0; i < m_maxID; ++i) {
+    if (m_CountSons[i] > 0 && m_CountFathers[i] > 0) {
+      m_Jobs[m_JobsCount++] = i;
+    }
   }
 
   std::thread Th[4];
-  uint32_t st = 0, block = m_maxID / 4;
+  uint32_t st = 0, block = m_JobsCount / 4;
   for (int i = 0; i < 4; ++i) {
-    int ed = (i == 3 ? m_maxID : st + block);
+    int ed = (i == 3 ? m_JobsCount : st + block);
     Th[i] = std::thread(handleLoadData, st, ed);
     st += block;
   }
@@ -238,27 +248,25 @@ void doFindCircle(uint32_t st) {
   uint32_t count0 = m_CountSons[st], count1, count2, count3, count4, count5;
   uint32_t *son0 = m_Sons[st], *son1, *son2, *son3, *son4, *son5;
   uint32_t it1 = 0, it2 = 0, it3 = 0, it4 = 0, it5 = 0, it6 = 0;
+  it1 = std::upper_bound(son0, son0 + count0, st) - son0;
   while (it1 < count0) {
     v1 = *(son0 + it1++);
-    if (v1 <= st) continue;
     const auto &mpid1 = m_MapID[v1];
     memcpy(m_ThreeCircle + IDX0, mpid1.str, mpid1.length);
     IDX1 = IDX0 + mpid1.length;
     count1 = m_CountSons[v1];
     son1 = m_Sons[v1];
-    it2 = 0;
+    it2 = std::upper_bound(son1, son1 + count1, st) - son1;
     while (it2 < count1) {
       v2 = *(son1 + it2++);
-      if (v2 <= st) continue;
       const auto &mpid2 = m_MapID[v2];
       memcpy(m_ThreeCircle + IDX1, mpid2.str, mpid2.length);
       IDX2 = IDX1 + mpid2.length;
       count2 = m_CountSons[v2];
       son2 = m_Sons[v2];
-      it3 = 0;
+      it3 = std::lower_bound(son2, son2 + count2, st) - son2;
       while (it3 < count2) {
         v3 = *(son2 + it3++);
-        if (v3 < st) continue;
         if (v3 == st) {
           spliceBeginEnd(m_Answer0, m_AnswerLength0, IDX2);
           continue;
@@ -331,20 +339,22 @@ void doFindCircle(uint32_t st) {
 }
 
 void FindCircle(uint32_t pid) {
-  uint32_t st = ST[pid];
-  uint32_t ed = std::min(ED[pid], m_maxID);
+  uint32_t block = m_JobsCount / PARAM_SUM, st = 0;
+  for (uint32_t i = 0; i < pid; ++i) st += PARAM[i] * block;
+  uint32_t ed = (pid == NTHREAD - 1 ? m_JobsCount : st + block * PARAM[pid]);
+
   for (uint32_t i = st; i < ed; ++i) {
-    if (m_CountSons[i] > 0 && m_CountFathers[i] > 0) {
-      m_TempCount = 0;
-      BackSearch(i);
-      doFindCircle(i);
-      for (uint32_t j = 0; j < m_TempCount; ++j) {
-        uint32_t &p = m_TempPoint[j];
-        m_Reachable[p] = 0;
-        m_dis[p] = 9;
-      }
+    uint32_t v = m_Jobs[i];
+    m_TempCount = 0;
+    BackSearch(v);
+    doFindCircle(v);
+    for (uint32_t j = 0; j < m_TempCount; ++j) {
+      uint32_t &p = m_TempPoint[j];
+      m_Reachable[p] = 0;
+      m_dis[p] = 9;
     }
   }
+
   *m_TotalAnswersPtr += m_answers;
   m_FlagForkPtr[pid] = 1;
 }
