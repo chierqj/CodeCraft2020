@@ -45,43 +45,39 @@
 #endif
 
 struct PreBuffer {
-  char str[8];
+  char str[10];
   uint32_t length;
 };
 const uint32_t MAXN = 50000 + 7;  // 总点数
 const uint32_t NTHREAD = 8;       // 线程个数
 const uint32_t ST[8] = {0, 6250, 9980, 10001, 11002, 17000, 25000, 28000};
 const uint32_t ED[8] = {6250, 9980, 10001, 11002, 17000, 25000, 28000, MAXN};
-uint32_t m_TotalAnswers = shmget(IPC_PRIVATE, 4, IPC_CREAT | 0600);
 uint32_t m_FlagFork = shmget(IPC_PRIVATE, NTHREAD * 4, IPC_CREAT | 0600);
 uint32_t m_FlagSave = shmget(IPC_PRIVATE, 4, IPC_CREAT | 0600);
-uint32_t *m_TotalAnswersPtr;                       // share answers
 uint32_t *m_FlagForkPtr;                           // share flag
 uint32_t *m_FlagSavePtr;                           // share save
 uint32_t m_maxID = 0;                              // 最大点
-uint32_t m_answers = 0;                            // 环个数
 uint32_t m_TempCount = 0;                          // 反向点的个数
-uint32_t Length0 = 0;                              // 长度为3的环
-uint32_t Length1 = 0;                              // 长度为4的环
-uint32_t Length2 = 0;                              // 长度为5的环
-uint32_t Length3 = 0;                              // 长度为6的环
-uint32_t Length4 = 0;                              // 长度为7的环
+uint32_t m_AnswerLength0 = 0;                      // 长度为3的环
+uint32_t m_AnswerLength1 = 0;                      // 长度为4的环
+uint32_t m_AnswerLength2 = 0;                      // 长度为5的环
+uint32_t m_AnswerLength3 = 0;                      // 长度为6的环
+uint32_t m_AnswerLength4 = 0;                      // 长度为7的环
 uint32_t m_ThreeLength = 0;                        // 3环长度
 char *m_ThreeCircle = new char[18];                // 长度为3的环
 uint32_t m_TempPoint[2500];                        // 反向存那些点
 char *m_Reachable = new char[MAXN];                // 可达
 PreBuffer m_MapID[MAXN];                           // 预处理答案
 uint32_t m_CountSons[MAXN], m_CountFathers[MAXN];  // 边数目
-uint32_t m_Sons[MAXN][25];                         // 子结点
-uint32_t m_Fathers[MAXN][25];                      // 父节点
-char *Answer0 = new char[3000000 * 18];            // 长度为3的环
-char *Answer1 = new char[3000000 * 24];            // 长度为4的环
-char *Answer2 = new char[3000000 * 30];            // 长度为5的环
-char *Answer3 = new char[3000000 * 36];            // 长度为6的环
-char *Answer4 = new char[3000000 * 42];            // 长度为7的环
+uint32_t m_Sons[MAXN][22];                         // 子结点
+uint32_t m_Fathers[MAXN][22];                      // 父节点
+char *m_Answer0 = new char[3000000 * 18];          // 长度为3的环
+char *m_Answer1 = new char[3000000 * 24];          // 长度为4的环
+char *m_Answer2 = new char[3000000 * 30];          // 长度为5的环
+char *m_Answer3 = new char[3000000 * 36];          // 长度为6的环
+char *m_Answer4 = new char[3000000 * 42];          // 长度为7的环
 
 inline void GetShmPtr() {
-  m_TotalAnswersPtr = (uint32_t *)shmat(m_TotalAnswers, NULL, 0);
   m_FlagForkPtr = (uint32_t *)shmat(m_FlagFork, NULL, 0);
   m_FlagSavePtr = (uint32_t *)shmat(m_FlagSave, NULL, 0);
 }
@@ -200,7 +196,7 @@ void BackSearch(uint32_t st) {
 
 void doFindCircle(uint32_t st) {
   const auto &mpid0 = m_MapID[st];
-  *(long long *)m_ThreeCircle = *(long long *)mpid0.str;
+  memcpy(m_ThreeCircle, mpid0.str, mpid0.length);
   uint32_t idx0 = mpid0.length, idx1 = 0;
   uint32_t it1 = 0, it2 = 0, it3 = 0, it4 = 0, it5 = 0, it6 = 0;
   uint32_t count0 = m_CountSons[st], count1, count2, count3, count4, count5;
@@ -210,7 +206,7 @@ void doFindCircle(uint32_t st) {
     v1 = *(son0++);
     if (v1 <= st) continue;
     const auto &mpid1 = m_MapID[v1];
-    *(long long *)(m_ThreeCircle + idx0) = *(long long *)mpid1.str;
+    memcpy(m_ThreeCircle + idx0, mpid1.str, mpid1.length);
     idx1 = idx0 + mpid1.length;
     count1 = m_CountSons[v1];
     son1 = m_Sons[v1];
@@ -219,7 +215,7 @@ void doFindCircle(uint32_t st) {
       v2 = *(son1++);
       if (v2 <= st) continue;
       const auto &mpid2 = m_MapID[v2];
-      *(long long *)(m_ThreeCircle + idx1) = *(long long *)mpid2.str;
+      memcpy(m_ThreeCircle + idx1, mpid2.str, mpid2.length);
       m_ThreeLength = idx1 + mpid2.length;
       count2 = m_CountSons[v2];
       son2 = m_Sons[v2];
@@ -229,10 +225,9 @@ void doFindCircle(uint32_t st) {
         if (v3 < st || v3 == v1) {
           continue;
         } else if (v3 == st) {
-          memcpy(Answer0 + Length0, m_ThreeCircle, m_ThreeLength);
-          Length0 += m_ThreeLength;
-          *(Answer0 + Length0 - 1) = '\n';
-          ++m_answers;
+          memcpy(m_Answer0 + m_AnswerLength0, m_ThreeCircle, m_ThreeLength);
+          m_AnswerLength0 += m_ThreeLength;
+          *(m_Answer0 + m_AnswerLength0 - 1) = '\n';
           continue;
         }
         count3 = m_CountSons[v3];
@@ -244,12 +239,11 @@ void doFindCircle(uint32_t st) {
           if (!(m_Reachable[v4] & 4)) {
             continue;
           } else if (v4 == st) {
-            memcpy(Answer1 + Length1, m_ThreeCircle, m_ThreeLength);
-            Length1 += m_ThreeLength;
-            *(long long *)(Answer1 + Length1) = *(long long *)mpid3.str;
-            Length1 += mpid3.length;
-            *(Answer1 + Length1 - 1) = '\n';
-            ++m_answers;
+            memcpy(m_Answer1 + m_AnswerLength1, m_ThreeCircle, m_ThreeLength);
+            m_AnswerLength1 += m_ThreeLength;
+            memcpy(m_Answer1 + m_AnswerLength1, mpid3.str, mpid3.length);
+            m_AnswerLength1 += mpid3.length;
+            *(m_Answer1 + m_AnswerLength1 - 1) = '\n';
             continue;
           } else if (v1 == v4 || v2 == v4) {
             continue;
@@ -263,14 +257,13 @@ void doFindCircle(uint32_t st) {
             if (!(m_Reachable[v5] & 2)) {
               continue;
             } else if (v5 == st) {
-              memcpy(Answer2 + Length2, m_ThreeCircle, m_ThreeLength);
-              Length2 += m_ThreeLength;
-              *(long long *)(Answer2 + Length2) = *(long long *)mpid3.str;
-              Length2 += mpid3.length;
-              *(long long *)(Answer2 + Length2) = *(long long *)mpid4.str;
-              Length2 += mpid4.length;
-              *(Answer2 + Length2 - 1) = '\n';
-              ++m_answers;
+              memcpy(m_Answer2 + m_AnswerLength2, m_ThreeCircle, m_ThreeLength);
+              m_AnswerLength2 += m_ThreeLength;
+              memcpy(m_Answer2 + m_AnswerLength2, mpid3.str, mpid3.length);
+              m_AnswerLength2 += mpid3.length;
+              memcpy(m_Answer2 + m_AnswerLength2, mpid4.str, mpid4.length);
+              m_AnswerLength2 += mpid4.length;
+              *(m_Answer2 + m_AnswerLength2 - 1) = '\n';
               continue;
             } else if (v1 == v5 || v2 == v5 || v3 == v5) {
               continue;
@@ -284,33 +277,32 @@ void doFindCircle(uint32_t st) {
               if (!(m_Reachable[v6] & 1)) {
                 continue;
               } else if (v6 == st) {
-                memcpy(Answer3 + Length3, m_ThreeCircle, m_ThreeLength);
-                Length3 += m_ThreeLength;
-                *(long long *)(Answer3 + Length3) = *(long long *)mpid3.str;
-                Length3 += mpid3.length;
-                *(long long *)(Answer3 + Length3) = *(long long *)mpid4.str;
-                Length3 += mpid4.length;
-                *(long long *)(Answer3 + Length3) = *(long long *)mpid5.str;
-                Length3 += mpid5.length;
-                *(Answer3 + Length3 - 1) = '\n';
-                ++m_answers;
+                memcpy(m_Answer3 + m_AnswerLength3, m_ThreeCircle,
+                       m_ThreeLength);
+                m_AnswerLength3 += m_ThreeLength;
+                memcpy(m_Answer3 + m_AnswerLength3, mpid3.str, mpid3.length);
+                m_AnswerLength3 += mpid3.length;
+                memcpy(m_Answer3 + m_AnswerLength3, mpid4.str, mpid4.length);
+                m_AnswerLength3 += mpid4.length;
+                memcpy(m_Answer3 + m_AnswerLength3, mpid5.str, mpid5.length);
+                m_AnswerLength3 += mpid5.length;
+                *(m_Answer3 + m_AnswerLength3 - 1) = '\n';
                 continue;
               } else if (v1 == v6 || v2 == v6 || v3 == v6 || v4 == v6) {
                 continue;
               }
               const auto &mpid6 = m_MapID[v6];
-              memcpy(Answer4 + Length4, m_ThreeCircle, m_ThreeLength);
-              Length4 += m_ThreeLength;
-              *(long long *)(Answer4 + Length4) = *(long long *)mpid3.str;
-              Length4 += mpid3.length;
-              *(long long *)(Answer4 + Length4) = *(long long *)mpid4.str;
-              Length4 += mpid4.length;
-              *(long long *)(Answer4 + Length4) = *(long long *)mpid5.str;
-              Length4 += mpid5.length;
-              *(long long *)(Answer4 + Length4) = *(long long *)mpid6.str;
-              Length4 += mpid6.length;
-              *(Answer4 + Length4 - 1) = '\n';
-              ++m_answers;
+              memcpy(m_Answer4 + m_AnswerLength4, m_ThreeCircle, m_ThreeLength);
+              m_AnswerLength4 += m_ThreeLength;
+              memcpy(m_Answer4 + m_AnswerLength4, mpid3.str, mpid3.length);
+              m_AnswerLength4 += mpid3.length;
+              memcpy(m_Answer4 + m_AnswerLength4, mpid4.str, mpid4.length);
+              m_AnswerLength4 += mpid4.length;
+              memcpy(m_Answer4 + m_AnswerLength4, mpid5.str, mpid5.length);
+              m_AnswerLength4 += mpid5.length;
+              memcpy(m_Answer4 + m_AnswerLength4, mpid6.str, mpid6.length);
+              m_AnswerLength4 += mpid6.length;
+              *(m_Answer4 + m_AnswerLength4 - 1) = '\n';
             }
           }
         }
@@ -333,83 +325,63 @@ void FindCircle(uint32_t pid) {
       }
     }
   }
-  *m_TotalAnswersPtr += m_answers;
   m_FlagForkPtr[pid] = 1;
 }
 
 void SaveAnswer(uint32_t pid) {
-  uint32_t answers = *m_TotalAnswersPtr;
   FILE *fp;
-
   if (pid == 0) {
-    uint32_t firIdx = 12;
-    char firBuf[12];
-    firBuf[--firIdx] = '\n';
-    if (answers == 0) {
-      firBuf[--firIdx] = '0';
-    } else {
-      while (answers) {
-        firBuf[--firIdx] = answers % 10 + '0';
-        answers /= 10;
-      }
-    }
-
+    char firBuf[] = {"0\n"};
     fp = fopen(RESULT, "w");
-    fwrite(firBuf + firIdx, 1, 12 - firIdx, fp);
+    fwrite(firBuf, 1, 2, fp);
     fclose(fp);
     *m_FlagSavePtr = 0;
   }
-
   while (*m_FlagSavePtr != pid * 5) usleep(1);
   fp = fopen(RESULT, "at");
-  fwrite(Answer0, 1, Length0, fp);
+  fwrite(m_Answer0, 1, m_AnswerLength0, fp);
   fclose(fp);
   if (pid == NTHREAD - 1) {
     *m_FlagSavePtr = 1;
   } else {
     *m_FlagSavePtr = (pid + 1) * 5;
   }
-
   while (*m_FlagSavePtr != pid * 5 + 1) usleep(1);
   fp = fopen(RESULT, "at");
-  fwrite(Answer1, 1, Length1, fp);
+  fwrite(m_Answer1, 1, m_AnswerLength1, fp);
   fclose(fp);
   if (pid == NTHREAD - 1) {
     *m_FlagSavePtr = 2;
   } else {
     *m_FlagSavePtr = (pid + 1) * 5 + 1;
   }
-
   while (*m_FlagSavePtr != pid * 5 + 2) usleep(1);
   fp = fopen(RESULT, "at");
-  fwrite(Answer2, 1, Length2, fp);
+  fwrite(m_Answer2, 1, m_AnswerLength2, fp);
   fclose(fp);
   if (pid == NTHREAD - 1) {
     *m_FlagSavePtr = 3;
   } else {
     *m_FlagSavePtr = (pid + 1) * 5 + 2;
   }
-
   while (*m_FlagSavePtr != pid * 5 + 3) usleep(1);
   fp = fopen(RESULT, "at");
-  fwrite(Answer3, 1, Length3, fp);
+  fwrite(m_Answer3, 1, m_AnswerLength3, fp);
   fclose(fp);
   if (pid == NTHREAD - 1) {
     *m_FlagSavePtr = 4;
   } else {
     *m_FlagSavePtr = (pid + 1) * 5 + 3;
   }
-
   while (*m_FlagSavePtr != pid * 5 + 4) usleep(1);
   fp = fopen(RESULT, "at");
-  fwrite(Answer4, 1, Length4, fp);
+  fwrite(m_Answer4, 1, m_AnswerLength4, fp);
   fclose(fp);
   if (pid == NTHREAD - 1) {
     *m_FlagSavePtr = 5;
   } else {
     *m_FlagSavePtr = (pid + 1) * 5 + 4;
   }
-
 #ifdef LOCAL
   if (pid == 0) {
     std::cerr << "TotalAnswer: " << *m_TotalAnswersPtr << "\n";
@@ -452,11 +424,11 @@ int main() {
   SaveAnswer(pid);
 
 #ifdef XJBGJUDGE
-  delete[] Answer0;
-  delete[] Answer1;
-  delete[] Answer2;
-  delete[] Answer3;
-  delete[] Answer4;
+  delete[] m_Answer0;
+  delete[] m_Answer1;
+  delete[] m_Answer2;
+  delete[] m_Answer3;
+  delete[] m_Answer4;
   delete[] m_ThreeCircle;
   delete[] m_Reachable;
 #endif
