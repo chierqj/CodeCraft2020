@@ -35,6 +35,7 @@ class RankSpider(scrapy.Spider):
         teamRankingList = result.get('teamRankingList', [])
         results = teamRankingList.get('results', [])
         for it in results:
+            # print(it)
             item = HuaweirankItem()
             item['division'] = division
             item['score'] = it.get('score', -1)
