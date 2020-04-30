@@ -30,49 +30,41 @@
 #define RESULT "/projects/student/result.txt"
 #endif
 
-const int MAXN = 2000000;
+const int MAXEDGE = 3000000 + 7;
+const int MAXNODE = MAXEDGE << 1;
 const int NTHREAD = 4;
 struct NumBuffer {
   char str[10];
   U32 len;
-} __attribute__((packed)) m_MapID[MAXN];
+} __attribute__((packed)) MapID[MAXNODE];
 struct ThData {
   U32 answers;
-  char Reachable[MAXN];
+  char Reachable[MAXNODE];
   std::vector<U32> ReachablePoint;
 } ThreadData[NTHREAD];
 
-class XJBG {
- public:
-  void Simulation();
+std::atomic_flag lock = ATOMIC_FLAG_INIT;
+U32 MaxID = 0;
+U32 answers = 0;
+U32 jobcur = 0;
+U32 IDDomCount = 0;
+U32 IDDom[MAXNODE];
+std::vector<U32> Jobs;
+std::tuple<U32, U32, U32> Edges[MAXEDGE];
+U32 EdgesCount;
+std::tuple<U32, U32, U32> ThEdges[NTHREAD][MAXEDGE];
+U32 ThEdgesCount[NTHREAD];
+std::vector<std::pair<U32, U32>> Children[MAXNODE];
+std::vector<U32> Parents[MAXNODE];
+char *Answer3[MAXNODE];
+char *Answer4[MAXNODE];
+char *Answer5[MAXNODE];
+char *Answer6[MAXNODE];
+char *Answer7[MAXNODE];
 
- private:
-  void ParseInteger(const U32 &x);
-  void HandleLoadData(const char *buffer, int pid, U32 st, U32 ed);
-  void LoadData();
-  void BackSearch(ThData &Data, const U32 &job);
-  void ForwardSearch(ThData &Data, const U32 &job);
-  void GetNextJob(U32 &job);
-  void FindCircle(int pid);
-  void SaveAnswer();
-
- private:
-  std::atomic_flag m_lock = ATOMIC_FLAG_INIT;
-  U32 m_MaxID = 0;
-  U32 m_answers = 0;
-  U32 m_jobcur = 0;
-  std::vector<U32> m_THIDDom[NTHREAD];
-  std::vector<std::tuple<U32, U32, U32>> m_ThEdge[NTHREAD];
-  std::vector<U32> m_IDDom;
-  std::vector<U32> m_Jobs;
-  std::vector<std::pair<U32, U32>> m_Children[MAXN];
-  std::vector<U32> m_Parents[MAXN];
-  std::vector<std::vector<int>> m_Answer[MAXN];
-};
-
-void XJBG::ParseInteger(const U32 &x) {
-  U32 num = m_IDDom[x];
-  auto &mpid = m_MapID[x];
+void ParseInteger(const U32 &x) {
+  U32 num = IDDom[x];
+  auto &mpid = MapID[x];
   if (num == 0) {
     mpid.str[0] = '0';
     mpid.str[1] = ',';
@@ -89,13 +81,27 @@ void XJBG::ParseInteger(const U32 &x) {
     mpid.len = 10 - idx;
   }
 }
-void XJBG::HandleLoadData(const char *buffer, int pid, U32 st, U32 sz) {
-  buffer += st;
+void HandleLoadData(int pid, int st, int ed) {
+  auto &E = ThEdges[pid];
+  auto &count = ThEdgesCount[pid];
+  for (int i = st; i < ed; ++i) {
+    const auto e = Edges[i];
+    const U32 &eu = std::get<0>(e);
+    const U32 &ev = std::get<1>(e);
+    const U32 &ew = std::get<2>(e);
+    auto p1 = std::lower_bound(IDDom, IDDom + MaxID, eu) - IDDom;
+    auto p2 = std::lower_bound(IDDom, IDDom + MaxID, ev) - IDDom;
+    E[count++] = std::make_tuple(p2, p2, ew);
+  }
+}
+void LoadData() {
+  U32 fd = open(TRAIN, O_RDONLY);
+  U32 bufsize = lseek(fd, 0, SEEK_END);
+  char *buffer = (char *)mmap(NULL, bufsize, PROT_READ, MAP_PRIVATE, fd, 0);
+  close(fd);
   const char *ptr = buffer;
   U32 u = 0, v = 0, w = 0;
-  auto &edge = m_ThEdge[pid];
-  auto &dom = m_THIDDom[pid];
-  while (ptr - buffer < sz) {
+  while (ptr - buffer < bufsize) {
     while (*ptr != ',') {
       u = u * 10 + *ptr - '0';
       ++ptr;
@@ -111,86 +117,56 @@ void XJBG::HandleLoadData(const char *buffer, int pid, U32 st, U32 sz) {
       ++ptr;
     }
     ++ptr;
-    edge.emplace_back(std::make_tuple(u, v, w));
-    dom.emplace_back(u);
-    dom.emplace_back(v);
+    Edges[EdgesCount++] = std::make_tuple(u, v, w);
+    IDDom[IDDomCount++] = u;
+    IDDom[IDDomCount++] = v;
     u = v = w = 0;
   }
-  std::sort(dom.begin(), dom.end());
-}
-void XJBG::LoadData() {
-  U32 fd = open(TRAIN, O_RDONLY);
-  U32 bufsize = lseek(fd, 0, SEEK_END);
-  char *buffer = (char *)mmap(NULL, bufsize, PROT_READ, MAP_PRIVATE, fd, 0);
-  close(fd);
-  U32 st = 0, block = bufsize / NTHREAD;
+  std::sort(IDDom, IDDom + IDDomCount);
+  MaxID = std::unique(IDDom, IDDom + IDDomCount) - IDDom;
+  int st = 0, block = EdgesCount / NTHREAD;
   std::thread Th[NTHREAD];
   for (int i = 0; i < NTHREAD; ++i) {
-    U32 ed = (i == NTHREAD - 1 ? bufsize : st + block);
-    while (buffer[ed] != '\n') ++ed;
-    U32 sz = ed - st + 1;
-    Th[i] = std::thread(&XJBG::HandleLoadData, this, buffer, i, st, sz);
-    st = ed + 1;
+    int ed = (i == NTHREAD - 1 ? EdgesCount : st + block);
+    Th[i] = std::thread(HandleLoadData, i, st, ed);
+    st = ed;
   }
   for (int i = 0; i < NTHREAD; ++i) Th[i].join();
   for (int i = 0; i < NTHREAD; ++i) {
-    m_IDDom.insert(m_IDDom.end(), m_THIDDom[i].begin(), m_THIDDom[i].end());
-  }
-  std::sort(m_IDDom.begin(), m_IDDom.end());
-  m_MaxID = std::unique(m_IDDom.begin(), m_IDDom.end()) - m_IDDom.begin();
-  std::unordered_map<U32, U32> mp;
-  for (int i = 0; i < m_MaxID; ++i) {
-    mp[m_IDDom[i]] = i;
-  }
-  std::vector<std::tuple<U32, U32, U32>> E[NTHREAD];
-  auto foo = [&](int pid) {
-    for (auto &e : m_ThEdge[pid]) {
-      const U32 &eu = mp[std::get<0>(e)];
-      const U32 &ev = mp[std::get<1>(e)];
-      const U32 &ew = std::get<2>(e);
-      E[pid].emplace_back(std::make_tuple(eu, ev, ew));
-    }
-  };
-  for (int i = 0; i < NTHREAD; ++i) {
-    Th[i] = std::thread(foo, i);
-  }
-  for (int i = 0; i < NTHREAD; ++i) Th[i].join();
-  for (int i = 0; i < NTHREAD; ++i) {
-    for (auto &e : E[i]) {
+    for (int j = 0; j < ThEdgesCount[i]; ++j) {
+      const auto &e = ThEdges[i][j];
       const U32 &eu = std::get<0>(e);
       const U32 &ev = std::get<1>(e);
       const U32 &ew = std::get<2>(e);
-      m_Children[eu].emplace_back(std::make_pair(ev, ew));
-      m_Parents[ev].emplace_back(eu);
+      Children[eu].emplace_back(std::make_pair(ev, ew));
+      Parents[ev].emplace_back(eu);
     }
   }
-  for (int i = 0; i < m_MaxID; ++i) {
-    if (!m_Children[i].empty() && !m_Children[i].empty()) {
-      m_Jobs.emplace_back(i);
+  for (int i = 0; i < MaxID; ++i) {
+    if (!Children[i].empty() && !Children[i].empty()) {
+      Jobs.emplace_back(i);
       ParseInteger(i);
-      std::sort(m_Children[i].begin(), m_Children[i].end());
+      std::sort(Children[i].begin(), Children[i].end());
     }
   }
 #ifdef LOCAL
-  U32 edges = 0;
-  for (int i = 0; i < NTHREAD; ++i) edges += m_ThEdge[i].size();
-  std::cerr << "@ u: " << m_MaxID << ", e: " << edges << "\n";
+  std::cerr << "@ u: " << MaxID << ", e: " << EdgesCount << "\n";
 #endif
 }
-void XJBG::BackSearch(ThData &Data, const U32 &job) {
+void BackSearch(ThData &Data, const U32 &job) {
   for (auto &v : Data.ReachablePoint) Data.Reachable[v] = 0;
   Data.ReachablePoint.clear();
   Data.ReachablePoint.emplace_back(job);
   Data.Reachable[job] = 7;
-  for (auto &it1 : m_Parents[job]) {
+  for (auto &it1 : Parents[job]) {
     if (it1 <= job) continue;
     Data.Reachable[it1] = 7;
     Data.ReachablePoint.emplace_back(it1);
-    for (auto &it2 : m_Parents[it1]) {
+    for (auto &it2 : Parents[it1]) {
       if (it2 <= job) continue;
       Data.Reachable[it2] |= 6;
       Data.ReachablePoint.emplace_back(it2);
-      for (auto &it3 : m_Parents[it2]) {
+      for (auto &it3 : Parents[it2]) {
         if (it3 <= job || it3 == it1) continue;
         Data.Reachable[it3] |= 4;
         Data.ReachablePoint.emplace_back(it3);
@@ -198,13 +174,14 @@ void XJBG::BackSearch(ThData &Data, const U32 &job) {
     }
   }
 }
-void XJBG::ForwardSearch(ThData &Data, const U32 &job) {
-  auto &ans = m_Answer[job];
-  for (auto &it1 : m_Children[job]) {
+/*
+void ForwardSearch(ThData &Data, const U32 &job) {
+  auto &ans = Answer[job];
+  for (auto &it1 : Children[job]) {
     if (it1.first < job) continue;
-    for (auto &it2 : m_Children[it1.first]) {
+    for (auto &it2 : Children[it1.first]) {
       if (it2.first <= job) continue;
-      for (auto &it3 : m_Children[it2.first]) {
+      for (auto &it3 : Children[it2.first]) {
         if (it3.first < job || it3.first == it1.first) continue;
         if (it3.first == job) {
           ++Data.answers;
@@ -212,7 +189,7 @@ void XJBG::ForwardSearch(ThData &Data, const U32 &job) {
           ans[0].emplace_back(it2.first);
           continue;
         }
-        for (auto &it4 : m_Children[it3.first]) {
+        for (auto &it4 : Children[it3.first]) {
           if (!(Data.Reachable[it4.first] & 4)) continue;
           if (it4.first == job) {
             ++Data.answers;
@@ -224,7 +201,7 @@ void XJBG::ForwardSearch(ThData &Data, const U32 &job) {
           if (it4.first == it1.first || it4.first == it2.first) {
             continue;
           }
-          for (auto &it5 : m_Children[it4.first]) {
+          for (auto &it5 : Children[it4.first]) {
             if (!(Data.Reachable[it5.first] & 2)) continue;
             if (it5.first == job) {
               ++Data.answers;
@@ -238,7 +215,7 @@ void XJBG::ForwardSearch(ThData &Data, const U32 &job) {
                 it5.first == it3.first) {
               continue;
             }
-            for (auto &it6 : m_Children[it5.first]) {
+            for (auto &it6 : Children[it5.first]) {
               if (!(Data.Reachable[it6.first] & 1)) continue;
               if (it6.first == job) {
                 ++Data.answers;
@@ -267,35 +244,39 @@ void XJBG::ForwardSearch(ThData &Data, const U32 &job) {
     }
   }
 }
+*/
 
-void XJBG::GetNextJob(U32 &job) {
-  while (m_lock.test_and_set())
+void GetNextJob(U32 &job) {
+  while (lock.test_and_set())
     ;
-  if (m_jobcur < m_Jobs.size()) {
-    job = m_Jobs[m_jobcur++];
+  if (jobcur < Jobs.size()) {
+    job = Jobs[jobcur++];
   } else {
     job = -1;
   }
-  m_lock.clear();
+  lock.clear();
 }
 
-void XJBG::FindCircle(int pid) {
+/*
+void FindCircle(int pid) {
   U32 job = 0;
   auto &Data = ThreadData[pid];
   while (true) {
     GetNextJob(job);
     if (job == -1) break;
-    m_Answer[job].resize(5);
+    Answer[job].resize(5);
     BackSearch(Data, job);
     ForwardSearch(Data, job);
   }
 }
+*/
 
-void XJBG::SaveAnswer() {
+/*
+void SaveAnswer() {
   FILE *fp = fopen(RESULT, "w");
   char tmp[10];
   int tidx = 10;
-  U32 tol = m_answers;
+  U32 tol = answers;
   tmp[--tidx] = '\n';
   while (tol) {
     tmp[--tidx] = tol % 10 + '0';
@@ -305,48 +286,49 @@ void XJBG::SaveAnswer() {
   char line[1];
   line[0] = '\n';
   for (int sz = 0; sz < 5; ++sz) {
-    for (auto &job : m_Jobs) {
-      if (m_Answer[job].empty()) continue;
-      const auto &ans = m_Answer[job][sz];
+    for (auto &job : Jobs) {
+      if (Answer[job].empty()) continue;
+      const auto &ans = Answer[job][sz];
       if (ans.empty()) continue;
-      const auto &mpjob = m_MapID[job];
+      const auto &mpjob = MapID[job];
       int idx = 0;
       for (auto &v : ans) {
         if (!idx) fwrite(mpjob.str, 1, mpjob.len, fp);
         ++idx;
         if (idx == sz + 2) {
           idx = 0;
-          fwrite(m_MapID[v].str, 1, m_MapID[v].len - 1, fp);
+          fwrite(MapID[v].str, 1, MapID[v].len - 1, fp);
           fwrite(line, 1, 1, fp);
         } else {
-          fwrite(m_MapID[v].str, 1, m_MapID[v].len, fp);
+          fwrite(MapID[v].str, 1, MapID[v].len, fp);
         }
       }
     }
   }
   fclose(fp);
 }
-void XJBG::Simulation() {
+*/
+void Simulation() {
   LoadData();
   /*
   std::thread Th[NTHREAD];
   for (int i = 0; i < NTHREAD; ++i) {
-    Th[i] = std::thread(&XJBG::FindCircle, this, i);
+    Th[i] = std::thread(&FindCircle, this, i);
   }
   for (auto &it : Th) it.join();
-  for (auto &it : ThreadData) m_answers += it.answers;
+  for (auto &it : ThreadData) answers += it.answers;
   SaveAnswer();
   */
 
 #ifdef LOCAL
-  std::cerr << "@ answers: " << m_answers << "\n";
+  std::cerr << "@ answers: " << answers << "\n";
   for (int i = 0; i < NTHREAD; ++i) {
     std::cerr << "@ " << i << ": " << ThreadData[i].answers << "\n";
   }
 #endif
 }
+
 int main() {
-  XJBG *xjbg = new XJBG();
-  xjbg->Simulation();
+  Simulation();
   return 0;
 }
