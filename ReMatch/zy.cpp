@@ -617,9 +617,9 @@ int main(int argc, char *argv[]) {
   if (argc == 2 && strcmp(argv[1], "local") == 0) IS_LOCAL = true;
 
   if (!IS_LOCAL) {
-    test_file = "./data/big/test_data.txt";
-    predict_file = "./data/big/result.txt";
-    // solve();
+    test_file = "./data/1004812/test_data.txt";
+    predict_file = "./data/1004812/result.txt";
+    solve();
     exit(0);
   } else {
     cout << "local test" << endl;
