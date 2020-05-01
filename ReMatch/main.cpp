@@ -71,19 +71,17 @@ std::vector<std::pair<U32, U32>> Parents[MAXN];   // 父节点
  * 找环
  */
 struct ThData {
-  U32 answers;                                        // 环数目
-  U32 ReachablePointCount;                            // 反向可达点数目
-  char Reachable[MAXN];                               // 标记反向可达
-  U32 ReachablePoint[MAXN];                           // 可达点集合
-  U32 LastWeight[MAXN];                               // 最后一步权重
-  char *Ans0, *Ans1, *Ans2, *Ans3, *Ans4;             // ans
-  char *ThreeCycle = new char[NUMLENGTH * 3];         // 长度为3的环
-  char *Cycle0 = new char[MAXCYCLE * NUMLENGTH * 3];  // 长度为3的环
-  char *Cycle1 = new char[MAXCYCLE * NUMLENGTH * 4];  // 长度为4的环
-  char *Cycle2 = new char[MAXCYCLE * NUMLENGTH * 5];  // 长度为5的环
-  char *Cycle3 = new char[MAXCYCLE * NUMLENGTH * 6];  // 长度为6的环
-  char *Cycle4 = new char[MAXCYCLE * NUMLENGTH * 7];  // 长度为7的环
-} ThreadData[NTHREAD];                                // 线程找环
+  U32 answers;               // 环数目
+  U32 ReachablePointCount;   // 反向可达点数目
+  char Reachable[MAXN];      // 标记反向可达
+  U32 ReachablePoint[MAXN];  // 可达点集合
+  U32 LastWeight[MAXN];      // 最后一步权重
+  std::vector<U32> Cycle0;
+  std::vector<U32> Cycle1;
+  std::vector<U32> Cycle2;
+  std::vector<U32> Cycle3;
+  std::vector<U32> Cycle4;
+} ThreadData[NTHREAD];  // 线程找环
 
 /*
  * atomic 锁
@@ -224,77 +222,47 @@ void ForwardSearch(ThData &Data, const U32 &st) {
     for (const auto &it2 : Children[v1]) {
       const U32 &v2 = it2.first, &w2 = it2.second;
       if (v2 <= st || !judge(w1, w2)) continue;
-      const auto &mpid0 = MapID[st];
-      const auto &mpid1 = MapID[v1];
-      const auto &mpid2 = MapID[v2];
-      memcpy(Data.ThreeCycle, mpid0.str, mpid0.len);
-      memcpy(Data.ThreeCycle + mpid0.len, mpid1.str, mpid1.len);
-      memcpy(Data.ThreeCycle + mpid0.len + mpid1.len, mpid2.str, mpid2.len);
-      U32 ThreeLength = mpid0.len + mpid1.len + mpid2.len;
       for (const auto &it3 : Children[v2]) {
         const U32 &v3 = it3.first, &w3 = it3.second;
         if (v3 < st || v3 == v1 || !judge(w2, w3)) {
           continue;
         } else if (v3 == st) {
           if (!judge(w3, w1)) continue;
-          memcpy(Data.Ans0, Data.ThreeCycle, ThreeLength);
-          *(Data.Ans0 + ThreeLength - 1) = '\n';
-          Data.Ans0 += ThreeLength;
+          Data.Cycle0.insert(Data.Cycle0.end(), {st, v1, v2});
           ++ans;
           continue;
         }
-        const auto &mpid3 = MapID[v3];
         for (const auto &it4 : Children[v3]) {
           const U32 &v4 = it4.first, &w4 = it4.second;
           if (!(Data.Reachable[v4] & 4) || !judge(w3, w4)) {
             continue;
           } else if (v4 == st) {
             if (!judge(w4, w1)) continue;
-            memcpy(Data.Ans1, Data.ThreeCycle, ThreeLength);
-            Data.Ans1 += ThreeLength;
-            memcpy(Data.Ans1, mpid3.str, mpid3.len);
-            *(Data.Ans1 + mpid3.len - 1) = '\n';
-            Data.Ans1 += mpid3.len;
+            Data.Cycle1.insert(Data.Cycle1.end(), {st, v1, v2, v3});
             ++ans;
             continue;
           } else if (v1 == v4 || v2 == v4) {
             continue;
           }
-          const auto &mpid4 = MapID[v4];
           for (const auto &it5 : Children[v4]) {
             const U32 &v5 = it5.first, &w5 = it5.second;
             if (!(Data.Reachable[v5] & 2) || !judge(w4, w5)) {
               continue;
             } else if (v5 == st) {
               if (!judge(w5, w1)) continue;
-              memcpy(Data.Ans2, Data.ThreeCycle, ThreeLength);
-              Data.Ans2 += ThreeLength;
-              memcpy(Data.Ans2, mpid3.str, mpid3.len);
-              Data.Ans2 += mpid3.len;
-              memcpy(Data.Ans2, mpid4.str, mpid4.len);
-              *(Data.Ans2 + mpid4.len - 1) = '\n';
-              Data.Ans2 += mpid4.len;
+              Data.Cycle2.insert(Data.Cycle2.end(), {st, v1, v2, v3, v4});
               ++ans;
               continue;
             } else if (v1 == v5 || v2 == v5 || v3 == v5) {
               continue;
             }
-            const auto &mpid5 = MapID[v5];
             for (const auto &it6 : Children[v5]) {
               const U32 &v6 = it6.first, &w6 = it6.second;
               if (!(Data.Reachable[v6] & 1) || !judge(w5, w6)) {
                 continue;
               } else if (v6 == st) {
                 if (!judge(w6, w1)) continue;
-                memcpy(Data.Ans3, Data.ThreeCycle, ThreeLength);
-                Data.Ans3 += ThreeLength;
-                memcpy(Data.Ans3, mpid3.str, mpid3.len);
-                Data.Ans3 += mpid3.len;
-                memcpy(Data.Ans3, mpid4.str, mpid4.len);
-                Data.Ans3 += mpid4.len;
-                memcpy(Data.Ans3, mpid5.str, mpid5.len);
-                *(Data.Ans3 + mpid5.len - 1) = '\n';
-                Data.Ans3 += mpid5.len;
+                Data.Cycle3.insert(Data.Cycle3.end(), {st, v1, v2, v3, v4, v5});
                 ++ans;
                 continue;
               }
@@ -303,18 +271,8 @@ void ForwardSearch(ThData &Data, const U32 &st) {
                   !judge(w6, w7) || !judge(w7, w1)) {
                 continue;
               }
-              const auto &mpid6 = MapID[v6];
-              memcpy(Data.Ans4, Data.ThreeCycle, ThreeLength);
-              Data.Ans4 += ThreeLength;
-              memcpy(Data.Ans4, mpid3.str, mpid3.len);
-              Data.Ans4 += mpid3.len;
-              memcpy(Data.Ans4, mpid4.str, mpid4.len);
-              Data.Ans4 += mpid4.len;
-              memcpy(Data.Ans4, mpid5.str, mpid5.len);
-              Data.Ans4 += mpid5.len;
-              memcpy(Data.Ans4, mpid6.str, mpid6.len);
-              *(Data.Ans4 + mpid6.len - 1) = '\n';
-              Data.Ans4 += mpid6.len;
+              Data.Cycle4.insert(Data.Cycle4.end(),
+                                 {st, v1, v2, v3, v4, v5, v6});
               ++ans;
             }
           }
@@ -339,11 +297,6 @@ void GetNextJob(U32 &job) {
 void FindCircle(int pid) {
   U32 job = 0;
   auto &Data = ThreadData[pid];
-  Data.Ans0 = Data.Cycle0;
-  Data.Ans1 = Data.Cycle1;
-  Data.Ans2 = Data.Cycle2;
-  Data.Ans3 = Data.Cycle3;
-  Data.Ans4 = Data.Cycle4;
   while (true) {
     GetNextJob(job);
     if (job == -1) break;
