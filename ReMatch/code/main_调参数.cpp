@@ -41,8 +41,8 @@
 #define P10(x) ((x << 3) + (x << 1))
 
 #ifdef LOCAL
-#define TRAIN "./data/big/test_data.txt"
-#define RESULT "./data/big/result.txt"
+#define TRAIN "./data/18908526/test_data.txt"
+#define RESULT "./data/18908526/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -87,19 +87,19 @@ U32 AnswerLength1 = 0;      // 长度为4的环
 U32 AnswerLength2 = 0;      // 长度为5的环
 U32 AnswerLength3 = 0;      // 长度为6的环
 U32 AnswerLength4 = 0;      // 长度为7的环
-U32 ThreeLength = 0;        // 3环长度
 
 /*
  * 找环用
  */
-char *ThreeCircle = new char[NUMLEN * 3];  // 长度为3的环
-char *Reachable = new char[MAXN];          // 反向标记可达
-U32 ReachablePoint[MAXN];                  // 反向可达点
-U32 LastWeight[MAXN];                      // 最后一层权重
+char *ThreeCycle = new char[NUMLEN * 3];  // 长度为3的环
+char *Reachable = new char[MAXN];         // 反向标记可达
+U32 ReachablePoint[MAXN];                 // 反向可达点
+U32 LastWeight[MAXN];                     // 最后一层权重
 
 /*
  * 存结果
  */
+char *Ans0, *Ans1, *Ans2, *Ans3, *Ans4;
 char *Answer0 = new char[MAXM * NUMLEN * 3];  // 长度为3的环
 char *Answer1 = new char[MAXM * NUMLEN * 4];  // 长度为4的环
 char *Answer2 = new char[MAXM * NUMLEN * 5];  // 长度为5的环
@@ -217,6 +217,10 @@ void LoadData() {
 #endif
 }
 
+inline bool judge(const U32 &w1, const U32 &w2) {
+  if (w2 > P3(w1) || P5(w2) < w1) return false;
+  return true;
+}
 void BackSearch(const U32 &job) {
   for (int i = 0; i < ReachablePointCount; ++i) {
     Reachable[ReachablePoint[i]] = 0;
@@ -232,14 +236,12 @@ void BackSearch(const U32 &job) {
     ReachablePoint[ReachablePointCount++] = v1;
     for (const auto &it2 : Parents[v1]) {
       const U32 &v2 = it2.first, &w2 = it2.second;
-      if (v2 <= job) continue;
-      if (w2 > P5(w1) || w1 > P3(w2)) continue;
+      if (v2 <= job || !judge(w2, w1)) continue;
       Reachable[v2] |= 6;
       ReachablePoint[ReachablePointCount++] = v2;
       for (const auto &it3 : Parents[v2]) {
         const U32 &v3 = it3.first, &w3 = it3.second;
-        if (v3 <= job || v3 == v1) continue;
-        if (w3 > P5(w2) || w2 > P3(w3)) continue;
+        if (v3 <= job || v3 == v1 || !judge(w3, w2)) continue;
         Reachable[v3] |= 4;
         ReachablePoint[ReachablePointCount++] = v3;
       }
@@ -248,119 +250,105 @@ void BackSearch(const U32 &job) {
 }
 
 void ForwardSearch(U32 st) {
-  const auto &mpid0 = MapID[st];
-  memcpy(ThreeCircle, mpid0.str, mpid0.len);
-  U32 idx0 = mpid0.len, ans = 0;
+  U32 ans = 0;
   for (const auto &it1 : Children[st]) {
     const U32 &v1 = it1.first, &w1 = it1.second;
     if (v1 < st) continue;
-    const auto &mpid1 = MapID[v1];
-    memcpy(ThreeCircle + idx0, mpid1.str, mpid1.len);
-    U32 idx1 = idx0 + mpid1.len;
-    U32 P5w1 = P5(w1);
     for (const auto &it2 : Children[v1]) {
       const U32 &v2 = it2.first, &w2 = it2.second;
-      if (v2 <= st || w2 > P3(w1) || w1 > P5(w2)) continue;
+      if (v2 <= st || !judge(w1, w2)) continue;
+      const auto &mpid0 = MapID[st];
+      const auto &mpid1 = MapID[v1];
       const auto &mpid2 = MapID[v2];
-      memcpy(ThreeCircle + idx1, mpid2.str, mpid2.len);
-      ThreeLength = idx1 + mpid2.len;
+      memcpy(ThreeCycle, mpid0.str, mpid0.len);
+      memcpy(ThreeCycle + mpid0.len, mpid1.str, mpid1.len);
+      memcpy(ThreeCycle + mpid0.len + mpid1.len, mpid2.str, mpid2.len);
+      U32 ThreeLength = mpid0.len + mpid1.len + mpid2.len;
       for (const auto &it3 : Children[v2]) {
         const U32 &v3 = it3.first, &w3 = it3.second;
-        if (v3 < st || v3 == v1 || w3 > P3(w2) || w2 > P5(w3)) {
+        if (v3 < st || v3 == v1 || !judge(w2, w3)) {
           continue;
-        }
-        if (v3 == st) {
-          if (w3 <= P5w1 && P3(w3) >= w1) {
-            memcpy(Answer0 + AnswerLength0, ThreeCircle, ThreeLength);
-            AnswerLength0 += ThreeLength;
-            *(Answer0 + AnswerLength0 - 1) = '\n';
-            ++ans;
-          }
+        } else if (v3 == st) {
+          if (!judge(w3, w1)) continue;
+          memcpy(Ans0, ThreeCycle, ThreeLength);
+          *(Ans0 + ThreeLength - 1) = '\n';
+          Ans0 += ThreeLength;
+          ++ans;
           continue;
         }
         const auto &mpid3 = MapID[v3];
         for (const auto &it4 : Children[v3]) {
           const U32 &v4 = it4.first, &w4 = it4.second;
-          if (!(Reachable[v4] & 4) || w4 > P3(w3) || w3 > P5(w4)) {
+          if (!(Reachable[v4] & 4) || !judge(w3, w4)) {
             continue;
-          }
-          if (v4 == st) {
-            if (w4 <= P5w1 && P3(w4) >= w1) {
-              memcpy(Answer1 + AnswerLength1, ThreeCircle, ThreeLength);
-              AnswerLength1 += ThreeLength;
-              memcpy(Answer1 + AnswerLength1, mpid3.str, mpid3.len);
-              AnswerLength1 += mpid3.len;
-              *(Answer1 + AnswerLength1 - 1) = '\n';
-              ++ans;
-            }
+          } else if (v4 == st) {
+            if (!judge(w4, w1)) continue;
+            memcpy(Ans1, ThreeCycle, ThreeLength);
+            Ans1 += ThreeLength;
+            memcpy(Ans1, mpid3.str, mpid3.len);
+            *(Ans1 + mpid3.len - 1) = '\n';
+            Ans1 += mpid3.len;
+            ++ans;
             continue;
-          }
-          if (v1 == v4 || v2 == v4) {
+          } else if (v1 == v4 || v2 == v4) {
             continue;
           }
           const auto &mpid4 = MapID[v4];
           for (const auto &it5 : Children[v4]) {
             const U32 &v5 = it5.first, &w5 = it5.second;
-            if (!(Reachable[v5] & 2) || w5 > P3(w4) || w4 > P5(w5)) {
+            if (!(Reachable[v5] & 2) || !judge(w4, w5)) {
               continue;
-            }
-            if (v5 == st) {
-              if (w5 <= P5w1 && P3(w5) >= w1) {
-                memcpy(Answer2 + AnswerLength2, ThreeCircle, ThreeLength);
-                AnswerLength2 += ThreeLength;
-                memcpy(Answer2 + AnswerLength2, mpid3.str, mpid3.len);
-                AnswerLength2 += mpid3.len;
-                memcpy(Answer2 + AnswerLength2, mpid4.str, mpid4.len);
-                AnswerLength2 += mpid4.len;
-                *(Answer2 + AnswerLength2 - 1) = '\n';
-                ++ans;
-              }
+            } else if (v5 == st) {
+              if (!judge(w5, w1)) continue;
+              memcpy(Ans2, ThreeCycle, ThreeLength);
+              Ans2 += ThreeLength;
+              memcpy(Ans2, mpid3.str, mpid3.len);
+              Ans2 += mpid3.len;
+              memcpy(Ans2, mpid4.str, mpid4.len);
+              *(Ans2 + mpid4.len - 1) = '\n';
+              Ans2 += mpid4.len;
+              ++ans;
               continue;
-            }
-            if (v1 == v5 || v2 == v5 || v3 == v5) {
+            } else if (v1 == v5 || v2 == v5 || v3 == v5) {
               continue;
             }
             const auto &mpid5 = MapID[v5];
             for (const auto &it6 : Children[v5]) {
               const U32 &v6 = it6.first, &w6 = it6.second;
-              if (!(Reachable[v6] & 1) || w6 > P3(w5) || w5 > P5(w6)) {
+              if (!(Reachable[v6] & 1) || !judge(w5, w6)) {
                 continue;
-              }
-              if (v6 == st) {
-                if (w6 <= P5w1 && P3(w6) >= w1) {
-                  memcpy(Answer3 + AnswerLength3, ThreeCircle, ThreeLength);
-                  AnswerLength3 += ThreeLength;
-                  memcpy(Answer3 + AnswerLength3, mpid3.str, mpid3.len);
-                  AnswerLength3 += mpid3.len;
-                  memcpy(Answer3 + AnswerLength3, mpid4.str, mpid4.len);
-                  AnswerLength3 += mpid4.len;
-                  memcpy(Answer3 + AnswerLength3, mpid5.str, mpid5.len);
-                  AnswerLength3 += mpid5.len;
-                  *(Answer3 + AnswerLength3 - 1) = '\n';
-                  ++ans;
-                }
+              } else if (v6 == st) {
+                if (!judge(w6, w1)) continue;
+                memcpy(Ans3, ThreeCycle, ThreeLength);
+                Ans3 += ThreeLength;
+                memcpy(Ans3, mpid3.str, mpid3.len);
+                Ans3 += mpid3.len;
+                memcpy(Ans3, mpid4.str, mpid4.len);
+                Ans3 += mpid4.len;
+                memcpy(Ans3, mpid5.str, mpid5.len);
+                *(Ans3 + mpid5.len - 1) = '\n';
+                Ans3 += mpid5.len;
+                ++ans;
                 continue;
               }
               const U32 &w7 = LastWeight[v6];
-              if (v1 == v6 || v2 == v6 || v3 == v6 || v4 == v6 || w7 > P3(w6) ||
-                  w6 > P5(w7)) {
+              if (v1 == v6 || v2 == v6 || v3 == v6 || v4 == v6 ||
+                  !judge(w6, w7) || !judge(w7, w1)) {
                 continue;
               }
               const auto &mpid6 = MapID[v6];
-              if (w7 <= P5w1 && P3(w7) >= w1) {
-                memcpy(Answer4 + AnswerLength4, ThreeCircle, ThreeLength);
-                AnswerLength4 += ThreeLength;
-                memcpy(Answer4 + AnswerLength4, mpid3.str, mpid3.len);
-                AnswerLength4 += mpid3.len;
-                memcpy(Answer4 + AnswerLength4, mpid4.str, mpid4.len);
-                AnswerLength4 += mpid4.len;
-                memcpy(Answer4 + AnswerLength4, mpid5.str, mpid5.len);
-                AnswerLength4 += mpid5.len;
-                memcpy(Answer4 + AnswerLength4, mpid6.str, mpid6.len);
-                AnswerLength4 += mpid6.len;
-                *(Answer4 + AnswerLength4 - 1) = '\n';
-                ++ans;
-              }
+              memcpy(Ans4, ThreeCycle, ThreeLength);
+              Ans4 += ThreeLength;
+              memcpy(Ans4, mpid3.str, mpid3.len);
+              Ans4 += mpid3.len;
+              memcpy(Ans4, mpid4.str, mpid4.len);
+              Ans4 += mpid4.len;
+              memcpy(Ans4, mpid5.str, mpid5.len);
+              Ans4 += mpid5.len;
+              memcpy(Ans4, mpid6.str, mpid6.len);
+              *(Ans4 + mpid6.len - 1) = '\n';
+              Ans4 += mpid6.len;
+              ++ans;
             }
           }
         }
@@ -376,11 +364,21 @@ void FindCircle(U32 pid) {
   U32 st = 0, block = JobsCount / sum;
   for (int i = 0; i < pid; ++i) st += block * PARAM[i];
   U32 ed = (pid == NTHREAD - 1 ? JobsCount : st + block * PARAM[pid]);
+  Ans0 = Answer0;
+  Ans1 = Answer1;
+  Ans2 = Answer2;
+  Ans3 = Answer3;
+  Ans4 = Answer4;
   for (U32 i = st; i < ed; ++i) {
     const U32 &job = Jobs[i];
     BackSearch(job);
     ForwardSearch(job);
   }
+  AnswerLength0 = Ans0 - Answer0;
+  AnswerLength1 = Ans1 - Answer1;
+  AnswerLength2 = Ans2 - Answer2;
+  AnswerLength3 = Ans3 - Answer3;
+  AnswerLength4 = Ans4 - Answer4;
   *TotalAnswersPtr += answers;
   FlagForkPtr[pid] = 1;
 }
@@ -505,7 +503,7 @@ int main() {
   delete[] Answer2;
   delete[] Answer3;
   delete[] Answer4;
-  delete[] ThreeCircle;
+  delete[] ThreeCycle;
   delete[] Reachable;
 #endif
 
