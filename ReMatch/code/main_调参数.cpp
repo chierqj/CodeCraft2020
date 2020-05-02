@@ -41,8 +41,8 @@
 #define P10(x) ((x << 3) + (x << 1))
 
 #ifdef LOCAL
-#define TRAIN "./data/18908526/test_data.txt"
-#define RESULT "./data/18908526/result.txt"
+#define TRAIN "./data/19630345/test_data.txt"
+#define RESULT "./data/19630345/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -495,6 +495,7 @@ int main() {
   GetShmPtr();
   FindCircle(pid);
   WaitFork();
+  if (pid == 0) std::cerr << "@ Find Over\n";
   SaveAnswer(pid);
 
 #ifdef XJBGJUDGE
