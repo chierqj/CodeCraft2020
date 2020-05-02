@@ -26,8 +26,8 @@
 #define P10(x) ((x << 3) + (x << 1))
 
 #ifdef LOCAL
-#define TRAIN "./data/19630345/test_data.txt"
-#define RESULT "./data/19630345/result.txt"
+#define TRAIN "./data/18908526/test_data.txt"
+#define RESULT "./data/18908526/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -81,12 +81,16 @@ struct ThData {
 /*
  * 结果
  */
-U32 TotalBufferSize = 0;
-std::vector<U32> Cycle0[MAXN];
-std::vector<U32> Cycle1[MAXN];
-std::vector<U32> Cycle2[MAXN];
-std::vector<U32> Cycle3[MAXN];
-std::vector<U32> Cycle4[MAXN];
+U32 TotalBufferSize = 0;                              // 总buffer大小
+std::tuple<int, int, int, int, U32> Offset[NTHREAD];  // 偏移量
+U32 CycleBufSize[5][MAXN];                            // 每个点每种环sz
+char *FirstBuf[NUMLENGTH];                            // 环个数buf
+U32 FirstBufLen;                                      // 换个数bufsize
+std::vector<U32> Cycle0[MAXN];                        // 长度为3的环
+std::vector<U32> Cycle1[MAXN];                        // 长度为4的环
+std::vector<U32> Cycle2[MAXN];                        // 长度为5的环
+std::vector<U32> Cycle3[MAXN];                        // 长度为6的环
+std::vector<U32> Cycle4[MAXN];                        // 长度为7的环
 
 /*
  * atomic 锁
@@ -220,7 +224,7 @@ void BackSearch(ThData &Data, const U32 &st) {
 }
 
 void ForwardSearch(ThData &Data, const U32 &st) {
-  U32 ans = 0, sz = 0;
+  U32 ans = 0, sz0 = 0, sz1 = 0, sz2 = 0, sz3 = 0, sz4 = 0;
   const U32 &len0 = MapID[st].len;
   const auto &mpid0 = MapID[st];
   for (const auto &it1 : Children[st]) {
@@ -238,7 +242,7 @@ void ForwardSearch(ThData &Data, const U32 &st) {
         } else if (v3 == st) {
           if (!judge(w3, w1)) continue;
           Cycle0[st].insert(Cycle0[st].end(), {st, v1, v2});
-          sz += len0 + len1 + len2;
+          sz0 += len0 + len1 + len2;
           ++ans;
           continue;
         }
@@ -250,7 +254,7 @@ void ForwardSearch(ThData &Data, const U32 &st) {
           } else if (v4 == st) {
             if (!judge(w4, w1)) continue;
             Cycle1[st].insert(Cycle1[st].end(), {st, v1, v2, v3});
-            sz += len0 + len1 + len2 + len3;
+            sz1 += len0 + len1 + len2 + len3;
             ++ans;
             continue;
           } else if (v1 == v4 || v2 == v4) {
@@ -264,7 +268,7 @@ void ForwardSearch(ThData &Data, const U32 &st) {
             } else if (v5 == st) {
               if (!judge(w5, w1)) continue;
               Cycle2[st].insert(Cycle2[st].end(), {st, v1, v2, v3, v4});
-              sz += len0 + len1 + len2 + len3 + len4;
+              sz2 += len0 + len1 + len2 + len3 + len4;
               ++ans;
               continue;
             } else if (v1 == v5 || v2 == v5 || v3 == v5) {
@@ -278,7 +282,7 @@ void ForwardSearch(ThData &Data, const U32 &st) {
               } else if (v6 == st) {
                 if (!judge(w6, w1)) continue;
                 Cycle3[st].insert(Cycle3[st].end(), {st, v1, v2, v3, v4, v5});
-                sz += len0 + len1 + len2 + len3 + len4 + len5;
+                sz3 += len0 + len1 + len2 + len3 + len4 + len5;
                 ++ans;
                 continue;
               }
@@ -289,7 +293,7 @@ void ForwardSearch(ThData &Data, const U32 &st) {
               }
               const U32 &len6 = MapID[v6].len;
               Cycle4[st].insert(Cycle4[st].end(), {st, v1, v2, v3, v4, v5, v6});
-              sz += len0 + len1 + len2 + len3 + len4 + len5 + len6;
+              sz4 += len0 + len1 + len2 + len3 + len4 + len5 + len6;
               ++ans;
             }
           }
@@ -298,7 +302,12 @@ void ForwardSearch(ThData &Data, const U32 &st) {
     }
   }
   Data.answers += ans;
-  Data.bufsize += sz;
+  Data.bufsize += sz0 + sz1 + sz2 + sz3 + sz4;
+  CycleBufSize[0][st] = sz0;
+  CycleBufSize[1][st] = sz1;
+  CycleBufSize[2][st] = sz2;
+  CycleBufSize[3][st] = sz3;
+  CycleBufSize[4][st] = sz4;
 }
 
 void GetNextJob(U32 &job) {
@@ -323,98 +332,155 @@ void FindCircle(int pid) {
   }
 }
 
+void CalOffset() {
+  U32 block = TotalBufferSize / NTHREAD;
+  U32 tol = 0, x = 0, stl = 0, stidx = 0;
+  int tidx = 0;
+  for (int i = 0; i < 5; ++i) {
+    for (int j = 0; j < JobsCount; ++j) {
+      if (x > block) {
+        Offset[tidx++] = std::make_tuple(stl, i, stidx, j, tol);
+        stl = i;
+        stidx = j;
+        tol += x;
+        x = 0;
+      }
+      x += CycleBufSize[i][Jobs[j]];
+    }
+  }
+  Offset[tidx++] = std::make_tuple(stl, 4, stidx, JobsCount, tol);
+#ifdef LOCAL
+  for (int i = 0; i < NTHREAD; ++i) {
+    const auto &e = Offset[i];
+    std::cerr << "@ offset: (" << std::get<0>(e) << ", " << std::get<1>(e)
+              << ") (" << std::get<2>(e) << ", " << std::get<3>(e) << ") "
+              << std::get<4>(e) << "\n";
+  }
+#endif
+}
+
+void HandleSaveAnswer(int pid) {
+  const auto &offset = Offset[pid];
+  int stl = std::get<0>(offset);
+  int edl = std::get<1>(offset);
+  int stidx = std::get<2>(offset);
+  int edidx = std::get<3>(offset);
+  int fd = open(RESULT, O_RDWR | O_CREAT, 0666);
+  char *result = (char *)mmap(NULL, TotalBufferSize, PROT_READ | PROT_WRITE,
+                              MAP_SHARED, fd, 0);
+  ftruncate(fd, TotalBufferSize);
+  close(fd);
+  if (pid == 0) {
+    memcpy(result, FirstBuf, FirstBufLen);
+    result += FirstBufLen;
+  } else {
+    U32 offsz = FirstBufLen + std::get<4>(Offset[pid]);
+    result += offsz;
+  }
+  for (int i = stl; i <= edl; ++i) {
+    int low = (i == stl ? stidx : 0);
+    int high = (i == edl ? edidx : JobsCount);
+    if (i == 0) {
+      for (int j = low; j < high; ++j) {
+        const auto &job = Jobs[j];
+        int idx = 0;
+        for (auto &v : Cycle0[job]) {
+          ++idx;
+          const auto &mpid = MapID[v];
+          memcpy(result, mpid.str, mpid.len);
+          if (idx == i + 3) {
+            idx = 0;
+            *(result + mpid.len - 1) = '\n';
+          }
+          result += mpid.len;
+        }
+      }
+    } else if (i == 1) {
+      for (int j = low; j < high; ++j) {
+        const auto &job = Jobs[j];
+        int idx = 0;
+        for (auto &v : Cycle1[job]) {
+          ++idx;
+          const auto &mpid = MapID[v];
+          memcpy(result, mpid.str, mpid.len);
+          if (idx == i + 3) {
+            idx = 0;
+            *(result + mpid.len - 1) = '\n';
+          }
+          result += mpid.len;
+        }
+      }
+    } else if (i == 2) {
+      for (int j = low; j < high; ++j) {
+        const auto &job = Jobs[j];
+        int idx = 0;
+        for (auto &v : Cycle2[job]) {
+          ++idx;
+          const auto &mpid = MapID[v];
+          memcpy(result, mpid.str, mpid.len);
+          if (idx == i + 3) {
+            idx = 0;
+            *(result + mpid.len - 1) = '\n';
+          }
+          result += mpid.len;
+        }
+      }
+    } else if (i == 3) {
+      for (int j = low; j < high; ++j) {
+        const auto &job = Jobs[j];
+        int idx = 0;
+        for (auto &v : Cycle3[job]) {
+          ++idx;
+          const auto &mpid = MapID[v];
+          memcpy(result, mpid.str, mpid.len);
+          if (idx == i + 3) {
+            idx = 0;
+            *(result + mpid.len - 1) = '\n';
+          }
+          result += mpid.len;
+        }
+      }
+    } else {
+      for (int j = low; j < high; ++j) {
+        const auto &job = Jobs[j];
+        int idx = 0;
+        for (auto &v : Cycle4[job]) {
+          ++idx;
+          const auto &mpid = MapID[v];
+          memcpy(result, mpid.str, mpid.len);
+          if (idx == i + 3) {
+            idx = 0;
+            *(result + mpid.len - 1) = '\n';
+          }
+          result += mpid.len;
+        }
+      }
+    }
+  }
+}
+
 void SaveAnswer() {
-  char firBuf[NUMLENGTH];
-  U32 firIdx = NUMLENGTH;
-  firBuf[--firIdx] = '\n';
+  CalOffset();
+  char tmp[NUMLENGTH];
+  U32 idx = NUMLENGTH;
+  tmp[--idx] = '\n';
   U32 x = Answers;
   if (x == 0) {
-    firBuf[--firIdx] = '0';
+    tmp[--idx] = '0';
   } else {
     while (x) {
-      firBuf[--firIdx] = x % 10 + '0';
+      tmp[--idx] = x % 10 + '0';
       x /= 10;
     }
   }
-  U32 bufsize = NUMLENGTH - firIdx + TotalBufferSize;
-  int fd = open(RESULT, O_RDWR | O_CREAT, 0666);
-  char *result =
-      (char *)mmap(NULL, bufsize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-  ftruncate(fd, bufsize);
-  close(fd);
-  memcpy(result, firBuf + firIdx, NUMLENGTH - firIdx);
-  result += (NUMLENGTH - firIdx);
-
-  for (int i = 0; i < JobsCount; ++i) {
-    const U32 &job = Jobs[i];
-    int idx = 0;
-    for (auto &v : Cycle0[job]) {
-      ++idx;
-      const auto &mpid = MapID[v];
-      memcpy(result, mpid.str, mpid.len);
-      if (idx == 3) {
-        idx = 0;
-        *(result + mpid.len - 1) = '\n';
-      }
-      result += mpid.len;
-    }
+  FirstBufLen = NUMLENGTH - idx;
+  memcpy(FirstBuf, tmp + idx, FirstBufLen);
+  TotalBufferSize += FirstBufLen;
+  std::thread Th[NTHREAD];
+  for (int i = 0; i < NTHREAD; ++i) {
+    Th[i] = std::thread(HandleSaveAnswer, i);
   }
-  for (int i = 0; i < JobsCount; ++i) {
-    const U32 &job = Jobs[i];
-    int idx = 0;
-    for (auto &v : Cycle1[job]) {
-      ++idx;
-      const auto &mpid = MapID[v];
-      memcpy(result, mpid.str, mpid.len);
-      if (idx == 4) {
-        idx = 0;
-        *(result + mpid.len - 1) = '\n';
-      }
-      result += mpid.len;
-    }
-  }
-  for (int i = 0; i < JobsCount; ++i) {
-    const U32 &job = Jobs[i];
-    int idx = 0;
-    for (auto &v : Cycle2[job]) {
-      ++idx;
-      const auto &mpid = MapID[v];
-      memcpy(result, mpid.str, mpid.len);
-      if (idx == 5) {
-        idx = 0;
-        *(result + mpid.len - 1) = '\n';
-      }
-      result += mpid.len;
-    }
-  }
-  for (int i = 0; i < JobsCount; ++i) {
-    const U32 &job = Jobs[i];
-    int idx = 0;
-    for (auto &v : Cycle3[job]) {
-      ++idx;
-      const auto &mpid = MapID[v];
-      memcpy(result, mpid.str, mpid.len);
-      if (idx == 6) {
-        idx = 0;
-        *(result + mpid.len - 1) = '\n';
-      }
-      result += mpid.len;
-    }
-  }
-  for (int i = 0; i < JobsCount; ++i) {
-    const U32 &job = Jobs[i];
-    int idx = 0;
-    for (auto &v : Cycle4[job]) {
-      ++idx;
-      const auto &mpid = MapID[v];
-      memcpy(result, mpid.str, mpid.len);
-      if (idx == 7) {
-        idx = 0;
-        *(result + mpid.len - 1) = '\n';
-      }
-      result += mpid.len;
-    }
-  }
+  for (int i = 0; i < NTHREAD; ++i) Th[i].join();
 }
 
 void Simulation() {
@@ -428,8 +494,6 @@ void Simulation() {
     Answers += it.answers;
     TotalBufferSize += it.bufsize;
   }
-  std::cerr << "@ Find Over\n";
-  SaveAnswer();
 #ifdef LOCAL
   std::cerr << "@ answers: " << Answers << "";
   std::cerr << ", bufsize: " << TotalBufferSize << "\n";
@@ -439,6 +503,7 @@ void Simulation() {
               << it.bufsize << "\n";
   }
 #endif
+  SaveAnswer();
 }
 
 int main() {
