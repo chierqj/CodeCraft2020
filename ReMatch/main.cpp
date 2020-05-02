@@ -26,8 +26,8 @@
 #define P10(x) ((x << 3) + (x << 1))
 
 #ifdef LOCAL
-#define TRAIN "./data/18908526/test_data.txt"
-#define RESULT "./data/18908526/result.txt"
+#define TRAIN "./data/19630345/test_data.txt"
+#define RESULT "./data/19630345/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -36,7 +36,7 @@
 /*
  * 常量定义
  */
-const U32 MAXEDGE = 3000000 + 7;  // 最多边数目
+const U32 MAXEDGE = 2000000 + 7;  // 最多边数目
 const U32 MAXN = MAXEDGE << 1;    // 最多点数目
 const int NTHREAD = 4;            // 线程个数
 const int NUMLENGTH = 12;         // ID最大长度
@@ -59,25 +59,25 @@ struct PreBuffer {
   char str[NUMLENGTH];
   U32 len;
 };
-std::vector<PreBuffer> MapID;                            // 解析int
-std::vector<U32> Jobs;                                   // 有效点
-U32 IDDom[MAXN];                                         // ID集合
-U32 Edges[MAXEDGE][3];                                   // 所有边
-U32 ThEdges[NTHREAD][MAXEDGE / NTHREAD + 7][3];          // 线程边
-std::vector<std::vector<std::pair<U32, U32>>> Children;  // 子结点
-std::vector<std::vector<std::pair<U32, U32>>> Parents;   // 子结点
+PreBuffer MapID[MAXN];                            // 解析int
+U32 Jobs[MAXN];                                   // 有效点
+U32 IDDom[MAXN];                                  // ID集合
+U32 Edges[MAXEDGE][3];                            // 所有边
+U32 ThEdges[NTHREAD][MAXEDGE / NTHREAD + 7][3];   // 线程边
+std::vector<std::pair<U32, U32>> Children[MAXN];  // 子结点
+std::vector<std::pair<U32, U32>> Parents[MAXN];   // 子结点
 
 /*
  * 找环
  */
 struct ThData {
-  U32 answers = 0;                  // 环数目
-  U32 bufsize = 0;                  // 字节长度
-  U32 ReachablePointCount = 0;      // 反向可达点数目
-  char Reachable[MAXN];             // 标记反向可达
-  std::vector<U32> ReachablePoint;  // 可达点集合
-  std::vector<U32> LastWeight;      // 最后一步权重
-} ThreadData[NTHREAD];              // 线程找环
+  U32 answers = 0;              // 环数目
+  U32 bufsize = 0;              // 字节长度
+  U32 ReachablePointCount = 0;  // 反向可达点数目
+  char Reachable[MAXN];         // 标记反向可达
+  U32 ReachablePoint[MAXN];     // 可达点集合
+  U32 LastWeight[MAXN];         // 最后一步权重
+} ThreadData[NTHREAD];          // 线程找环
 
 /*
  * 结果
@@ -86,7 +86,7 @@ U32 TotalBufferSize = 0;                              // 总buffer大小
 U32 FirstBufLen = 0;                                  // 换个数bufsize
 char FirstBuf[NUMLENGTH];                             // 环个数buf
 std::tuple<int, int, int, int, U32> Offset[NTHREAD];  // 偏移量
-std::vector<U32> CycleBufSize[5];                     // 每个点每种环sz
+U32 CycleBufSize[5][MAXN];                            // 每个点每种环sz
 std::vector<std::vector<U32>> Cycle0;                 // 长度为3的环
 std::vector<std::vector<U32>> Cycle1;                 // 长度为4的环
 std::vector<std::vector<U32>> Cycle2;                 // 长度为5的环
@@ -99,22 +99,11 @@ std::vector<std::vector<U32>> Cycle4;                 // 长度为7的环
 std::atomic_flag lock = ATOMIC_FLAG_INIT;
 
 void Init() {
-  Children.reserve(MaxID);
-  Parents.reserve(MaxID);
-  MapID.reserve(MaxID);
-  Jobs.reserve(MaxID);
-  for (auto &it : ThreadData) {
-    it.ReachablePoint.reserve(MaxID);
-    it.LastWeight.reserve(MaxID);
-  }
   Cycle0.reserve(MaxID);
   Cycle1.reserve(MaxID);
   Cycle2.reserve(MaxID);
   Cycle3.reserve(MaxID);
   Cycle4.reserve(MaxID);
-  for (int i = 0; i < 5; ++i) {
-    CycleBufSize[i].reserve(MaxID);
-  }
 }
 
 void ParseInteger(const U32 &x) {
