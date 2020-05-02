@@ -56,11 +56,13 @@ typedef struct Edge {
 
   Edge(uint32_t x, long long w) : first(x), second(w){};
 } Edge;
+
 struct MyKeyHashHasher {
   inline size_t operator()(const int &k) const noexcept {
     return k & 0x7fffff;  // std::hash<int>{}(k.key);
   }
 };
+
 struct Path {
   int path[7];  //不初始化 初始化浪费时间
 
@@ -107,14 +109,14 @@ struct Path {
   }
 };
 
-const int MAX_RESULT = 20000000;
-const int MAX_N = 6000000;
-const int T = 8;                  //进程/线程数量
+const int MAX_RESULT = 20000005;
+const int MAX_N = 6000005;
+const int T = 4;                  //进程/线程数量
 const int MAX_IDVAL_LENGTH = 11;  //整数表示的ID有多长
-int RAND_KEY;                     //随机值用于shmget
-int RAND_VISITED_FLG;
+// int RAND_KEY;//随机值用于shmget
+// int RAND_VISITED_FLG;
 
-int N = 0;  // node num
+uint32_t N = 0;  // node num
 string test_file;
 string predict_file;
 
@@ -129,6 +131,8 @@ vector<uint32_t> arg_list;  // arg_sort结果
 uint32_t worker_answer_len[5];
 vector<Path> worker_result[5];
 // int worker_result_num[5];
+int SHM_KEY = shmget(IPC_PRIVATE, 4096, IPC_CREAT | 0666);
+int PROC_BASE_STATE = 10086;
 
 // id升序
 bool cmpAdj(const Edge &a, const Edge &b);
@@ -136,12 +140,9 @@ bool cmpAdj(const Edge &a, const Edge &b);
 // id降序
 bool cmpAdjReverse(const Edge &a, const Edge &b);
 
-// char*转int，将从*p到*q的一段char*内存转换成int/longlong
-inline void myScan(char *p, const char *q, uint32_t &x);
-inline void myScan(char *p, const char *q, long long &x);
 // x对y转账w元
-inline void addEdge(char *&x_str, char *&y_str, uint32_t x, uint32_t y,
-                    size_t x_len, size_t y_len, uint32_t w);
+void addEdge(char *&x_str, char *&y_str, uint32_t x, uint32_t y, size_t x_len,
+             size_t y_len, uint32_t w);
 
 //解析输入文件
 void analyzeBuffMmap(char *buffer, int MAXS);
@@ -150,7 +151,7 @@ void analyzeBuffMmap(char *buffer, int MAXS);
 bool loadTestData();
 
 //节点id argsort
-vector<uint32_t> idArgSort();
+void idArgSort();
 
 //找从一个起点开始的环
 void findCycleAt(uint32_t st, int *dist, long long *end_weight);
@@ -171,14 +172,13 @@ void solve();
 
 /***********************************************************************************************/
 
-bool cmpAdj(const Edge &a, const Edge &b) {
-  return node_id[a.first] < node_id[b.first];
+inline double Pow4(double x) {
+  return pow(x, 3.25);
+  //    double xx = x * x;
+  //    return xx * xx;
 }
 
-bool cmpAdjReverse(const Edge &a, const Edge &b) {
-  return node_id[a.first] > node_id[b.first];
-}
-
+// char*转int，将从*p到*q的一段char*内存转换成int/longlong
 inline void myScan(char *p, const char *q, uint32_t &x) {
   x = *p++ - '0';
   while (p != q) {
@@ -186,12 +186,21 @@ inline void myScan(char *p, const char *q, uint32_t &x) {
     ++p;
   }
 }
+
 inline void myScan(char *p, const char *q, long long &x) {
   x = *p++ - '0';
   while (p != q) {
     x = (x << 3) + (x << 1) + (*p - '0');
     ++p;
   }
+}
+
+bool cmpAdj(const Edge &a, const Edge &b) {
+  return node_id[a.first] < node_id[b.first];
+}
+
+bool cmpAdjReverse(const Edge &a, const Edge &b) {
+  return node_id[a.first] > node_id[b.first];
 }
 
 inline void addEdge(char *&x_str, char *&y_str, uint32_t x, uint32_t y,
@@ -208,7 +217,8 @@ inline void addEdge(char *&x_str, char *&y_str, uint32_t x, uint32_t y,
     node_ids_size.emplace_back(x_len);
     in_list.emplace_back();
     out_list.emplace_back();
-    id_index_map[x] = N;
+    // id_index_map[x] = N;
+    id_index_map.insert(make_pair(x, N));
     xid = N;
     N++;
     it_ed = id_index_map.end();
@@ -222,7 +232,8 @@ inline void addEdge(char *&x_str, char *&y_str, uint32_t x, uint32_t y,
     node_ids_size.emplace_back(y_len);
     in_list.emplace_back();
     out_list.emplace_back();
-    id_index_map[y] = N;
+    // id_index_map[y] = N;
+    id_index_map.insert(make_pair(y, N));
     yid = N;
     N++;
   } else {
@@ -236,6 +247,8 @@ inline void addEdge(char *&x_str, char *&y_str, uint32_t x, uint32_t y,
 void analyzeBuffMmap(char *buffer, int MAXS) {
   //预分配空间
   id_index_map.reserve(MAX_N);
+  id_index_map.rehash(MAX_N);
+  // id_index_map.max_load_factor(2);
   node_id.reserve(MAX_N);
   node_ids.reserve(MAX_N);
   node_ids_size.reserve(MAX_N);
@@ -243,7 +256,7 @@ void analyzeBuffMmap(char *buffer, int MAXS) {
   out_list.reserve(MAX_N);
 
   const char split = ',';
-  const char split_line = '\r';  // TODO 线上数据为/r/n
+  const char split_line = '\n';  // TODO 线上数据为/r/n
   char *p = buffer;
   char *q = buffer;
   // string xs, ys;
@@ -266,10 +279,10 @@ void analyzeBuffMmap(char *buffer, int MAXS) {
     myScan(p, q, y);
     p = ++q;
 
-    while (*q != split_line) q++;
+    while (*q != '\r' && *q != '\n') q++;
     myScan(p, q, w);
-    q += 2;
-    p = q;
+    if (*q == '\r') ++q;
+    p = ++q;
 
     addEdge(xs, ys, x, y, lx, ly, w);
   }
@@ -308,14 +321,14 @@ bool loadTestData() {
   return true;
 }
 
-vector<uint32_t> idArgSort() {
-  vector<uint32_t> array_index(N, 0);
-  for (uint32_t i = 0; i < N; ++i) array_index[i] = i;
+void idArgSort() {
+  arg_list = vector<uint32_t>(N, 0);
+  for (uint32_t i = 0; i < N; ++i) arg_list[i] = i;
 
-  std::sort(array_index.begin(), array_index.end(),
+  std::sort(arg_list.begin(), arg_list.end(),
             [](int pos1, int pos2) { return (node_id[pos1] < node_id[pos2]); });
 
-  return array_index;
+  // return array_index;
 }
 
 void findCycleAt(uint32_t st, int *dist, long long *end_weight) {
@@ -440,7 +453,8 @@ void findCycleAt(uint32_t st, int *dist, long long *end_weight) {
               // addAnswer(worker_path_prefix, worker_prefix_size, st, v1, v2,
               // v3, v4, v5, v6);
               w7 = end_weight[v6];
-              if (w7 <= 5 * w1 && 3 * w7 >= w1) {
+              if (w6 <= 5 * w7 && 3 * w6 >= w7 && w7 <= 5 * w1 &&
+                  3 * w7 >= w1) {
                 worker_result[4].emplace_back(trace);
                 worker_answer_len[4] +=
                     (node_ids_size[st] + node_ids_size[v1] + node_ids_size[v2] +
@@ -460,6 +474,7 @@ void findCycleAt(uint32_t st, int *dist, long long *end_weight) {
 }
 
 void findCycleInRange(uint32_t st, uint32_t ed) {
+  if (st >= N) return;
   int *dist = new int[N];
   long long *adj_weight = new long long[N];
   for (int i = 0; i < N; ++i) {
@@ -475,14 +490,46 @@ void findCycleInRange(uint32_t st, uint32_t ed) {
   }
 }
 
+vector<uint32_t> start_node_id_list;
+vector<uint32_t> end_node_id_list;
+
+void setProcessNodeNum() {
+  start_node_id_list = {0};
+  end_node_id_list.clear();
+  double ND = N;
+  double total_cnt = 0;
+  for (int i = 0; i < N; i += 1) {
+    total_cnt += Pow4(out_list[arg_list[i]].size() * (1 - i / ND));
+  }
+
+  double step = total_cnt / T;
+  double next_bar = step;
+  double cnt = 0;
+
+  for (int i = 0; i < N; i += 1) {
+    cnt += Pow4(out_list[arg_list[i]].size() * (1 - i / ND));
+    if (cnt > next_bar) {
+      start_node_id_list.push_back(i + 1);
+      end_node_id_list.push_back(i + 1);
+      next_bar += step;
+    }
+  }
+  while (start_node_id_list.size() < T) {
+    start_node_id_list.push_back(N);
+    end_node_id_list.push_back(N);
+  }
+  end_node_id_list.push_back(N);
+  for (int i = 0; i < T; i++) printf("%d ", start_node_id_list[i]);
+  printf("%d\n", end_node_id_list[T - 1]);
+}
+
 void findCycleProcess(int pid) {
   // TODO 自适应大小
-  int step = N / 54;
-  vector<int> st_list = {0,         2 * step,  4 * step,  7 * step,
-                         11 * step, 17 * step, 25 * step, 35 * step};
-  vector<int> ed_list = {2 * step,  4 * step,  7 * step,  11 * step,
-                         17 * step, 25 * step, 35 * step, N};
-  findCycleInRange(st_list[pid], ed_list[pid]);
+  //    uint32_t step = N / 54;
+  //    start_node_id_list = {0, 2 * step, 4 * step, 7 * step, 11 * step, 17 *
+  //    step, 25 * step, 35 * step}; end_node_id_list = {2 * step, 4 * step, 7 *
+  //    step, 11 * step, 17 * step, 25 * step, 35 * step, N};
+  findCycleInRange(start_node_id_list[pid], end_node_id_list[pid]);
 }
 
 void waitOtherProcess(int pid, int *shared_buffer, int target_mode) {
@@ -501,11 +548,10 @@ void waitOtherProcess(int pid, int *shared_buffer, int target_mode) {
 }
 
 void writeResultProcess(int pid) {
-  int shmid = shmget(RAND_KEY, 4096, IPC_CREAT | 0666);
-  int *shared_buffer = (int *)shmat(shmid, NULL, 0);
+  int *shared_buffer = (int *)shmat(SHM_KEY, NULL, 0);
   int WRITE_STATE = T * 4;
-  /* 0~T用于状态同步  RAND_VISITED_FLG表示找完环了
-   * RAND_VISITED_FLG-1表示写完数据了 T~2T表示各自的环的数量
+  /* 0~T用于状态同步  PROC_BASE_STATE PROC_BASE_STATE+1表示写完数据了
+   * T~2T表示各自的环的数量
    * 4T用于记录轮到谁写了  mmap应该用不到
    * 5T~9T记录各自的answer length*/
 
@@ -514,6 +560,7 @@ void writeResultProcess(int pid) {
     R += worker_result[j].size();
     // worker_answer_len[j] = worker_answer_p[j] - worker_answer[j];
   }
+  cout << pid << " circles " << R << endl;
 
   shared_buffer[WRITE_STATE] = 0;
   shared_buffer[pid + T] = R;
@@ -522,7 +569,7 @@ void writeResultProcess(int pid) {
   }
 
   //开始同步
-  waitOtherProcess(pid, shared_buffer, RAND_VISITED_FLG);
+  waitOtherProcess(pid, shared_buffer, PROC_BASE_STATE);
 
   int all_R = 0;
   int all_answer_len = 0;
@@ -583,19 +630,26 @@ void writeResultProcess(int pid) {
   }
 
   //结束同步
-  waitOtherProcess(pid, shared_buffer, RAND_VISITED_FLG + 1);
+  waitOtherProcess(pid, shared_buffer, PROC_BASE_STATE + 1);
   // printf("process %d end\n",pid);
   exit(0);
 }
 
 void solve() {
   loadTestData();
-  default_random_engine e(time(0));
-  uniform_int_distribution<int> u(0, 1008611);
-  RAND_KEY = u(e);
-  RAND_VISITED_FLG = u(e);
 
-  arg_list = idArgSort();
+  /*    default_random_engine e(time(0));
+      uniform_int_distribution<int> u(0, 1008611);
+      RAND_KEY = u(e);
+      RAND_VISITED_FLG = u(e);*/
+  // arg_list = idArgSort();
+  idArgSort();
+  clock_t start = clock();
+  setProcessNodeNum();
+  clock_t end = clock();
+  cout << "Set process node time : " << ((double)end - start) / CLOCKS_PER_SEC
+       << "s\n";
+
   pid_t Process[T] = {0};
   int pid = 0;
   for (int i = 1; i < T; ++i) {
@@ -609,7 +663,12 @@ void solve() {
     }
   }
   // printf("this is process %d\n",pid);
+  start = clock();
+
   findCycleProcess(pid);
+  end = clock();
+  cout << pid << " Process time : " << ((double)end - start) / CLOCKS_PER_SEC
+       << "s\n";
   writeResultProcess(pid);
 }
 
@@ -617,15 +676,17 @@ int main(int argc, char *argv[]) {
   if (argc == 2 && strcmp(argv[1], "local") == 0) IS_LOCAL = true;
 
   if (!IS_LOCAL) {
-    test_file = "./data/1004812/test_data.txt";
-    predict_file = "./data/1004812/result.txt";
+    test_file = "./data/19630345/test_data.txt";
+    predict_file = "./data/19630345/result.txt";
     solve();
     exit(0);
   } else {
     cout << "local test" << endl;
 
     vector<string> all_testFile = {"testdata/standard.txt"};
+    // all_testFile = {"testdata/small.txt"};
     // all_testFile={"testdata/1004812/test_data.txt"};
+    all_testFile = {"testdata/test_data_massive.txt"};
     vector<string> all_predictFile = {"data/result.txt"};
 
     for (int i = 0; i < all_testFile.size(); i += 1) {
