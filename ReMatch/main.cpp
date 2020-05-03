@@ -21,19 +21,20 @@
 #include <unordered_set>
 #include <vector>
 #define uint uint32_t
-#define ulong uint64_t
+#define W3_MAX 715827882
+#define W5_MAX 429496729
 #define P3(x) ((x << 1) + x)
 #define P5(x) ((x << 2) + x)
 #define P10(x) ((x << 3) + (x << 1))
 
 #ifdef LOCAL
-#define TRAIN "./data/19630345/test_data.txt"
-#define RESULT "./data/19630345/result.txt"
+#define TRAIN "./data/18908526/test_data.txt"
+#define RESULT "./data/18908526/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
 #endif
-typedef std::pair<uint, ulong> Edge;
+typedef std::pair<uint, uint> Edge;
 
 /*
  * 常量定义
@@ -41,7 +42,7 @@ typedef std::pair<uint, ulong> Edge;
 const uint MAXEDGE = 3000000 + 7;  // 最多边数目
 const uint MAXN = MAXEDGE << 1;    // 最多点数目
 const uint NTHREAD = 4;            // 线程个数
-const uint NUMLENGTH = 12;         // ID最大长度
+const uint NUMLENGTH = 11;         // ID最大长度
 
 /*
  * 计数
@@ -60,7 +61,7 @@ struct ThData {
   uint ReachPointCount = 0;  // 反向可达点数目
   char Reach[MAXN];          // 标记反向可达
   uint ReachPoint[MAXN];     // 可达点集合
-  ulong LastWeight[MAXN];    // 最后一步权重
+  uint LastWeight[MAXN];     // 最后一步权重
 } ThreadData[NTHREAD];       // 线程找环
 
 /*
@@ -111,7 +112,6 @@ void Init() {
   Cycle2.reserve(MaxID);
   Cycle3.reserve(MaxID);
   Cycle4.reserve(MaxID);
-  Rank.reserve(MaxID);
 }
 
 void ParseInteger(const uint &x, uint num) {
@@ -174,6 +174,12 @@ void HandleCreateGraph() {
       Parents[cur].insert(Parents[cur].end(), ThParents[i][cur].begin(),
                           ThParents[i][cur].end());
     }
+    std::sort(
+        Children[cur].begin(), Children[cur].end(),
+        [](const Edge &e1, const Edge &e2) { return e1.first < e2.first; });
+    std::sort(
+        Parents[cur].begin(), Parents[cur].end(),
+        [](const Edge &e1, const Edge &e2) { return e1.first > e2.first; });
   }
 }
 
@@ -217,12 +223,11 @@ void LoadData() {
     u = v = w = 0;
   }
 
-  Init();
-
   std::vector<uint> vec(MaxID);
   for (uint i = 0; i < MaxID; ++i) vec[i] = i;
   std::sort(vec.begin(), vec.end(),
             [&](const uint &x, const uint &y) { return IDDom[x] < IDDom[y]; });
+  Rank.reserve(MaxID);
   for (uint i = 0; i < MaxID; ++i) {
     const uint &x = vec[i];
     ParseInteger(i, IDDom[x]);
@@ -231,25 +236,26 @@ void LoadData() {
 
   // 多线程存图
   std::thread Th[NTHREAD];
-  for (uint i = 0; i < NTHREAD; ++i) Th[i] = std::thread(HandleLoadData, i);
-  for (uint i = 0; i < NTHREAD; ++i) Th[i].join();
-  for (uint i = 0; i < NTHREAD; ++i) Th[i] = std::thread(HandleCreateGraph);
-  for (uint i = 0; i < NTHREAD; ++i) Th[i].join();
+  for (uint i = 1; i < NTHREAD; ++i) Th[i] = std::thread(HandleLoadData, i);
+  HandleLoadData(0);
+  for (uint i = 1; i < NTHREAD; ++i) Th[i].join();
+  for (uint i = 1; i < NTHREAD; ++i) Th[i] = std::thread(HandleCreateGraph);
+  HandleCreateGraph();
+  for (uint i = 1; i < NTHREAD; ++i) Th[i].join();
 
   for (uint i = 0; i < MaxID; ++i) {
     if (!Children[i].empty() && !Parents[i].empty()) {
       Jobs[JobsCount++] = i;
-      std::sort(Children[i].begin(), Children[i].end());
     }
   }
+  Init();
 #ifdef LOCAL
   std::cerr << "@ u: " << MaxID << ", e: " << EdgesCount << "\n";
 #endif
 }
 
-inline bool judge(const ulong &w1, const ulong &w2) {
-  if (w2 > P3(w1) || P5(w2) < w1) return false;
-  return true;
+inline bool judge(const uint &w1, const uint &w2) {
+  return (w2 > W5_MAX || w1 <= P5(w2)) && (w1 > W3_MAX || P3(w1) >= w2);
 }
 
 void BackSearch(ThData &Data, const uint &st) {
@@ -262,21 +268,23 @@ void BackSearch(ThData &Data, const uint &st) {
   Data.Reach[st] = 7;
   for (const auto &it1 : Parents[st]) {
     const uint &v1 = it1.first;
-    const ulong &w1 = it1.second;
-    if (v1 <= st) continue;
+    if (v1 <= st) break;
+    const uint &w1 = it1.second;
     Data.LastWeight[v1] = w1;
     Data.Reach[v1] = 7;
     Data.ReachPoint[Data.ReachPointCount++] = v1;
     for (const auto &it2 : Parents[v1]) {
       const uint &v2 = it2.first;
-      const ulong &w2 = it2.second;
-      if (v2 <= st || !judge(w2, w1)) continue;
+      if (v2 <= st) break;
+      const uint &w2 = it2.second;
+      if (!judge(w2, w1)) continue;
       Data.Reach[v2] |= 6;
       Data.ReachPoint[Data.ReachPointCount++] = v2;
       for (const auto &it3 : Parents[v2]) {
         const uint &v3 = it3.first;
-        const ulong &w3 = it3.second;
-        if (v3 <= st || v3 == v1 || !judge(w3, w2)) continue;
+        if (v3 <= st) break;
+        const uint &w3 = it3.second;
+        if (!judge(w3, w2)) continue;
         Data.Reach[v3] |= 4;
         Data.ReachPoint[Data.ReachPointCount++] = v3;
       }
@@ -287,19 +295,20 @@ void BackSearch(ThData &Data, const uint &st) {
 void ForwardSearch(ThData &Data, const uint &st) {
   uint ans = 0, sz0 = 0, sz1 = 0, sz2 = 0, sz3 = 0, sz4 = 0;
   const uint &len0 = MapID[st].len;
+  Cycle4[st].reserve(50);
   for (const auto &it1 : Children[st]) {
     const uint &v1 = it1.first;
-    const ulong &w1 = it1.second;
+    const uint &w1 = it1.second;
     if (v1 < st) continue;
     const uint &len1 = MapID[v1].len;
     for (const auto &it2 : Children[v1]) {
       const uint &v2 = it2.first;
-      const ulong &w2 = it2.second;
+      const uint &w2 = it2.second;
       if (v2 <= st || !judge(w1, w2)) continue;
       const uint len = len0 + len1 + MapID[v2].len;
       for (const auto &it3 : Children[v2]) {
         const uint &v3 = it3.first;
-        const ulong &w3 = it3.second;
+        const uint &w3 = it3.second;
         if (v3 < st || v3 == v1 || !judge(w2, w3)) {
           continue;
         } else if (v3 == st) {
@@ -312,7 +321,7 @@ void ForwardSearch(ThData &Data, const uint &st) {
         const uint &len3 = MapID[v3].len;
         for (const auto &it4 : Children[v3]) {
           const uint &v4 = it4.first;
-          const ulong &w4 = it4.second;
+          const uint &w4 = it4.second;
           if (!(Data.Reach[v4] & 4) || !judge(w3, w4)) {
             continue;
           } else if (v4 == st) {
@@ -327,7 +336,7 @@ void ForwardSearch(ThData &Data, const uint &st) {
           const uint &len4 = MapID[v4].len;
           for (const auto &it5 : Children[v4]) {
             const uint &v5 = it5.first;
-            const ulong &w5 = it5.second;
+            const uint &w5 = it5.second;
             if (!(Data.Reach[v5] & 2) || !judge(w4, w5)) {
               continue;
             } else if (v5 == st) {
@@ -342,7 +351,7 @@ void ForwardSearch(ThData &Data, const uint &st) {
             const uint &len5 = MapID[v5].len;
             for (const auto &it6 : Children[v5]) {
               const uint &v6 = it6.first;
-              const ulong &w6 = it6.second;
+              const uint &w6 = it6.second;
               if (!(Data.Reach[v6] & 1) || !judge(w5, w6)) {
                 continue;
               } else if (v6 == st) {
@@ -352,7 +361,7 @@ void ForwardSearch(ThData &Data, const uint &st) {
                 ++ans;
                 continue;
               }
-              const ulong &w7 = Data.LastWeight[v6];
+              const uint &w7 = Data.LastWeight[v6];
               if (v1 == v6 || v2 == v6 || v3 == v6 || v4 == v6 ||
                   !judge(w6, w7) || !judge(w7, w1)) {
                 continue;
@@ -539,18 +548,17 @@ void SaveAnswer() {
   memcpy(FirstBuf, tmp + idx, FirstBufLen);
   TotalBufferSize += FirstBufLen;
   std::thread Th[NTHREAD];
-  for (uint i = 0; i < NTHREAD; ++i) {
-    Th[i] = std::thread(HandleSaveAnswer, i);
-  }
-  for (uint i = 0; i < NTHREAD; ++i) Th[i].join();
+  for (uint i = 1; i < NTHREAD; ++i) Th[i] = std::thread(HandleSaveAnswer, i);
+  HandleSaveAnswer(0);
+  for (uint i = 1; i < NTHREAD; ++i) Th[i].join();
 }
 
 void Simulation() {
   LoadData();
-
   std::thread Th[NTHREAD];
-  for (uint i = 0; i < NTHREAD; ++i) Th[i] = std::thread(FindCircle, i);
-  for (auto &it : Th) it.join();
+  for (uint i = 1; i < NTHREAD; ++i) Th[i] = std::thread(FindCircle, i);
+  FindCircle(0);
+  for (uint i = 1; i < NTHREAD; ++i) Th[i].join();
 
   for (auto &it : ThreadData) {
     Answers += it.answers;
