@@ -114,23 +114,10 @@ void Init() {
   Cycle4.reserve(MaxID);
 }
 
-void ParseInteger(const uint &x, uint num) {
+inline void ParseInteger(const uint &x, uint num) {
   auto &mpid = MapID[x];
-  if (num == 0) {
-    mpid.str[0] = '0';
-    mpid.str[1] = ',';
-    mpid.len = 2;
-  } else {
-    char tmp[NUMLENGTH];
-    uint idx = NUMLENGTH;
-    tmp[--idx] = ',';
-    while (num) {
-      tmp[--idx] = num % 10 + '0';
-      num /= 10;
-    }
-    memcpy(mpid.str, tmp + idx, NUMLENGTH - idx);
-    mpid.len = NUMLENGTH - idx;
-  }
+  sprintf(mpid.str, "%d,", num);
+  mpid.len = strlen(mpid.str);
 }
 
 inline void GetEdgeId(uint &cur) {
@@ -266,21 +253,24 @@ void BackSearch(ThData &Data, const uint &st) {
   Data.ReachPointCount = 0;
   Data.ReachPoint[Data.ReachPointCount++] = st;
   Data.Reach[st] = 7;
-  for (const auto &it1 : Parents[st]) {
+  const auto &parent1 = Parents[st];
+  for (const auto &it1 : parent1) {
     const uint &v1 = it1.first;
     if (v1 <= st) break;
     const uint &w1 = it1.second;
     Data.LastWeight[v1] = w1;
     Data.Reach[v1] = 7;
     Data.ReachPoint[Data.ReachPointCount++] = v1;
-    for (const auto &it2 : Parents[v1]) {
+    const auto &parent2 = Parents[v1];
+    for (const auto &it2 : parent2) {
       const uint &v2 = it2.first;
       if (v2 <= st) break;
       const uint &w2 = it2.second;
       if (!judge(w2, w1)) continue;
       Data.Reach[v2] |= 6;
       Data.ReachPoint[Data.ReachPointCount++] = v2;
-      for (const auto &it3 : Parents[v2]) {
+      const auto &parent3 = Parents[v2];
+      for (const auto &it3 : parent3) {
         const uint &v3 = it3.first;
         if (v3 <= st) break;
         const uint &w3 = it3.second;
@@ -295,38 +285,42 @@ void BackSearch(ThData &Data, const uint &st) {
 void ForwardSearch(ThData &Data, const uint &st) {
   uint ans = 0, sz0 = 0, sz1 = 0, sz2 = 0, sz3 = 0, sz4 = 0;
   const uint &len0 = MapID[st].len;
-  Cycle4[st].reserve(50);
-  for (const auto &it1 : Children[st]) {
-    const uint &v1 = it1.first;
-    const uint &w1 = it1.second;
+  auto &cycle0 = Cycle0[st];
+  auto &cycle1 = Cycle1[st];
+  auto &cycle2 = Cycle2[st];
+  auto &cycle3 = Cycle3[st];
+  auto &cycle4 = Cycle4[st];
+  const auto &children1 = Children[st];
+  for (const auto &it1 : children1) {
+    const uint &v1 = it1.first, &w1 = it1.second;
     if (v1 < st) continue;
     const uint &len1 = MapID[v1].len;
-    for (const auto &it2 : Children[v1]) {
-      const uint &v2 = it2.first;
-      const uint &w2 = it2.second;
+    const auto &children2 = Children[v1];
+    for (const auto &it2 : children2) {
+      const uint &v2 = it2.first, &w2 = it2.second;
       if (v2 <= st || !judge(w1, w2)) continue;
       const uint len = len0 + len1 + MapID[v2].len;
-      for (const auto &it3 : Children[v2]) {
-        const uint &v3 = it3.first;
-        const uint &w3 = it3.second;
+      const auto &children3 = Children[v2];
+      for (const auto &it3 : children3) {
+        const uint &v3 = it3.first, &w3 = it3.second;
         if (v3 < st || v3 == v1 || !judge(w2, w3)) {
           continue;
         } else if (v3 == st) {
           if (!judge(w3, w1)) continue;
-          Cycle0[st].insert(Cycle0[st].end(), {st, v1, v2});
+          cycle0.insert(cycle0.end(), {st, v1, v2});
           sz0 += len;
           ++ans;
           continue;
         }
         const uint &len3 = MapID[v3].len;
-        for (const auto &it4 : Children[v3]) {
-          const uint &v4 = it4.first;
-          const uint &w4 = it4.second;
+        const auto &children4 = Children[v3];
+        for (const auto &it4 : children4) {
+          const uint &v4 = it4.first, &w4 = it4.second;
           if (!(Data.Reach[v4] & 4) || !judge(w3, w4)) {
             continue;
           } else if (v4 == st) {
             if (!judge(w4, w1)) continue;
-            Cycle1[st].insert(Cycle1[st].end(), {st, v1, v2, v3});
+            cycle1.insert(cycle1.end(), {st, v1, v2, v3});
             sz1 += len + len3;
             ++ans;
             continue;
@@ -334,14 +328,14 @@ void ForwardSearch(ThData &Data, const uint &st) {
             continue;
           }
           const uint &len4 = MapID[v4].len;
-          for (const auto &it5 : Children[v4]) {
-            const uint &v5 = it5.first;
-            const uint &w5 = it5.second;
+          const auto &children5 = Children[v4];
+          for (const auto &it5 : children5) {
+            const uint &v5 = it5.first, &w5 = it5.second;
             if (!(Data.Reach[v5] & 2) || !judge(w4, w5)) {
               continue;
             } else if (v5 == st) {
               if (!judge(w5, w1)) continue;
-              Cycle2[st].insert(Cycle2[st].end(), {st, v1, v2, v3, v4});
+              cycle2.insert(cycle2.end(), {st, v1, v2, v3, v4});
               sz2 += len + len3 + len4;
               ++ans;
               continue;
@@ -349,14 +343,14 @@ void ForwardSearch(ThData &Data, const uint &st) {
               continue;
             }
             const uint &len5 = MapID[v5].len;
-            for (const auto &it6 : Children[v5]) {
-              const uint &v6 = it6.first;
-              const uint &w6 = it6.second;
+            const auto &children6 = Children[v5];
+            for (const auto &it6 : children6) {
+              const uint &v6 = it6.first, &w6 = it6.second;
               if (!(Data.Reach[v6] & 1) || !judge(w5, w6)) {
                 continue;
               } else if (v6 == st) {
                 if (!judge(w6, w1)) continue;
-                Cycle3[st].insert(Cycle3[st].end(), {st, v1, v2, v3, v4, v5});
+                cycle3.insert(cycle3.end(), {st, v1, v2, v3, v4, v5});
                 sz3 += len + len3 + len4 + len5;
                 ++ans;
                 continue;
@@ -367,7 +361,7 @@ void ForwardSearch(ThData &Data, const uint &st) {
                 continue;
               }
               const uint &len6 = MapID[v6].len;
-              Cycle4[st].insert(Cycle4[st].end(), {st, v1, v2, v3, v4, v5, v6});
+              cycle4.insert(cycle4.end(), {st, v1, v2, v3, v4, v5, v6});
               sz4 += len + len3 + len4 + len5 + len6;
               ++ans;
             }
@@ -448,104 +442,52 @@ void HandleSaveAnswer(uint pid) {
     uint offsz = FirstBufLen + std::get<4>(Offset[pid]);
     result += offsz;
   }
+
+  uint low = 0, high = 0;
+  auto foo = [&](const uint &p, const std::vector<std::vector<uint>> &cycles) {
+    for (uint i = low; i < high; ++i) {
+      const auto &cycle = cycles[Jobs[i]];
+      uint idx = 0;
+      for (const auto &v : cycle) {
+        const auto &mpid = MapID[v];
+        memcpy(result, mpid.str, mpid.len);
+        if (++idx == p + 3) {
+          idx = 0;
+          *(result + mpid.len - 1) = '\n';
+        }
+        result += mpid.len;
+      }
+    }
+  };
   for (uint i = stl; i <= edl; ++i) {
-    uint low = (i == stl ? stidx : 0);
-    uint high = (i == edl ? edidx : JobsCount);
-    if (i == 0) {
-      for (uint j = low; j < high; ++j) {
-        const auto &job = Jobs[j];
-        uint idx = 0;
-        for (const auto &v : Cycle0[job]) {
-          ++idx;
-          const auto &mpid = MapID[v];
-          memcpy(result, mpid.str, mpid.len);
-          if (idx == i + 3) {
-            idx = 0;
-            *(result + mpid.len - 1) = '\n';
-          }
-          result += mpid.len;
-        }
-      }
-    } else if (i == 1) {
-      for (uint j = low; j < high; ++j) {
-        const auto &job = Jobs[j];
-        uint idx = 0;
-        for (const auto &v : Cycle1[job]) {
-          ++idx;
-          const auto &mpid = MapID[v];
-          memcpy(result, mpid.str, mpid.len);
-          if (idx == i + 3) {
-            idx = 0;
-            *(result + mpid.len - 1) = '\n';
-          }
-          result += mpid.len;
-        }
-      }
-    } else if (i == 2) {
-      for (uint j = low; j < high; ++j) {
-        const auto &job = Jobs[j];
-        uint idx = 0;
-        for (const auto &v : Cycle2[job]) {
-          ++idx;
-          const auto &mpid = MapID[v];
-          memcpy(result, mpid.str, mpid.len);
-          if (idx == i + 3) {
-            idx = 0;
-            *(result + mpid.len - 1) = '\n';
-          }
-          result += mpid.len;
-        }
-      }
-    } else if (i == 3) {
-      for (uint j = low; j < high; ++j) {
-        const auto &job = Jobs[j];
-        uint idx = 0;
-        for (const auto &v : Cycle3[job]) {
-          ++idx;
-          const auto &mpid = MapID[v];
-          memcpy(result, mpid.str, mpid.len);
-          if (idx == i + 3) {
-            idx = 0;
-            *(result + mpid.len - 1) = '\n';
-          }
-          result += mpid.len;
-        }
-      }
-    } else {
-      for (uint j = low; j < high; ++j) {
-        const auto &job = Jobs[j];
-        uint idx = 0;
-        for (const auto &v : Cycle4[job]) {
-          ++idx;
-          const auto &mpid = MapID[v];
-          memcpy(result, mpid.str, mpid.len);
-          if (idx == i + 3) {
-            idx = 0;
-            *(result + mpid.len - 1) = '\n';
-          }
-          result += mpid.len;
-        }
-      }
+    low = (i == stl ? stidx : 0);
+    high = (i == edl ? edidx : JobsCount);
+    switch (i) {
+      case 0:
+        foo(i, Cycle0);
+        break;
+      case 1:
+        foo(i, Cycle1);
+        break;
+      case 2:
+        foo(i, Cycle2);
+        break;
+      case 3:
+        foo(i, Cycle3);
+        break;
+      case 4:
+        foo(i, Cycle4);
+        break;
+      default:
+        break;
     }
   }
 }
 
 void SaveAnswer() {
   CalOffset();
-  char tmp[NUMLENGTH];
-  uint idx = NUMLENGTH;
-  tmp[--idx] = '\n';
-  uint x = Answers;
-  if (x == 0) {
-    tmp[--idx] = '0';
-  } else {
-    while (x) {
-      tmp[--idx] = x % 10 + '0';
-      x /= 10;
-    }
-  }
-  FirstBufLen = NUMLENGTH - idx;
-  memcpy(FirstBuf, tmp + idx, FirstBufLen);
+  sprintf(FirstBuf, "%d\n", Answers);
+  FirstBufLen = strlen(FirstBuf);
   TotalBufferSize += FirstBufLen;
   std::thread Th[NTHREAD];
   for (uint i = 1; i < NTHREAD; ++i) Th[i] = std::thread(HandleSaveAnswer, i);
