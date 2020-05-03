@@ -1,41 +1,26 @@
 #include <fcntl.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/ioctl.h>
-#include <sys/ipc.h>
 #include <sys/mman.h>
-#include <sys/shm.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <atomic>
-#include <cassert>
-#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
-#include <functional>
 #include <iomanip>
 #include <iostream>
+#include <mutex>
 #include <numeric>
 #include <queue>
-#include <random>
-#include <set>
-#include <sstream>
-#include <stack>
 #include <string>
 #include <thread>
 #include <tuple>
 #include <unordered_map>
 #include <unordered_set>
-#include <utility>
 #include <vector>
-#define U32 uint64_t
+#define uint uint64_t
 #define P3(x) ((x << 1) + x)
 #define P5(x) ((x << 2) + x)
 #define P10(x) ((x << 3) + (x << 1))
@@ -49,119 +34,156 @@
 #endif
 
 /*
- * 常量
+ * 常量定义
  */
-const U32 MAXEDGE = 2000000 + 7;  // 边
-const U32 MAXN = MAXEDGE << 1;    // 结点
-const U32 MAXM = 20000000 + 7;    // 环
-const U32 NTHREAD = 4;            // 线程
-const U32 NUMLEN = 12;            // 数字最大长度
-U32 ST[NTHREAD], ED[NTHREAD];
-
-struct PreBuffer {
-  char str[NUMLEN];
-  U32 len;
-};
-/*
- * 进程同步共享变量
- */
-U32 TotalAnswers = shmget(IPC_PRIVATE, 4, IPC_CREAT | 0600);        // share
-U32 FlagFork = shmget(IPC_PRIVATE, NTHREAD * 4, IPC_CREAT | 0600);  // share
-U32 FlagSave = shmget(IPC_PRIVATE, 4, IPC_CREAT | 0600);            // share
-U32 *TotalAnswersPtr;  // share answers
-U32 *FlagForkPtr;      // share flag
-U32 *FlagSavePtr;      // share save
+const uint MAXEDGE = 3000000 + 7;  // 最多边数目
+const uint MAXN = MAXEDGE << 1;    // 最多点数目
+const int NTHREAD = 4;             // 线程个数
+const int NUMLENGTH = 12;          // ID最大长度
 
 /*
- * 计数变量
+ * 计数
  */
-U32 MaxID = 0;              // 最大点
-U32 answers = 0;            // 环个数
-U32 EdgesCount = 0;         // 边数目
-U32 JobsCount = 0;          // 有效点数目
-U32 IDDomCount = 0;         // ID数目
-U32 ThEdgesCount[NTHREAD];  // 线程边数目
-U32 ReachablePointCount;    // 反向可达数目
-U32 AnswerLength0 = 0;      // 长度为3的环
-U32 AnswerLength1 = 0;      // 长度为4的环
-U32 AnswerLength2 = 0;      // 长度为5的环
-U32 AnswerLength3 = 0;      // 长度为6的环
-U32 AnswerLength4 = 0;      // 长度为7的环
-
-/*
- * 找环用
- */
-char *ThreeCycle = new char[NUMLEN * 3];  // 长度为3的环
-char *Reachable = new char[MAXN];         // 反向标记可达
-U32 ReachablePoint[MAXN];                 // 反向可达点
-U32 LastWeight[MAXN];                     // 最后一层权重
-
-/*
- * 存结果
- */
-char *Ans0, *Ans1, *Ans2, *Ans3, *Ans4;
-char *Answer0 = new char[MAXM * NUMLEN * 3];  // 长度为3的环
-char *Answer1 = new char[MAXM * NUMLEN * 4];  // 长度为4的环
-char *Answer2 = new char[MAXM * NUMLEN * 5];  // 长度为5的环
-char *Answer3 = new char[MAXM * NUMLEN * 6];  // 长度为6的环
-char *Answer4 = new char[MAXM * NUMLEN * 7];  // 长度为7的环
+uint MaxID = 0;       // 最大点
+uint Answers = 0;     // 环个数
+uint EdgesCount = 0;  // 边数目
+uint JobsCount = 0;   // 有效点数目
 
 /*
  * 图信息
  */
-U32 Edges[MAXEDGE][3];                            // 所有边
-U32 ThEdges[NTHREAD][MAXEDGE / NTHREAD + 7][3];   // 线程边
-U32 Jobs[MAXN];                                   // 有效点
-U32 IDDom[MAXN];                                  // ID集合
-PreBuffer MapID[MAXN];                            // 预处理答案
-std::vector<std::pair<U32, U32>> Children[MAXN];  // 子结点
-std::vector<std::pair<U32, U32>> Parents[MAXN];   // 父节点
+struct PreBuffer {
+  char str[NUMLENGTH];
+  uint len;
+};
+PreBuffer MapID[MAXN];                              // 解析int
+uint Jobs[MAXN];                                    // 有效点
+uint IDDom[MAXN];                                   // ID集合
+uint Edges[MAXEDGE][3];                             // 所有边
+std::vector<std::pair<uint, uint>> Children[MAXN];  // 子结点
+std::vector<std::pair<uint, uint>> Parents[MAXN];   // 子结点
+std::vector<std::vector<std::pair<uint, uint>>> ThChildren[NTHREAD];  // 子结点
+std::vector<std::vector<std::pair<uint, uint>>> ThParents[NTHREAD];  // 子结点
+std::unordered_map<uint, int> HashID;                                // hashID
+std::vector<int> Rank;                                               // rankID
 
-inline void GetShmPtr() {
-  TotalAnswersPtr = (U32 *)shmat(TotalAnswers, NULL, 0);
-  FlagForkPtr = (U32 *)shmat(FlagFork, NULL, 0);
-  FlagSavePtr = (U32 *)shmat(FlagSave, NULL, 0);
+/*
+ * 找环
+ */
+struct ThData {
+  uint answers = 0;              // 环数目
+  uint bufsize = 0;              // 字节长度
+  uint ReachablePointCount = 0;  // 反向可达点数目
+  char Reachable[MAXN];          // 标记反向可达
+  uint ReachablePoint[MAXN];     // 可达点集合
+  uint LastWeight[MAXN];         // 最后一步权重
+} ThreadData[NTHREAD];           // 线程找环
+
+/*
+ * 结果
+ */
+uint TotalBufferSize = 0;                              // 总buffer大小
+uint FirstBufLen = 0;                                  // 换个数bufsize
+char FirstBuf[NUMLENGTH];                              // 环个数buf
+std::tuple<int, int, int, int, uint> Offset[NTHREAD];  // 偏移量
+uint CycleBufSize[5][MAXN];                            // 每个点每种环sz
+std::vector<std::vector<uint>> Cycle0;                 // 长度为3的环
+std::vector<std::vector<uint>> Cycle1;                 // 长度为4的环
+std::vector<std::vector<uint>> Cycle2;                 // 长度为5的环
+std::vector<std::vector<uint>> Cycle3;                 // 长度为6的环
+std::vector<std::vector<uint>> Cycle4;                 // 长度为7的环
+
+/*
+ * atomic 锁
+ */
+uint JobCur = 0;  // job光标
+uint EdgeCur = 0;
+uint IDCur = 0;
+std::atomic_flag _JOB_LOCK_ = ATOMIC_FLAG_INIT;
+std::atomic_flag _EDGE_LOCK_ = ATOMIC_FLAG_INIT;
+std::atomic_flag _ID_LOCK_ = ATOMIC_FLAG_INIT;
+
+void Init() {
+  Cycle0.reserve(MaxID);
+  Cycle1.reserve(MaxID);
+  Cycle2.reserve(MaxID);
+  Cycle3.reserve(MaxID);
+  Cycle4.reserve(MaxID);
 }
 
-void ParseInteger(const U32 &x) {
-  U32 num = IDDom[x];
+void ParseInteger(const uint &x) {
+  uint num = IDDom[x];
   auto &mpid = MapID[x];
   if (num == 0) {
     mpid.str[0] = '0';
     mpid.str[1] = ',';
     mpid.len = 2;
   } else {
-    char tmp[NUMLEN];
-    int idx = NUMLEN;
+    char tmp[NUMLENGTH];
+    int idx = NUMLENGTH;
     tmp[--idx] = ',';
     while (num) {
       tmp[--idx] = num % 10 + '0';
       num /= 10;
     }
-    memcpy(mpid.str, tmp + idx, NUMLEN - idx);
-    mpid.len = NUMLEN - idx;
+    memcpy(mpid.str, tmp + idx, NUMLENGTH - idx);
+    mpid.len = NUMLENGTH - idx;
   }
 }
 
-void HandleLoadData(int pid, int st, int ed) {
-  auto &E = ThEdges[pid];
-  auto &count = ThEdgesCount[pid];
-  for (int i = st; i < ed; ++i) {
-    const auto &e = Edges[i];
-    E[count][0] = std::lower_bound(IDDom, IDDom + MaxID, e[0]) - IDDom;
-    E[count][1] = std::lower_bound(IDDom, IDDom + MaxID, e[1]) - IDDom;
-    E[count++][2] = e[2];
+inline void GetEdgeId(int &cur) {
+  while (_EDGE_LOCK_.test_and_set())
+    ;
+  cur = EdgeCur < EdgesCount ? EdgeCur++ : -1;
+  _EDGE_LOCK_.clear();
+}
+void HandleLoadData(int pid) {
+  auto &children = ThChildren[pid];
+  auto &parents = ThParents[pid];
+  children.reserve(MaxID);
+  parents.reserve(MaxID);
+  int cur = 0;
+  while (true) {
+    GetEdgeId(cur);
+    if (cur == -1) break;
+    const auto &e = Edges[cur];
+    int p1 = Rank[HashID[e[0]]];
+    int p2 = Rank[HashID[e[1]]];
+    children[p1].emplace_back(std::make_pair(p2, e[2]));
+    parents[p2].emplace_back(std::make_pair(p1, e[2]));
+  }
+}
+
+inline void GetIDId(int &cur) {
+  while (_ID_LOCK_.test_and_set())
+    ;
+  cur = IDCur < MaxID ? IDCur++ : -1;
+  _ID_LOCK_.clear();
+}
+
+void HandleCreateGraph() {
+  int cur = 0;
+  while (true) {
+    GetIDId(cur);
+    if (cur == -1) break;
+    for (int i = 0; i < NTHREAD; ++i) {
+      Children[cur].insert(Children[cur].end(), ThChildren[i][cur].begin(),
+                           ThChildren[i][cur].end());
+      Parents[cur].insert(Parents[cur].end(), ThParents[i][cur].begin(),
+                          ThParents[i][cur].end());
+    }
   }
 }
 
 void LoadData() {
-  std::cerr << "loadstart\n";
-  U32 fd = open(TRAIN, O_RDONLY);
-  U32 bufsize = lseek(fd, 0, SEEK_END);
+  uint fd = open(TRAIN, O_RDONLY);
+  uint bufsize = lseek(fd, 0, SEEK_END);
   char *buffer = (char *)mmap(NULL, bufsize, PROT_READ, MAP_PRIVATE, fd, 0);
   close(fd);
   const char *ptr = buffer;
-  U32 u = 0, v = 0, w = 0;
+
+  uint u = 0, v = 0, w = 0;
+  HashID.reserve(MAXN);
   while (ptr - buffer < bufsize) {
     while (*ptr != ',') {
       u = P10(u) + *ptr - '0';
@@ -182,29 +204,29 @@ void LoadData() {
     Edges[EdgesCount][0] = u;
     Edges[EdgesCount][1] = v;
     Edges[EdgesCount++][2] = w;
-    IDDom[IDDomCount++] = u;
-    IDDom[IDDomCount++] = v;
+    if (HashID.find(u) == HashID.end()) {
+      IDDom[MaxID++] = u;
+      HashID[u] = MaxID++;
+    }
+    if (HashID.find(v) == HashID.end()) {
+      IDDom[MaxID++] = v;
+      HashID[v] = MaxID++;
+    }
     u = v = w = 0;
   }
-  std::sort(IDDom, IDDom + IDDomCount);
-  MaxID = std::unique(IDDom, IDDom + IDDomCount) - IDDom;
-  int st = 0, block = EdgesCount / NTHREAD;
+
+  Rank.reserve(MaxID);
+  for (int i = 0; i < MaxID; ++i) Rank[i] = i;
+  std::sort(Rank.begin(), Rank.end(),
+            [&](const int &x, const int &y) { return IDDom[x] < IDDom[y]; });
+
+  // 多线程存图
   std::thread Th[NTHREAD];
-  for (int i = 0; i < NTHREAD; ++i) {
-    int ed = (i == NTHREAD - 1 ? EdgesCount : st + block);
-    Th[i] = std::thread(HandleLoadData, i, st, ed);
-    st = ed;
-  }
+  for (int i = 0; i < NTHREAD; ++i) Th[i] = std::thread(HandleLoadData, i);
   for (int i = 0; i < NTHREAD; ++i) Th[i].join();
-  for (int i = 0; i < NTHREAD; ++i) {
-    const auto &E = ThEdges[i];
-    const auto &count = ThEdgesCount[i];
-    for (int j = 0; j < count; ++j) {
-      const auto &e = E[j];
-      Children[e[0]].emplace_back(std::make_pair(e[1], e[2]));
-      Parents[e[1]].emplace_back(std::make_pair(e[0], e[2]));
-    }
-  }
+  for (int i = 0; i < NTHREAD; ++i) Th[i] = std::thread(HandleCreateGraph);
+  for (int i = 0; i < NTHREAD; ++i) Th[i].join();
+
   for (int i = 0; i < MaxID; ++i) {
     if (!Children[i].empty() && !Parents[i].empty()) {
       Jobs[JobsCount++] = i;
@@ -217,162 +239,109 @@ void LoadData() {
 #endif
 }
 
-inline double P4(const double &x) { return std::pow(x, 3.6); }
-void SetParam() {
-  double sum = 0;
-  double DC = JobsCount;
-  double pre[JobsCount];
-  for (int i = 0; i < JobsCount; ++i) {
-    sum += P4((1.0 - i / DC) * Children[Jobs[i]].size());
-    pre[i] = sum;
-  }
-  double block = sum / NTHREAD;
-  double val = block;
-  for (int i = 0; i < NTHREAD - 1; ++i) {
-    int p = std::lower_bound(pre, pre + JobsCount, val) - pre;
-    val += block;
-    ED[i] = p;
-    ST[i + 1] = p;
-  }
-  ED[NTHREAD - 1] = JobsCount;
-#ifdef LOCAL
-  for (int i = 0; i < NTHREAD; ++i) {
-    std::cerr << "@ param: (" << ST[i] << ", " << ED[i] << ")\n";
-  }
-#endif
-}
-
-inline bool judge(const U32 &w1, const U32 &w2) {
+inline bool judge(const uint &w1, const uint &w2) {
   if (w2 > P3(w1) || P5(w2) < w1) return false;
   return true;
 }
-void BackSearch(const U32 &job) {
-  for (int i = 0; i < ReachablePointCount; ++i) {
-    Reachable[ReachablePoint[i]] = 0;
+
+void BackSearch(ThData &Data, const uint &st) {
+  for (int i = 0; i < Data.ReachablePointCount; ++i) {
+    Data.Reachable[Data.ReachablePoint[i]] = 0;
   }
-  ReachablePointCount = 0;
-  ReachablePoint[ReachablePointCount++] = job;
-  Reachable[job] = 7;
-  for (const auto &it1 : Parents[job]) {
-    const U32 &v1 = it1.first, &w1 = it1.second;
-    if (v1 <= job) continue;
-    LastWeight[v1] = w1;
-    Reachable[v1] = 7;
-    ReachablePoint[ReachablePointCount++] = v1;
+  Data.ReachablePointCount = 0;
+  Data.ReachablePoint[Data.ReachablePointCount++] = st;
+  Data.Reachable[st] = 7;
+  for (const auto &it1 : Parents[st]) {
+    const uint &v1 = it1.first, &w1 = it1.second;
+    if (v1 <= st) continue;
+    Data.LastWeight[v1] = w1;
+    Data.Reachable[v1] = 7;
+    Data.ReachablePoint[Data.ReachablePointCount++] = v1;
     for (const auto &it2 : Parents[v1]) {
-      const U32 &v2 = it2.first, &w2 = it2.second;
-      if (v2 <= job || !judge(w2, w1)) continue;
-      Reachable[v2] |= 6;
-      ReachablePoint[ReachablePointCount++] = v2;
+      const uint &v2 = it2.first, &w2 = it2.second;
+      if (v2 <= st || !judge(w2, w1)) continue;
+      Data.Reachable[v2] |= 6;
+      Data.ReachablePoint[Data.ReachablePointCount++] = v2;
       for (const auto &it3 : Parents[v2]) {
-        const U32 &v3 = it3.first, &w3 = it3.second;
-        if (v3 <= job || v3 == v1 || !judge(w3, w2)) continue;
-        Reachable[v3] |= 4;
-        ReachablePoint[ReachablePointCount++] = v3;
+        const uint &v3 = it3.first, &w3 = it3.second;
+        if (v3 <= st || v3 == v1 || !judge(w3, w2)) continue;
+        Data.Reachable[v3] |= 4;
+        Data.ReachablePoint[Data.ReachablePointCount++] = v3;
       }
     }
   }
 }
 
-void ForwardSearch(U32 st) {
-  U32 ans = 0;
+void ForwardSearch(ThData &Data, const uint &st) {
+  uint ans = 0, sz0 = 0, sz1 = 0, sz2 = 0, sz3 = 0, sz4 = 0;
+  const uint &len0 = MapID[st].len;
   for (const auto &it1 : Children[st]) {
-    const U32 &v1 = it1.first, &w1 = it1.second;
+    const uint &v1 = it1.first, &w1 = it1.second;
     if (v1 < st) continue;
+    const uint &len1 = MapID[v1].len;
     for (const auto &it2 : Children[v1]) {
-      const U32 &v2 = it2.first, &w2 = it2.second;
+      const uint &v2 = it2.first, &w2 = it2.second;
       if (v2 <= st || !judge(w1, w2)) continue;
-      const auto &mpid0 = MapID[st];
-      const auto &mpid1 = MapID[v1];
-      const auto &mpid2 = MapID[v2];
-      memcpy(ThreeCycle, mpid0.str, mpid0.len);
-      memcpy(ThreeCycle + mpid0.len, mpid1.str, mpid1.len);
-      memcpy(ThreeCycle + mpid0.len + mpid1.len, mpid2.str, mpid2.len);
-      U32 ThreeLength = mpid0.len + mpid1.len + mpid2.len;
+      const uint len = len0 + len1 + MapID[v2].len;
       for (const auto &it3 : Children[v2]) {
-        const U32 &v3 = it3.first, &w3 = it3.second;
+        const uint &v3 = it3.first, &w3 = it3.second;
         if (v3 < st || v3 == v1 || !judge(w2, w3)) {
           continue;
         } else if (v3 == st) {
           if (!judge(w3, w1)) continue;
-          memcpy(Ans0, ThreeCycle, ThreeLength);
-          *(Ans0 + ThreeLength - 1) = '\n';
-          Ans0 += ThreeLength;
+          Cycle0[st].insert(Cycle0[st].end(), {st, v1, v2});
+          sz0 += len;
           ++ans;
           continue;
         }
-        const auto &mpid3 = MapID[v3];
+        const uint &len3 = MapID[v3].len;
         for (const auto &it4 : Children[v3]) {
-          const U32 &v4 = it4.first, &w4 = it4.second;
-          if (!(Reachable[v4] & 4) || !judge(w3, w4)) {
+          const uint &v4 = it4.first, &w4 = it4.second;
+          if (!(Data.Reachable[v4] & 4) || !judge(w3, w4)) {
             continue;
           } else if (v4 == st) {
             if (!judge(w4, w1)) continue;
-            memcpy(Ans1, ThreeCycle, ThreeLength);
-            Ans1 += ThreeLength;
-            memcpy(Ans1, mpid3.str, mpid3.len);
-            *(Ans1 + mpid3.len - 1) = '\n';
-            Ans1 += mpid3.len;
+            Cycle1[st].insert(Cycle1[st].end(), {st, v1, v2, v3});
+            sz1 += len + len3;
             ++ans;
             continue;
           } else if (v1 == v4 || v2 == v4) {
             continue;
           }
-          const auto &mpid4 = MapID[v4];
+          const uint &len4 = MapID[v4].len;
           for (const auto &it5 : Children[v4]) {
-            const U32 &v5 = it5.first, &w5 = it5.second;
-            if (!(Reachable[v5] & 2) || !judge(w4, w5)) {
+            const uint &v5 = it5.first, &w5 = it5.second;
+            if (!(Data.Reachable[v5] & 2) || !judge(w4, w5)) {
               continue;
             } else if (v5 == st) {
               if (!judge(w5, w1)) continue;
-              memcpy(Ans2, ThreeCycle, ThreeLength);
-              Ans2 += ThreeLength;
-              memcpy(Ans2, mpid3.str, mpid3.len);
-              Ans2 += mpid3.len;
-              memcpy(Ans2, mpid4.str, mpid4.len);
-              *(Ans2 + mpid4.len - 1) = '\n';
-              Ans2 += mpid4.len;
+              Cycle2[st].insert(Cycle2[st].end(), {st, v1, v2, v3, v4});
+              sz2 += len + len3 + len4;
               ++ans;
               continue;
             } else if (v1 == v5 || v2 == v5 || v3 == v5) {
               continue;
             }
-            const auto &mpid5 = MapID[v5];
+            const uint &len5 = MapID[v5].len;
             for (const auto &it6 : Children[v5]) {
-              const U32 &v6 = it6.first, &w6 = it6.second;
-              if (!(Reachable[v6] & 1) || !judge(w5, w6)) {
+              const uint &v6 = it6.first, &w6 = it6.second;
+              if (!(Data.Reachable[v6] & 1) || !judge(w5, w6)) {
                 continue;
               } else if (v6 == st) {
                 if (!judge(w6, w1)) continue;
-                memcpy(Ans3, ThreeCycle, ThreeLength);
-                Ans3 += ThreeLength;
-                memcpy(Ans3, mpid3.str, mpid3.len);
-                Ans3 += mpid3.len;
-                memcpy(Ans3, mpid4.str, mpid4.len);
-                Ans3 += mpid4.len;
-                memcpy(Ans3, mpid5.str, mpid5.len);
-                *(Ans3 + mpid5.len - 1) = '\n';
-                Ans3 += mpid5.len;
+                Cycle3[st].insert(Cycle3[st].end(), {st, v1, v2, v3, v4, v5});
+                sz3 += len + len3 + len4 + len5;
                 ++ans;
                 continue;
               }
-              const U32 &w7 = LastWeight[v6];
+              const uint &w7 = Data.LastWeight[v6];
               if (v1 == v6 || v2 == v6 || v3 == v6 || v4 == v6 ||
                   !judge(w6, w7) || !judge(w7, w1)) {
                 continue;
               }
-              const auto &mpid6 = MapID[v6];
-              memcpy(Ans4, ThreeCycle, ThreeLength);
-              Ans4 += ThreeLength;
-              memcpy(Ans4, mpid3.str, mpid3.len);
-              Ans4 += mpid3.len;
-              memcpy(Ans4, mpid4.str, mpid4.len);
-              Ans4 += mpid4.len;
-              memcpy(Ans4, mpid5.str, mpid5.len);
-              Ans4 += mpid5.len;
-              memcpy(Ans4, mpid6.str, mpid6.len);
-              *(Ans4 + mpid6.len - 1) = '\n';
-              Ans4 += mpid6.len;
+              const uint &len6 = MapID[v6].len;
+              Cycle4[st].insert(Cycle4[st].end(), {st, v1, v2, v3, v4, v5, v6});
+              sz4 += len + len3 + len4 + len5 + len6;
               ++ans;
             }
           }
@@ -380,155 +349,209 @@ void ForwardSearch(U32 st) {
       }
     }
   }
-  answers += ans;
+  Data.answers += ans;
+  Data.bufsize += sz0 + sz1 + sz2 + sz3 + sz4;
+  CycleBufSize[0][st] = sz0;
+  CycleBufSize[1][st] = sz1;
+  CycleBufSize[2][st] = sz2;
+  CycleBufSize[3][st] = sz3;
+  CycleBufSize[4][st] = sz4;
 }
 
-void FindCircle(U32 pid) {
-  Ans0 = Answer0;
-  Ans1 = Answer1;
-  Ans2 = Answer2;
-  Ans3 = Answer3;
-  Ans4 = Answer4;
-  for (U32 i = ST[pid]; i < ED[pid]; ++i) {
-    const U32 &job = Jobs[i];
-    BackSearch(job);
-    ForwardSearch(job);
+inline void GetNextJob(uint &job) {
+  while (_JOB_LOCK_.test_and_set())
+    ;
+  job = JobCur < JobsCount ? Jobs[JobCur++] : -1;
+  _JOB_LOCK_.clear();
+}
+
+void FindCircle(int pid) {
+  uint job = 0;
+  auto &Data = ThreadData[pid];
+  while (true) {
+    GetNextJob(job);
+    if (job == -1) break;
+    BackSearch(Data, job);
+    ForwardSearch(Data, job);
   }
-  AnswerLength0 = Ans0 - Answer0;
-  AnswerLength1 = Ans1 - Answer1;
-  AnswerLength2 = Ans2 - Answer2;
-  AnswerLength3 = Ans3 - Answer3;
-  AnswerLength4 = Ans4 - Answer4;
-  *TotalAnswersPtr += answers;
-  FlagForkPtr[pid] = 1;
 }
 
-void SaveAnswer(U32 pid) {
-  U32 answers = *TotalAnswersPtr;
-  FILE *fp;
-
-  if (pid == 0) {
-    char firBuf[NUMLEN];
-    U32 firIdx = NUMLEN;
-    firBuf[--firIdx] = '\n';
-    if (answers == 0) {
-      firBuf[--firIdx] = '0';
-    } else {
-      while (answers) {
-        firBuf[--firIdx] = answers % 10 + '0';
-        answers /= 10;
+void CalOffset() {
+  uint block = TotalBufferSize / NTHREAD;
+  uint tol = 0, x = 0, stl = 0, stidx = 0;
+  int tidx = 0;
+  for (int i = 0; i < 5; ++i) {
+    for (int j = 0; j < JobsCount; ++j) {
+      if (x > block) {
+        Offset[tidx++] = std::make_tuple(stl, i, stidx, j, tol);
+        stl = i;
+        stidx = j;
+        tol += x;
+        x = 0;
       }
+      x += CycleBufSize[i][Jobs[j]];
     }
-
-    fp = fopen(RESULT, "w");
-    fwrite(firBuf + firIdx, 1, NUMLEN - firIdx, fp);
-    fclose(fp);
-    *FlagSavePtr = 0;
   }
-
-  while (*FlagSavePtr != pid * 5) usleep(1);
-  fp = fopen(RESULT, "at");
-  fwrite(Answer0, 1, AnswerLength0, fp);
-  fclose(fp);
-  if (pid == NTHREAD - 1) {
-    *FlagSavePtr = 1;
-  } else {
-    *FlagSavePtr = (pid + 1) * 5;
-  }
-
-  while (*FlagSavePtr != pid * 5 + 1) usleep(1);
-  fp = fopen(RESULT, "at");
-  fwrite(Answer1, 1, AnswerLength1, fp);
-  fclose(fp);
-  if (pid == NTHREAD - 1) {
-    *FlagSavePtr = 2;
-  } else {
-    *FlagSavePtr = (pid + 1) * 5 + 1;
-  }
-
-  while (*FlagSavePtr != pid * 5 + 2) usleep(1);
-  fp = fopen(RESULT, "at");
-  fwrite(Answer2, 1, AnswerLength2, fp);
-  fclose(fp);
-  if (pid == NTHREAD - 1) {
-    *FlagSavePtr = 3;
-  } else {
-    *FlagSavePtr = (pid + 1) * 5 + 2;
-  }
-
-  while (*FlagSavePtr != pid * 5 + 3) usleep(1);
-  fp = fopen(RESULT, "at");
-  fwrite(Answer3, 1, AnswerLength3, fp);
-  fclose(fp);
-  if (pid == NTHREAD - 1) {
-    *FlagSavePtr = 4;
-  } else {
-    *FlagSavePtr = (pid + 1) * 5 + 3;
-  }
-
-  while (*FlagSavePtr != pid * 5 + 4) usleep(1);
-  fp = fopen(RESULT, "at");
-  fwrite(Answer4, 1, AnswerLength4, fp);
-  fclose(fp);
-  if (pid == NTHREAD - 1) {
-    *FlagSavePtr = 5;
-  } else {
-    *FlagSavePtr = (pid + 1) * 5 + 4;
-  }
-
-#ifdef LOCAL
-  if (pid == 0) {
-    std::cerr << "TotalAnswer: " << *TotalAnswersPtr << "\n";
+  Offset[tidx++] = std::make_tuple(stl, 4, stidx, JobsCount, tol);
+#ifdef TEST
+  for (int i = 0; i < NTHREAD; ++i) {
+    const auto &e = Offset[i];
+    std::cerr << "@ offset: (" << std::get<0>(e) << ", " << std::get<1>(e)
+              << ") (" << std::get<2>(e) << ", " << std::get<3>(e) << ") "
+              << std::get<4>(e) << "\n";
   }
 #endif
 }
 
-void WaitFork() {
-  while (true) {
-    U32 x = 0;
-    for (U32 i = 0; i < NTHREAD; ++i) x += FlagForkPtr[i];
-    if (x == NTHREAD) {
-      return;
-    }
-    usleep(1);
+void HandleSaveAnswer(int pid) {
+  const auto &offset = Offset[pid];
+  int stl = std::get<0>(offset);
+  int edl = std::get<1>(offset);
+  int stidx = std::get<2>(offset);
+  int edidx = std::get<3>(offset);
+  int fd = open(RESULT, O_RDWR | O_CREAT, 0666);
+  char *result = (char *)mmap(NULL, TotalBufferSize, PROT_READ | PROT_WRITE,
+                              MAP_SHARED, fd, 0);
+  ftruncate(fd, TotalBufferSize);
+  close(fd);
+  if (pid == 0) {
+    memcpy(result, FirstBuf, FirstBufLen);
+    result += FirstBufLen;
+  } else {
+    uint offsz = FirstBufLen + std::get<4>(Offset[pid]);
+    result += offsz;
   }
+  for (int i = stl; i <= edl; ++i) {
+    int low = (i == stl ? stidx : 0);
+    int high = (i == edl ? edidx : JobsCount);
+    if (i == 0) {
+      for (int j = low; j < high; ++j) {
+        const auto &job = Jobs[j];
+        int idx = 0;
+        for (const auto &v : Cycle0[job]) {
+          ++idx;
+          const auto &mpid = MapID[v];
+          memcpy(result, mpid.str, mpid.len);
+          if (idx == i + 3) {
+            idx = 0;
+            *(result + mpid.len - 1) = '\n';
+          }
+          result += mpid.len;
+        }
+      }
+    } else if (i == 1) {
+      for (int j = low; j < high; ++j) {
+        const auto &job = Jobs[j];
+        int idx = 0;
+        for (const auto &v : Cycle1[job]) {
+          ++idx;
+          const auto &mpid = MapID[v];
+          memcpy(result, mpid.str, mpid.len);
+          if (idx == i + 3) {
+            idx = 0;
+            *(result + mpid.len - 1) = '\n';
+          }
+          result += mpid.len;
+        }
+      }
+    } else if (i == 2) {
+      for (int j = low; j < high; ++j) {
+        const auto &job = Jobs[j];
+        int idx = 0;
+        for (const auto &v : Cycle2[job]) {
+          ++idx;
+          const auto &mpid = MapID[v];
+          memcpy(result, mpid.str, mpid.len);
+          if (idx == i + 3) {
+            idx = 0;
+            *(result + mpid.len - 1) = '\n';
+          }
+          result += mpid.len;
+        }
+      }
+    } else if (i == 3) {
+      for (int j = low; j < high; ++j) {
+        const auto &job = Jobs[j];
+        int idx = 0;
+        for (const auto &v : Cycle3[job]) {
+          ++idx;
+          const auto &mpid = MapID[v];
+          memcpy(result, mpid.str, mpid.len);
+          if (idx == i + 3) {
+            idx = 0;
+            *(result + mpid.len - 1) = '\n';
+          }
+          result += mpid.len;
+        }
+      }
+    } else {
+      for (int j = low; j < high; ++j) {
+        const auto &job = Jobs[j];
+        int idx = 0;
+        for (const auto &v : Cycle4[job]) {
+          ++idx;
+          const auto &mpid = MapID[v];
+          memcpy(result, mpid.str, mpid.len);
+          if (idx == i + 3) {
+            idx = 0;
+            *(result + mpid.len - 1) = '\n';
+          }
+          result += mpid.len;
+        }
+      }
+    }
+  }
+}
+
+void SaveAnswer() {
+  CalOffset();
+  char tmp[NUMLENGTH];
+  uint idx = NUMLENGTH;
+  tmp[--idx] = '\n';
+  uint x = Answers;
+  if (x == 0) {
+    tmp[--idx] = '0';
+  } else {
+    while (x) {
+      tmp[--idx] = x % 10 + '0';
+      x /= 10;
+    }
+  }
+  FirstBufLen = NUMLENGTH - idx;
+  memcpy(FirstBuf, tmp + idx, FirstBufLen);
+  TotalBufferSize += FirstBufLen;
+  std::thread Th[NTHREAD];
+  for (int i = 0; i < NTHREAD; ++i) {
+    Th[i] = std::thread(HandleSaveAnswer, i);
+  }
+  for (int i = 0; i < NTHREAD; ++i) Th[i].join();
+}
+
+void Simulation() {
+  LoadData();
+  Init();
+
+  std::thread Th[NTHREAD];
+  for (int i = 0; i < NTHREAD; ++i) Th[i] = std::thread(FindCircle, i);
+  for (auto &it : Th) it.join();
+
+  for (auto &it : ThreadData) {
+    Answers += it.answers;
+    TotalBufferSize += it.bufsize;
+  }
+#ifdef LOCAL
+  int idx = 0;
+  for (auto &it : ThreadData) {
+    std::cerr << "@ thread " << idx++ << ": " << it.answers << ", "
+              << it.bufsize << "\n";
+  }
+  std::cerr << "@ answers: " << Answers << "";
+  std::cerr << ", bufsize: " << TotalBufferSize << "\n";
+#endif
+  SaveAnswer();
 }
 
 int main() {
-  std::cerr << std::fixed << std::setprecision(3);
-
-  LoadData();
-  SetParam();
-
-  pid_t Children[NTHREAD - 1] = {0};
-  U32 pid = 0;
-  for (U32 i = 0; i < NTHREAD - 1; i++) {
-    if (pid == 0) {
-      U32 x = fork();
-      Children[i] = x;
-      if (x == 0) {
-        pid = i + 1;
-        break;
-      }
-    }
-  }
-
-  GetShmPtr();
-  FindCircle(pid);
-  WaitFork();
-  if (pid == 0) std::cerr << "@ Find Over\n";
-  SaveAnswer(pid);
-
-#ifdef XJBGJUDGE
-  delete[] Answer0;
-  delete[] Answer1;
-  delete[] Answer2;
-  delete[] Answer3;
-  delete[] Answer4;
-  delete[] ThreeCycle;
-  delete[] Reachable;
-#endif
-
-  if (pid != 0) exit(0);
-  exit(0);
+  Simulation();
+  return 0;
 }

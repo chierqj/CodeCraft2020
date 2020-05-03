@@ -24,64 +24,71 @@
 //#include <condition_variable>
 #include <sys/ipc.h>
 #include <sys/shm.h>
+#include <sys/time.h>
 #include <sys/types.h>
 
 #include <random>
 
 using namespace std;
-bool IS_LOCAL = false;  // run at local or submmit to server
-/**
- * 本端账号ID和对端账号ID为一个32位的正整数
- * 转账金额为一个32位的正整数
- * 转账记录最多为300万条
- *
- * 账号A给账号B最多转账一次
- * **/
+#define uint uint32_t
+#define ulong uint64_t
 
-// TODO 指针换数组访问
-// TODO 边找边写
-// TODO 存0.2*w 3*w
-// TODO 连逗号一起存 finish
-// TODO vector存id  同时计算长度  最后一次性拷贝到mmap里
-// TODO reserve
-// TODO 不使用path了，直接把点存进去 然后判断%cyclelen==0输出\n
-// TODO 存环的时候计算answerlen，然后分配空间mmap，直接拷贝到mmap分配的空间上
-// TODO  多进程的节点分配为0 8 16 24   || 1 9 17 25 ||...
-// TODO node相关的换成600w的数组
+string g_test_file;
+string g_predict_file;
+const uint kMaxResult = 20000008;
+const uint kMaxE = 3000008;
+const uint kMaxN = 6000008;
+const uint kThreadNum = 4;     //进程/线程数量
+const uint kMaxIdStrLen = 11;  //整数表示的ID有多长
 
-// typedef pair<uint32_t, uint32_t> Edge;
-typedef struct Edge {
-  uint32_t first;
-  long long second;
+typedef pair<uint, ulong> Edge;
+/*struct Edge {
+    ulong w;
+    uint v;
 
-  Edge(uint32_t x, long long w) : first(x), second(w){};
-} Edge;
+    Edge() = default;
 
-struct MyKeyHashHasher {
-  inline size_t operator()(const int &k) const noexcept {
-    return k & 0x7fffff;  // std::hash<int>{}(k.key);
-  }
-};
+    Edge(uint x, ulong weight) : v(x), w(weight) {};
+};*/
 
-struct Path {
+typedef struct RawEdge {
+  ulong w;
+  uint u;
+  uint v;
+
+  RawEdge() = default;
+
+  RawEdge(uint x, uint y, ulong weight) : u(x), v(y), w(weight){};
+} RawEdge;
+
+typedef struct NodeIdstr {
+  uint len;
+  const char *val;
+
+  NodeIdstr() = default;
+
+  NodeIdstr(const char *p, uint l) : val(p), len(l){};
+} Ids;
+
+typedef struct CirclePath {
   int path[7];  //不初始化 初始化浪费时间
 
-  Path() = default;
+  CirclePath() = default;
 
-  Path(int a, int b, int c) {
+  CirclePath(int a, int b, int c) {
     path[0] = a;
     path[1] = b;
     path[2] = c;
   }
 
-  Path(int a, int b, int c, int d) {
+  CirclePath(int a, int b, int c, int d) {
     path[0] = a;
     path[1] = b;
     path[2] = c;
     path[3] = d;
   }
 
-  Path(int a, int b, int c, int d, int e) {
+  CirclePath(int a, int b, int c, int d, int e) {
     path[0] = a;
     path[1] = b;
     path[2] = c;
@@ -89,7 +96,7 @@ struct Path {
     path[4] = e;
   }
 
-  Path(int a, int b, int c, int d, int e, int f) {
+  CirclePath(int a, int b, int c, int d, int e, int f) {
     path[0] = a;
     path[1] = b;
     path[2] = c;
@@ -98,7 +105,7 @@ struct Path {
     path[5] = f;
   }
 
-  Path(int a, int b, int c, int d, int e, int f, int g) {
+  CirclePath(int a, int b, int c, int d, int e, int f, int g) {
     path[0] = a;
     path[1] = b;
     path[2] = c;
@@ -107,79 +114,36 @@ struct Path {
     path[5] = f;
     path[6] = g;
   }
-};
+} Path;
 
-const int MAX_RESULT = 20000005;
-const int MAX_N = 6000005;
-const int T = 4;                  //进程/线程数量
-const int MAX_IDVAL_LENGTH = 11;  //整数表示的ID有多长
-// int RAND_KEY;//随机值用于shmget
-// int RAND_VISITED_FLG;
+typedef struct WorkerData {
+  uint changed_num = 0;
+  uint answer_len[5]{0};
+  ulong end_weight[kMaxN];
+  uint changed_list[kMaxN];
+  char dist[kMaxN];
+  vector<Path> result[5];
+  bool is_finish = false;
+} WorkerData;
 
-uint32_t N = 0;  // node num
-string test_file;
-string predict_file;
+uint g_edge_num = 0;
+uint g_node_num = 0;
 
-vector<uint32_t> node_id;
-// vector<int> node_weight;
-vector<char *> node_ids;       //节点id的char*,int compare快,char* write快
-vector<size_t> node_ids_size;  //记录char*的大小
-vector<vector<Edge>> in_list;
-vector<vector<Edge>> out_list;
-unordered_map<uint32_t, uint32_t> id_index_map;
-vector<uint32_t> arg_list;  // arg_sort结果
-uint32_t worker_answer_len[5];
-vector<Path> worker_result[5];
-// int worker_result_num[5];
-int SHM_KEY = shmget(IPC_PRIVATE, 4096, IPC_CREAT | 0666);
-int PROC_BASE_STATE = 10086;
+vector<uint> g_start_idx_list;
+vector<uint> g_end_idx_list;
 
-// id升序
-bool cmpAdj(const Edge &a, const Edge &b);
+uint g_node_id[kMaxN];
+Ids g_unordered_node_ids[kMaxN];
+Ids g_node_ids[kMaxN];
 
-// id降序
-bool cmpAdjReverse(const Edge &a, const Edge &b);
+RawEdge g_raw_edge[kMaxE];
+vector<Edge> g_in_list[kMaxN];
+vector<Edge> g_out_list[kMaxN];
 
-// x对y转账w元
-void addEdge(char *&x_str, char *&y_str, uint32_t x, uint32_t y, size_t x_len,
-             size_t y_len, uint32_t w);
+WorkerData g_worker_data[kThreadNum];
 
-//解析输入文件
-void analyzeBuffMmap(char *buffer, int MAXS);
-
-//读取输入文件并建立邻接表
-bool loadTestData();
-
-//节点id argsort
-void idArgSort();
-
-//找从一个起点开始的环
-void findCycleAt(uint32_t st, int *dist, long long *end_weight);
-
-//找一个区间内所有点的环
-void findCycleInRange(uint32_t st, uint32_t ed);
-
-//进程/线程找环
-void findCycleProcess(int pid);
-
-//进程同步
-void waitOtherProcess(int pid, int *shared_buffer, int target_mode);
-
-//写结果
-void writeResultProcess(int pid);
-
-void solve();
-
-/***********************************************************************************************/
-
-inline double Pow4(double x) {
-  return pow(x, 3.25);
-  //    double xx = x * x;
-  //    return xx * xx;
-}
-
-// char*转int，将从*p到*q的一段char*内存转换成int/longlong
-inline void myScan(char *p, const char *q, uint32_t &x) {
+template <typename T>
+inline void parseInteger(char *p, const char *q, T &x) {
   x = *p++ - '0';
   while (p != q) {
     x = (x << 3) + (x << 1) + (*p - '0');
@@ -187,279 +151,300 @@ inline void myScan(char *p, const char *q, uint32_t &x) {
   }
 }
 
-inline void myScan(char *p, const char *q, long long &x) {
-  x = *p++ - '0';
-  while (p != q) {
-    x = (x << 3) + (x << 1) + (*p - '0');
-    ++p;
-  }
-}
-
-bool cmpAdj(const Edge &a, const Edge &b) {
-  return node_id[a.first] < node_id[b.first];
-}
-
-bool cmpAdjReverse(const Edge &a, const Edge &b) {
-  return node_id[a.first] > node_id[b.first];
-}
-
-inline void addEdge(char *&x_str, char *&y_str, uint32_t x, uint32_t y,
-                    size_t x_len, size_t y_len, uint32_t w) {
-  int xid, yid;
+void addEdge(const char *&x_str, const char *&y_str, uint x_len, uint y_len,
+             uint x, uint y, ulong w, unordered_map<uint, uint> &id_index_map) {
   // TODO 用默认值==0替代//存.find结果减少寻址
   auto it_x = id_index_map.find(x);
   auto it_y = id_index_map.find(y);
   auto it_ed = id_index_map.end();
 
   if (it_x == it_ed) {
-    node_id.emplace_back(x);
-    node_ids.emplace_back(x_str);
-    node_ids_size.emplace_back(x_len);
-    in_list.emplace_back();
-    out_list.emplace_back();
+    g_node_id[g_node_num] = x;
+    g_unordered_node_ids[g_node_num].val = x_str;
+    g_unordered_node_ids[g_node_num].len = x_len;
+
     // id_index_map[x] = N;
-    id_index_map.insert(make_pair(x, N));
-    xid = N;
-    N++;
+    id_index_map.insert(make_pair(x, g_node_num));
+    ++g_node_num;
     it_ed = id_index_map.end();
-  } else {
-    xid = it_x->second;
   }
 
   if (it_y == it_ed) {
-    node_id.emplace_back(y);
-    node_ids.emplace_back(y_str);
-    node_ids_size.emplace_back(y_len);
-    in_list.emplace_back();
-    out_list.emplace_back();
+    g_node_id[g_node_num] = y;
+    g_unordered_node_ids[g_node_num].val = y_str;
+    g_unordered_node_ids[g_node_num].len = y_len;
     // id_index_map[y] = N;
-    id_index_map.insert(make_pair(y, N));
-    yid = N;
-    N++;
-  } else {
-    yid = it_y->second;
+    id_index_map.insert(make_pair(y, g_node_num));
+    ++g_node_num;
   }
-
-  out_list[xid].emplace_back(Edge(yid, w));
-  in_list[yid].emplace_back(Edge(xid, w));
+  g_raw_edge[g_edge_num].u = x;
+  g_raw_edge[g_edge_num].v = y;
+  g_raw_edge[g_edge_num].w = w;
+  ++g_edge_num;
 }
 
-void analyzeBuffMmap(char *buffer, int MAXS) {
-  //预分配空间
-  id_index_map.reserve(MAX_N);
-  id_index_map.rehash(MAX_N);
-  // id_index_map.max_load_factor(2);
-  node_id.reserve(MAX_N);
-  node_ids.reserve(MAX_N);
-  node_ids_size.reserve(MAX_N);
-  in_list.reserve(MAX_N);
-  out_list.reserve(MAX_N);
+uint *idArgSort() {
+  uint *arg_list = new uint[g_node_num];
+  uint *arg_reflact = new uint[g_node_num];
+  for (uint i = 0; i < g_node_num; ++i) arg_list[i] = i;
 
+  std::sort(arg_list, arg_list + g_node_num, [](int pos1, int pos2) {
+    return (g_node_id[pos1] < g_node_id[pos2]);
+  });
+  for (uint i = 0; i < g_node_num; ++i) {
+    arg_reflact[arg_list[i]] = i;
+    g_node_ids[i] = g_unordered_node_ids[arg_list[i]];
+  }
+  return arg_reflact;
+}
+
+void buildGraph(const uint *arg_reflect,
+                unordered_map<uint, uint> &id_index_map, uint pid) {
+  for (uint i = 0; i < g_edge_num; ++i) {
+    RawEdge &e = g_raw_edge[i];
+    if (e.u % kThreadNum == pid) {
+      ulong w = e.w;
+      uint x_id = arg_reflect[id_index_map[e.u]];
+      uint y_id = arg_reflect[id_index_map[e.v]];
+      g_out_list[x_id].emplace_back(Edge(y_id, w));
+    }
+    if (e.v % kThreadNum == pid) {
+      ulong w = e.w;
+      uint x_id = arg_reflect[id_index_map[e.u]];
+      uint y_id = arg_reflect[id_index_map[e.v]];
+      g_in_list[y_id].emplace_back(Edge(x_id, w));
+    }
+  }
+}
+
+bool cmpAdj(const Edge &a, const Edge &b) { return a.first < b.first; }
+
+bool cmpAdjReverse(const Edge &a, const Edge &b) { return a.first > b.first; }
+
+void sortAdjList(uint st, uint ed) {
+  for (int i = st; i < ed; ++i) {
+    if (g_in_list[i].size() > 1)
+      sort(g_in_list[i].begin(), g_in_list[i].end(), cmpAdjReverse);
+    if (g_out_list[i].size() > 1)
+      sort(g_out_list[i].begin(), g_out_list[i].end(), cmpAdj);
+  }
+}
+
+void analyzeBuff(char *buffer, uint max_buffer_size) {
   const char split = ',';
   const char split_line = '\n';  // TODO 线上数据为/r/n
   char *p = buffer;
   char *q = buffer;
   // string xs, ys;
-  uint32_t x, y;
-  long long w;
-  char *xs, *ys;
-  size_t lx, ly;  // length
+  uint x, y, x_len, y_len;
+  ulong w;
+  const char *x_str, *y_str;
+  unordered_map<uint, uint> id_index_map;
+  id_index_map.reserve(1000000);
+  id_index_map.rehash(1000000);
 
-  while (q - buffer < MAXS) {
+  while (q - buffer < max_buffer_size) {
     while (*q != split) q++;
-    xs = p;
-    lx = q - p + 1;
+    x_str = p;
+    x_len = q - p + 1;
 
-    myScan(p, q, x);
+    parseInteger(p, q, x);
     p = ++q;
     while (*q != split) q++;
 
-    ys = p;
-    ly = q - p + 1;
-    myScan(p, q, y);
+    y_str = p;
+    y_len = q - p + 1;
+    parseInteger(p, q, y);
     p = ++q;
 
     while (*q != '\r' && *q != '\n') q++;
-    myScan(p, q, w);
+    parseInteger(p, q, w);
     if (*q == '\r') ++q;
     p = ++q;
+    addEdge(x_str, y_str, x_len, y_len, x, y, w, id_index_map);
+  }
+  cout << g_edge_num << " " << id_index_map.size() << endl;
+  uint *arg_reflect = idArgSort();
+  thread pool[kThreadNum - 1];
+  for (uint i = 0; i < kThreadNum - 1; ++i) {
+    pool[i] = thread(buildGraph, arg_reflect, ref(id_index_map), i + 1);
+  }
+  buildGraph(arg_reflect, ref(id_index_map), 0);
+  for (auto &th : pool) th.join();
+  for (uint i = 0; i < kThreadNum - 1; ++i) {
+    pool[i] = thread(sortAdjList, i * g_node_num / kThreadNum,
+                     (i + 1) * g_node_num / kThreadNum);
+  }
+  sortAdjList((kThreadNum - 1) * g_node_num / kThreadNum, g_node_num);
+  for (auto &th : pool) th.join();
 
-    addEdge(xs, ys, x, y, lx, ly, w);
-  }
-  for (int i = 0; i < N; ++i) {
-    if (in_list[i].size() > 1)
-      sort(in_list[i].begin(), in_list[i].end(), cmpAdjReverse);
-    if (out_list[i].size() > 1)
-      sort(out_list[i].begin(), out_list[i].end(), cmpAdj);
-  }
+  /*    for (int i=0;i<3;++i) {
+          for (int k = 0; k < g_out_list[i].size(); ++k) {
+              uint j=g_out_list[i][k].first;
+              char a[20],b[20];
+              memcpy(a,g_node_ids[i].val,g_node_ids[i].len-1);
+              a[g_node_ids[i].len-1]='\0';
+              memcpy(b,g_node_ids[j].val,g_node_ids[j].len-1);
+              b[g_node_ids[j].len-1]='\0';
+              printf("%d-%d : %s-%s %d \n",i,j,a,b,g_out_list[i][k].second);
+          }
+      }*/
 }
 
-bool loadTestData() {
-  ifstream fin(test_file.c_str(), std::ios::binary);
+void loadTestData() {
+  ifstream fin(g_test_file.c_str(), std::ios::binary);
   if (!fin) {
-    cout << "打开训练文件失败" << endl;
+    printf("Cannot open test file\n");
     exit(0);
   }
-  if (IS_LOCAL) {
-    clock_t start, end;
-    start = clock();
-    int MAX_BUFFER_SIZE = fin.seekg(0, std::ios::end).tellg();
-    char *file_buffer = new char[MAX_BUFFER_SIZE];  // vector<char>(MAXS);
-    fin.seekg(0, std::ios::beg).read(file_buffer, MAX_BUFFER_SIZE);
-    analyzeBuffMmap(file_buffer, MAX_BUFFER_SIZE);
-    end = clock();
-    cout << N << "nodes\n";
-    cout << "Load data time : " << ((double)end - start) / CLOCKS_PER_SEC
-         << "s\n";
-  } else {
-    int MAX_BUFFER_SIZE = fin.seekg(0, std::ios::end).tellg();
-    char *file_buffer = new char[MAX_BUFFER_SIZE];  // vector<char>(MAXS);
-    fin.seekg(0, std::ios::beg).read(file_buffer, MAX_BUFFER_SIZE);
-    analyzeBuffMmap(file_buffer, MAX_BUFFER_SIZE);
-  }
+
+  uint max_buffer_size = fin.seekg(0, std::ios::end).tellg();
+  char *file_buffer = new char[max_buffer_size];  // vector<char>(MAXS);
+  fin.seekg(0, std::ios::beg).read(file_buffer, max_buffer_size);
   fin.close();
-  return true;
+  analyzeBuff(file_buffer, max_buffer_size);
 }
 
-void idArgSort() {
-  arg_list = vector<uint32_t>(N, 0);
-  for (uint32_t i = 0; i < N; ++i) arg_list[i] = i;
+inline double Pow4(double x) { return pow(x, 3.5); }
 
-  std::sort(arg_list.begin(), arg_list.end(),
-            [](int pos1, int pos2) { return (node_id[pos1] < node_id[pos2]); });
+void setProcessNodeNum() {
+  g_start_idx_list = {0};
+  g_end_idx_list.clear();
+  double ND = g_node_num;
+  double total_cnt = 0;
+  for (int i = 0; i < g_node_num; i += 25) {
+    total_cnt += Pow4(g_out_list[i].size() * (1 - i / ND));
+  }
 
-  // return array_index;
+  double step = total_cnt / kThreadNum;
+  double next_bar = step;
+  double cnt = 0;
+
+  for (int i = 0; i < g_node_num; i += 25) {
+    cnt += Pow4(g_out_list[i].size() * (1 - i / ND));
+    ;
+    if (cnt > next_bar) {
+      g_start_idx_list.push_back(i + 1);
+      g_end_idx_list.push_back(i + 1);
+      next_bar += step;
+    }
+  }
+  while (g_start_idx_list.size() < g_node_num) {
+    g_start_idx_list.push_back(g_node_num);
+    g_end_idx_list.push_back(g_node_num);
+  }
+  g_end_idx_list.push_back(g_node_num);
+  for (int i = 0; i < kThreadNum; i++) printf("%d ", g_start_idx_list[i]);
+  printf("%d\n", g_end_idx_list[kThreadNum - 1]);
 }
 
-void findCycleAt(uint32_t st, int *dist, long long *end_weight) {
-  uint32_t v1, v2, v3, v4, v5, v6, i1, i2, i3, i4, i5, i6;
-  long long w1, w2, w3, w4, w5, w6, w7;
-  uint32_t st_id = node_id[st];
-  vector<int> changed_dist;
-  // changed_dist.reserve(2500);
+inline bool cmpWeight(const ulong &x, const ulong &y) {
+  return (x <= (y + (y << 2))) && ((x + (x << 1)) >= y);
+}
+
+void findCycleAt(uint st, WorkerData &data) {
   // TODO w*3 w*5可能溢出  用longlong或者预先存的时候 判断>INTMAX/3 INTMAX/5
   // 若大于则直接置为INTMAX
-  for (i1 = 0; i1 < in_list[st].size(); ++i1) {
-    v1 = in_list[st][i1].first;
-    if (node_id[v1] < st_id) break;
-    w1 = in_list[st][i1].second;
-    dist[v1] = 1;
-    end_weight[v1] = w1;
-    changed_dist.push_back(v1);
-    for (i2 = 0; i2 < in_list[v1].size(); ++i2) {
-      v2 = in_list[v1][i2].first;
-      if (node_id[v2] <= st_id) break;
-      w2 = in_list[v1][i2].second;  // X=w2  Y=w1  X<=5Y  3X>=Y
-      if (w2 > 5 * w1 || 3 * w2 < w1) continue;
-      dist[v2] = dist[v2] < 2 ? 1 : 2;
-      changed_dist.push_back(v2);
-      for (i3 = 0; i3 < in_list[v2].size(); ++i3) {
-        v3 = in_list[v2][i3].first;
-        if (node_id[v3] <= st_id) break;
-        // else if (c == a)
-        // continue;
-        w3 = in_list[v2][i3].second;
-        if (w3 > 5 * w2 || 3 * w3 < w2) continue;
-        dist[v3] = dist[v3] < 3 ? dist[v3] : 3;
-        changed_dist.push_back(v3);
+  for (auto &e1 : g_in_list[st]) {
+    const uint &v1 = e1.first;
+    if (v1 < st) break;
+    const ulong &w1 = e1.second;
+    data.dist[v1] = 7;  // 111
+    data.end_weight[v1] = w1;
+    data.changed_list[data.changed_num++] = v1;
+    for (auto &e2 : g_in_list[v1]) {
+      const uint &v2 = e2.first;
+      if (v2 <= st) break;
+      const ulong &w2 = e2.second;
+      if (!cmpWeight(w2, w1)) continue;
+      data.dist[v2] |= 3;  // 011
+      data.changed_list[data.changed_num++] = v2;
+      for (auto &e3 : g_in_list[v2]) {
+        const uint &v3 = e3.first;
+        if (v3 <= st) break;
+        const ulong &w3 = e3.second;
+        if (!cmpWeight(w3, w2)) continue;
+        data.dist[v3] |= 1;  // 001
+        data.changed_list[data.changed_num++] = v3;
       }
     }
   }
-  dist[st] = 0;
-  Path trace{};
-  trace.path[0] = st;
+  data.dist[st] = 7;
   // TODO 提前计算size st~v2
-  for (i1 = 0; i1 < out_list[st].size(); ++i1) {
-    v1 = out_list[st][i1].first;
-    if (node_id[v1] < st_id) continue;
-    w1 = out_list[st][i1].second;
-    trace.path[1] = v1;
-    for (i2 = 0; i2 < out_list[v1].size(); ++i2) {
-      v2 = out_list[v1][i2].first;
-      if (node_id[v2] < st_id || v2 == st) continue;
-      w2 = out_list[v1][i2].second;
-      if (w1 > 5 * w2 || 3 * w1 < w2) continue;
-      trace.path[2] = v2;
-      for (i3 = 0; i3 < out_list[v2].size(); ++i3) {
-        v3 = out_list[v2][i3].first;
-        if (node_id[v3] < st_id) continue;
-        w3 = out_list[v2][i3].second;
-        if (w2 > 5 * w3 || 3 * w2 < w3) continue;
-        if (v3 == v1) continue;
+  for (const auto &e1 : g_out_list[st]) {
+    const uint &v1 = e1.first;
+    const ulong &w1 = e1.second;
+    if (v1 < st) continue;
+    for (const auto &e2 : g_out_list[v1]) {
+      const uint &v2 = e2.first;
+      const ulong &w2 = e2.second;
+      if (v2 <= st || !cmpWeight(w1, w2)) continue;
+      for (const auto &e3 : g_out_list[v2]) {
+        const uint &v3 = e3.first;
+        const ulong &w3 = e3.second;
+        if (v3 < st || v3 == v1 || !cmpWeight(w2, w3)) continue;
         if (v3 == st) {
-          // addAnswer(st, v1, v2);
-          if (w3 <= 5 * w1 && 3 * w3 >= w1) {
-            worker_result[0].emplace_back(trace);
-            worker_answer_len[0] +=
-                (node_ids_size[st] + node_ids_size[v1] + node_ids_size[v2]);
+          if (cmpWeight(w3, w1)) {
+            data.result[0].emplace_back(st, v1, v2);
+            data.answer_len[0] +=
+                (g_node_ids[st].len + g_node_ids[v1].len + g_node_ids[v2].len);
           }
           continue;
         }
 
-        // worker_prefix_size = 0;
-        trace.path[3] = v3;
-        for (i4 = 0; i4 < out_list[v3].size(); ++i4) {
-          v4 = out_list[v3][i4].first;
-          if (dist[v4] > 3 || node_id[v4] < st_id) continue;
-          w4 = out_list[v3][i4].second;
-          if (w3 > 5 * w4 || 3 * w3 < w4) continue;
-          if (v4 == v2 || v4 == v1) continue;
-          if (v4 == st) {
-            if (w4 <= 5 * w1 && 3 * w4 >= w1) {
-              worker_result[1].emplace_back(trace);
-              worker_answer_len[1] += (node_ids_size[st] + node_ids_size[v1] +
-                                       node_ids_size[v2] + node_ids_size[v3]);
+        for (const auto &e4 : g_out_list[v3]) {
+          const uint &v4 = e4.first;
+          if (!(data.dist[v4] & 1)) continue;
+          if (!cmpWeight(w3, e4.second))
+            continue;
+          else if (v4 == st) {
+            if (cmpWeight(e4.second, w1)) {
+              data.result[1].emplace_back(st, v1, v2, v3);
+              data.answer_len[1] += (g_node_ids[st].len + g_node_ids[v1].len +
+                                     g_node_ids[v2].len + g_node_ids[v3].len);
             }
             continue;
-          }
-          trace.path[4] = v4;
-          for (i5 = 0; i5 < out_list[v4].size(); ++i5) {
-            v5 = out_list[v4][i5].first;
-            if (dist[v5] > 2 || node_id[v5] < st_id) continue;
-            w5 = out_list[v4][i5].second;
-            if (w4 > 5 * w5 || 3 * w4 < w5) continue;
-            if (v5 == v1 || v5 == v2 || v5 == v3) continue;
-            if (v5 == st) {
-              if (w5 <= 5 * w1 && 3 * w5 >= w1) {  // TODO 这里好像不用判断了
-                worker_result[2].emplace_back(trace);
-                worker_answer_len[2] +=
-                    (node_ids_size[st] + node_ids_size[v1] + node_ids_size[v2] +
-                     node_ids_size[v3] + node_ids_size[v4]);
+          } else if (v4 == v2 || v4 == v1)
+            continue;
+          for (const auto &e5 : g_out_list[v4]) {
+            const uint &v5 = e5.first;
+            ;
+            if (!(data.dist[v5] & 2)) continue;
+            if (!cmpWeight(e4.second, e5.second))
+              continue;
+            else if (v5 == st) {
+              if (cmpWeight(e5.second, w1)) {  // TODO 这里好像不用判断了
+                data.result[2].emplace_back(st, v1, v2, v3, v4);
+                data.answer_len[2] += (g_node_ids[st].len + g_node_ids[v1].len +
+                                       g_node_ids[v2].len + g_node_ids[v3].len +
+                                       g_node_ids[v4].len);
               }
               continue;
-            }
-            trace.path[5] = v5;
-            for (i6 = 0; i6 < out_list[v5].size(); ++i6) {
-              v6 = out_list[v5][i6].first;
-              if (dist[v6] > 1 || node_id[v6] < st_id) {
+            } else if (v5 == v1 || v5 == v2 || v5 == v3)
+              continue;
+            for (const auto &e6 : g_out_list[v5]) {
+              const uint &v6 = e6.first;
+              if (!(data.dist[v6] & 4)) continue;
+              if (!cmpWeight(e5.second, e6.second))
                 continue;
-              }
-              w6 = out_list[v5][i6].second;
-              if (w5 > 5 * w6 || 3 * w5 < w6) continue;
-              if (v6 == v1 || v6 == v2 || v6 == v3 || v6 == v4) continue;
-
-              if (v6 == st) {
-                if (w6 <= 5 * w1 && 3 * w6 >= w1) {
-                  worker_result[3].emplace_back(trace);
-                  worker_answer_len[3] +=
-                      (node_ids_size[st] + node_ids_size[v1] +
-                       node_ids_size[v2] + node_ids_size[v3] +
-                       node_ids_size[v4] + node_ids_size[v5]);
+              else if (v6 == st) {
+                if (cmpWeight(e6.second, w1)) {
+                  data.result[3].emplace_back(st, v1, v2, v3, v4, v5);
+                  data.answer_len[3] +=
+                      (g_node_ids[st].len + g_node_ids[v1].len +
+                       g_node_ids[v2].len + g_node_ids[v3].len +
+                       g_node_ids[v4].len + g_node_ids[v5].len);
                 }
                 continue;
-              }
-
-              trace.path[6] = v6;
-              // addAnswer(worker_path_prefix, worker_prefix_size, st, v1, v2,
-              // v3, v4, v5, v6);
-              w7 = end_weight[v6];
-              if (w6 <= 5 * w7 && 3 * w6 >= w7 && w7 <= 5 * w1 &&
-                  3 * w7 >= w1) {
-                worker_result[4].emplace_back(trace);
-                worker_answer_len[4] +=
-                    (node_ids_size[st] + node_ids_size[v1] + node_ids_size[v2] +
-                     node_ids_size[v3] + node_ids_size[v4] + node_ids_size[v5] +
-                     node_ids_size[v6]);
+              } else if (v6 == v1 || v6 == v2 || v6 == v3 || v6 == v4)
+                continue;
+              const ulong &w7 = data.end_weight[v6];
+              if (cmpWeight(e6.second, w7) && cmpWeight(w7, w1)) {
+                data.result[4].emplace_back(st, v1, v2, v3, v4, v5, v6);
+                data.answer_len[4] += (g_node_ids[st].len + g_node_ids[v1].len +
+                                       g_node_ids[v2].len + g_node_ids[v3].len +
+                                       g_node_ids[v4].len + g_node_ids[v5].len +
+                                       g_node_ids[v6].len);
               }
             }
           }
@@ -467,235 +452,146 @@ void findCycleAt(uint32_t st, int *dist, long long *end_weight) {
       }
     }
   }
-  for (auto x : changed_dist) {
-    dist[x] = 4;
+  for (int i = 0; i < data.changed_num; ++i) {
+    data.dist[data.changed_list[i]] = 0;
   }
-  dist[st] = 4;
+  data.dist[st] = 0;
+  data.changed_num = 0;
 }
 
-void findCycleInRange(uint32_t st, uint32_t ed) {
-  if (st >= N) return;
-  int *dist = new int[N];
-  long long *adj_weight = new long long[N];
-  for (int i = 0; i < N; ++i) {
-    // inTrace[i] = false;
-    dist[i] = 4;
-  }
-  for (unsigned int &i : worker_answer_len) {
-    i = 0;
-  }
+void findCycleInRange(uint st, uint ed, uint pid) {
+  st = st < g_node_num ? st : g_node_num;
+  ed = ed < g_node_num ? ed : g_node_num;
+
   for (int i = st; i < ed; ++i) {
-    if (in_list[arg_list[i]].empty() || out_list[arg_list[i]].empty()) continue;
-    findCycleAt(arg_list[i], dist, adj_weight);
+    if (g_in_list[i].empty() || g_out_list[i].empty()) continue;
+    findCycleAt(i, g_worker_data[pid]);
   }
 }
 
-vector<uint32_t> start_node_id_list;
-vector<uint32_t> end_node_id_list;
-
-void setProcessNodeNum() {
-  start_node_id_list = {0};
-  end_node_id_list.clear();
-  double ND = N;
-  double total_cnt = 0;
-  for (int i = 0; i < N; i += 1) {
-    total_cnt += Pow4(out_list[arg_list[i]].size() * (1 - i / ND));
-  }
-
-  double step = total_cnt / T;
-  double next_bar = step;
-  double cnt = 0;
-
-  for (int i = 0; i < N; i += 1) {
-    cnt += Pow4(out_list[arg_list[i]].size() * (1 - i / ND));
-    if (cnt > next_bar) {
-      start_node_id_list.push_back(i + 1);
-      end_node_id_list.push_back(i + 1);
-      next_bar += step;
+char *path_mmap_begin;
+void writePrePare() {
+  int R = 0;
+  for (auto &t : g_worker_data) {
+    for (auto &i : t.result) {
+      R += i.size();
     }
   }
-  while (start_node_id_list.size() < T) {
-    start_node_id_list.push_back(N);
-    end_node_id_list.push_back(N);
+  cout << R << "cycles\n";
+
+  // int *x;
+  char *temp_c = new char[20];
+
+  ulong all_answer_len = 0;
+
+  for (auto &t : g_worker_data) {
+    for (unsigned int i : t.answer_len) all_answer_len += i;
   }
-  end_node_id_list.push_back(N);
-  for (int i = 0; i < T; i++) printf("%d ", start_node_id_list[i]);
-  printf("%d\n", end_node_id_list[T - 1]);
+
+  sprintf(temp_c, "%d\n", R);
+  all_answer_len += strlen(temp_c);
+
+  int fd = open(g_predict_file.c_str(), O_RDWR | O_CREAT, 0666);
+
+  fallocate(fd, 0, 0, all_answer_len);
+
+  char *answer_mmap = (char *)mmap(NULL, all_answer_len, PROT_READ | PROT_WRITE,
+                                   MAP_SHARED, fd, 0);
+
+  lseek(fd, all_answer_len - 1, SEEK_SET);
+  write(fd, "\0", 1);
+  close(fd);
+  char *p = answer_mmap;
+  for (int i = 0; i < strlen(temp_c); ++i) {
+    *p = temp_c[i];
+    p++;
+  }
+  path_mmap_begin = p;
 }
 
-void findCycleProcess(int pid) {
+void writeResult(int pid) {
+  char *p = path_mmap_begin;
+  for (int i = 0; i < 5; ++i) {
+    for (int j = 0; j < kThreadNum; ++j) {
+      usleep(1);  // TODO 不加这个会卡死 为什么？
+      if (j == pid) {
+        for (auto &x : g_worker_data[j].result[i]) {
+          for (int y = 0; y < i + 2; ++y) {
+            memcpy(p, g_node_ids[x.path[y]].val, g_node_ids[x.path[y]].len);
+            p += g_node_ids[x.path[y]].len;
+          }
+          memcpy(p, g_node_ids[x.path[i + 2]].val,
+                 g_node_ids[x.path[i + 2]].len);  // TODO 这里可以-1
+          p += g_node_ids[x.path[i + 2]].len;
+          *(p - 1) = '\n';
+        }
+      } else {
+        p += g_worker_data[j].answer_len[i];  // shared_buffer[(i + 5) * T + j];
+      }
+    }
+  }
+}
+
+void findCycleTheading(uint pid) {
   // TODO 自适应大小
   //    uint32_t step = N / 54;
   //    start_node_id_list = {0, 2 * step, 4 * step, 7 * step, 11 * step, 17 *
   //    step, 25 * step, 35 * step}; end_node_id_list = {2 * step, 4 * step, 7 *
   //    step, 11 * step, 17 * step, 25 * step, 35 * step, N};
-  findCycleInRange(start_node_id_list[pid], end_node_id_list[pid]);
-}
+  struct timeval tim {};
+  gettimeofday(&tim, nullptr);
+  double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+  findCycleInRange(g_start_idx_list[pid], g_end_idx_list[pid], pid);
+  gettimeofday(&tim, nullptr);
+  double t2 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+  cout << pid << " find cycle time " << t2 - t1 << "s\n";
 
-void waitOtherProcess(int pid, int *shared_buffer, int target_mode) {
-  shared_buffer[pid] = target_mode;
-  bool flg;
-  while (true) {
-    flg = true;
-    for (int i = 0; i < T; ++i) {
-      if (shared_buffer[i] != target_mode) flg = false;
-    }
-    if (flg) {
-      break;
-    } else
-      usleep(10);
-  }
-}
-
-void writeResultProcess(int pid) {
-  int *shared_buffer = (int *)shmat(SHM_KEY, NULL, 0);
-  int WRITE_STATE = T * 4;
-  /* 0~T用于状态同步  PROC_BASE_STATE PROC_BASE_STATE+1表示写完数据了
-   * T~2T表示各自的环的数量
-   * 4T用于记录轮到谁写了  mmap应该用不到
-   * 5T~9T记录各自的answer length*/
-
-  int R = 0;
-  for (int j = 0; j < 5; ++j) {
-    R += worker_result[j].size();
-    // worker_answer_len[j] = worker_answer_p[j] - worker_answer[j];
-  }
-  cout << pid << " circles " << R << endl;
-
-  shared_buffer[WRITE_STATE] = 0;
-  shared_buffer[pid + T] = R;
-  for (int i = 0; i < 5; ++i) {
-    shared_buffer[(i + 5) * T + pid] = worker_answer_len[i];
-  }
-
-  //开始同步
-  waitOtherProcess(pid, shared_buffer, PROC_BASE_STATE);
-
-  int all_R = 0;
-  int all_answer_len = 0;
-  for (int i = 0; i < T; ++i) {
-    all_R += shared_buffer[i + T];
-  }
-
-  char *temp_c = new char[20];
-  sprintf(temp_c, "%d\n", all_R);
-  all_answer_len += strlen(temp_c);
-  for (int i = 0; i < 5; ++i) {
-    for (int j = 0; j < T; ++j) {
-      all_answer_len += shared_buffer[(i + 5) * T + j];
-    }
-  }
-
-  int fd = open(predict_file.c_str(), O_RDWR | O_CREAT, 0666);
-
-  char *answer_mmap = (char *)mmap(NULL, all_answer_len, PROT_READ | PROT_WRITE,
-                                   MAP_SHARED, fd, 0);
-
-  //主进程写总数
-  if (pid == T - 1) {
-    fallocate(fd, 0, 0, all_answer_len);  // TODO 放在pid==0里
-    printf("%d cycles\n", all_R);
-    // printf("all answer len %d\n",all_answer_len);
-    lseek(fd, all_answer_len - 1, SEEK_SET);
-    write(fd, "\0", 1);
-
-    char *p = answer_mmap;
-    for (int i = 0; i < strlen(temp_c); ++i) {
-      *p = temp_c[i];
-      p++;
-    }
-  }
-  close(fd);
-
-  //写答案
-  char *p = answer_mmap + strlen(temp_c);
-  for (int i = 0; i < 5; ++i) {
-    for (int j = 0; j < T; ++j) {
-      usleep(1);  // TODO 不加这个会卡死 为什么？
-      if (j == pid) {
-        for (auto &x : worker_result[i]) {
-          for (int y = 0; y < i + 2; ++y) {
-            memcpy(p, node_ids[x.path[y]], node_ids_size[x.path[y]]);
-            p += node_ids_size[x.path[y]];
-          }
-          memcpy(p, node_ids[x.path[i + 2]],
-                 node_ids_size[x.path[i + 2]]);  // TODO 这里可以-1
-          p += node_ids_size[x.path[i + 2]];
-          *(p - 1) = '\n';
-        }
-      } else {
-        p += shared_buffer[(i + 5) * T + j];
+  if (pid == 0) {
+    while (true) {
+      bool flg = true;
+      for (uint i = 1; i < kThreadNum; i++) {
+        flg = flg && g_worker_data[i].is_finish;
       }
+      if (flg) break;
+      usleep(10);
     }
+    writePrePare();
   }
+  g_worker_data[pid].is_finish = true;
 
-  //结束同步
-  waitOtherProcess(pid, shared_buffer, PROC_BASE_STATE + 1);
-  // printf("process %d end\n",pid);
-  exit(0);
+  while (true) {
+    bool flg = true;
+    for (uint i = 0; i < kThreadNum; i++) {
+      flg = flg && g_worker_data[i].is_finish;
+    }
+    if (flg) break;
+    usleep(10);
+  }
+  writeResult(pid);
+  gettimeofday(&tim, nullptr);
+  double t3 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+  cout << pid << " write data time " << t3 - t2 << "s\n";
 }
 
 void solve() {
   loadTestData();
-
-  /*    default_random_engine e(time(0));
-      uniform_int_distribution<int> u(0, 1008611);
-      RAND_KEY = u(e);
-      RAND_VISITED_FLG = u(e);*/
-  // arg_list = idArgSort();
-  idArgSort();
-  clock_t start = clock();
   setProcessNodeNum();
-  clock_t end = clock();
-  cout << "Set process node time : " << ((double)end - start) / CLOCKS_PER_SEC
-       << "s\n";
 
-  pid_t Process[T] = {0};
-  int pid = 0;
-  for (int i = 1; i < T; ++i) {
-    if (pid == 0) {
-      int x = fork();
-      Process[i] = x;
-      if (x == 0) {
-        pid = i;
-        break;
-      }
-    }
+  thread pool[kThreadNum - 1];
+  for (uint i = 0; i < kThreadNum - 1; ++i) {
+    pool[i] = thread(findCycleTheading, i);
   }
-  // printf("this is process %d\n",pid);
-  start = clock();
-
-  findCycleProcess(pid);
-  end = clock();
-  cout << pid << " Process time : " << ((double)end - start) / CLOCKS_PER_SEC
-       << "s\n";
-  writeResultProcess(pid);
+  findCycleTheading(kThreadNum - 1);
+  for (auto &th : pool) th.join();
 }
 
-int main(int argc, char *argv[]) {
-  if (argc == 2 && strcmp(argv[1], "local") == 0) IS_LOCAL = true;
-
-  if (!IS_LOCAL) {
-    test_file = "./data/19630345/test_data.txt";
-    predict_file = "./data/19630345/result.txt";
-    solve();
-    exit(0);
-  } else {
-    cout << "local test" << endl;
-
-    vector<string> all_testFile = {"testdata/standard.txt"};
-    // all_testFile = {"testdata/small.txt"};
-    // all_testFile={"testdata/1004812/test_data.txt"};
-    all_testFile = {"testdata/test_data_massive.txt"};
-    vector<string> all_predictFile = {"data/result.txt"};
-
-    for (int i = 0; i < all_testFile.size(); i += 1) {
-      cout << "Example " << i << endl;
-      test_file = all_testFile[i];
-      predict_file = all_predictFile[i];
-      solve();
-    }
-  }
-
-  return 0;
+int main() {
+  g_test_file = "/data/test_data.txt";
+  g_predict_file = "/projects/student/result.txt";
+#ifdef LOCAL
+  g_test_file = "testdata/standard.txt";
+  g_test_file = "testdata/test_data_massive.txt";
+  g_predict_file = "data/result.txt";
+#endif
+  solve();
 }
