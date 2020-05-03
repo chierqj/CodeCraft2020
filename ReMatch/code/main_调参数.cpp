@@ -41,8 +41,8 @@
 #define P10(x) ((x << 3) + (x << 1))
 
 #ifdef LOCAL
-#define TRAIN "./data/18908526/test_data.txt"
-#define RESULT "./data/18908526/result.txt"
+#define TRAIN "./data/19630345/test_data.txt"
+#define RESULT "./data/19630345/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -51,7 +51,7 @@
 /*
  * 常量
  */
-const U32 MAXEDGE = 3000000 + 7;  // 边
+const U32 MAXEDGE = 2000000 + 7;  // 边
 const U32 MAXN = MAXEDGE << 1;    // 结点
 const U32 MAXM = 20000000 + 7;    // 环
 const U32 NTHREAD = 4;            // 线程
@@ -93,8 +93,8 @@ U32 AnswerLength4 = 0;      // 长度为7的环
  */
 char *ThreeCycle = new char[NUMLEN * 3];  // 长度为3的环
 char *Reachable = new char[MAXN];         // 反向标记可达
-std::vector<U32> ReachablePoint;          // 反向可达点
-std::vector<U32> LastWeight;              // 最后一层权重
+U32 ReachablePoint[MAXN];                 // 反向可达点
+U32 LastWeight[MAXN];                     // 最后一层权重
 
 /*
  * 存结果
@@ -109,27 +109,18 @@ char *Answer4 = new char[MAXM * NUMLEN * 7];  // 长度为7的环
 /*
  * 图信息
  */
-U32 Edges[MAXEDGE][3];                                   // 所有边
-U32 ThEdges[NTHREAD][MAXEDGE / NTHREAD + 7][3];          // 线程边
-std::vector<U32> Jobs;                                   // 有效点
-U32 IDDom[MAXN];                                         // ID集合
-std::vector<PreBuffer> MapID;                            // 预处理答案
-std::vector<std::vector<std::pair<U32, U32>>> Children;  // 子结点
-std::vector<std::vector<std::pair<U32, U32>>> Parents;   // 父节点
+U32 Edges[MAXEDGE][3];                            // 所有边
+U32 ThEdges[NTHREAD][MAXEDGE / NTHREAD + 7][3];   // 线程边
+U32 Jobs[MAXN];                                   // 有效点
+U32 IDDom[MAXN];                                  // ID集合
+PreBuffer MapID[MAXN];                            // 预处理答案
+std::vector<std::pair<U32, U32>> Children[MAXN];  // 子结点
+std::vector<std::pair<U32, U32>> Parents[MAXN];   // 父节点
 
 inline void GetShmPtr() {
   TotalAnswersPtr = (U32 *)shmat(TotalAnswers, NULL, 0);
   FlagForkPtr = (U32 *)shmat(FlagFork, NULL, 0);
   FlagSavePtr = (U32 *)shmat(FlagSave, NULL, 0);
-}
-
-void Init() {
-  Children.reserve(MaxID);
-  Parents.reserve(MaxID);
-  Jobs.reserve(MaxID);
-  MapID.reserve(MaxID);
-  ReachablePoint.reserve(MaxID);
-  LastWeight.reserve(MaxID);
 }
 
 void ParseInteger(const U32 &x) {
@@ -171,7 +162,6 @@ void LoadData() {
   close(fd);
   const char *ptr = buffer;
   U32 u = 0, v = 0, w = 0;
-  int ct = 0;
   while (ptr - buffer < bufsize) {
     while (*ptr != ',') {
       u = P10(u) + *ptr - '0';
@@ -198,7 +188,6 @@ void LoadData() {
   }
   std::sort(IDDom, IDDom + IDDomCount);
   MaxID = std::unique(IDDom, IDDom + IDDomCount) - IDDom;
-  Init();
   int st = 0, block = EdgesCount / NTHREAD;
   std::thread Th[NTHREAD];
   for (int i = 0; i < NTHREAD; ++i) {

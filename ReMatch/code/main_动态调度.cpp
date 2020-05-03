@@ -59,26 +59,25 @@ struct PreBuffer {
   char str[NUMLENGTH];
   U32 len;
 };
-std::vector<PreBuffer> MapID;                            // 解析int
-std::vector<U32> Jobs;                                   // 有效点
-U32 IDDom[MAXN];                                         // ID集合
-U32 Edges[MAXEDGE][3];                                   // 所有边
-U32 ThEdges[NTHREAD][MAXEDGE / NTHREAD + 7][3];          // 线程边
-std::vector<std::vector<std::pair<U32, U32>>> Children;  // 子结点
-std::vector<std::vector<std::pair<U32, U32>>> Parents;   // 子结点
-// U32 Jobs[MAXN];                                          // 有效点
+PreBuffer MapID[MAXN];                            // 解析int
+U32 Jobs[MAXN];                                   // 有效点
+U32 IDDom[MAXN];                                  // ID集合
+U32 Edges[MAXEDGE][3];                            // 所有边
+U32 ThEdges[NTHREAD][MAXEDGE / NTHREAD + 7][3];   // 线程边
+std::vector<std::pair<U32, U32>> Children[MAXN];  // 子结点
+std::vector<std::pair<U32, U32>> Parents[MAXN];   // 子结点
 
 /*
  * 找环
  */
 struct ThData {
-  U32 answers = 0;                  // 环数目
-  U32 bufsize = 0;                  // 字节长度
-  U32 ReachablePointCount = 0;      // 反向可达点数目
-  char Reachable[MAXN];             // 标记反向可达
-  std::vector<U32> ReachablePoint;  // 可达点集合
-  std::vector<U32> LastWeight;      // 最后一步权重
-} ThreadData[NTHREAD];              // 线程找环
+  U32 answers = 0;              // 环数目
+  U32 bufsize = 0;              // 字节长度
+  U32 ReachablePointCount = 0;  // 反向可达点数目
+  char Reachable[MAXN];         // 标记反向可达
+  U32 ReachablePoint[MAXN];     // 可达点集合
+  U32 LastWeight[MAXN];         // 最后一步权重
+} ThreadData[NTHREAD];          // 线程找环
 
 /*
  * 结果
@@ -87,7 +86,7 @@ U32 TotalBufferSize = 0;                              // 总buffer大小
 U32 FirstBufLen = 0;                                  // 换个数bufsize
 char FirstBuf[NUMLENGTH];                             // 环个数buf
 std::tuple<int, int, int, int, U32> Offset[NTHREAD];  // 偏移量
-std::vector<U32> CycleBufSize[5];                     // 每个点每种环sz
+U32 CycleBufSize[5][MAXN];                            // 每个点每种环sz
 std::vector<std::vector<U32>> Cycle0;                 // 长度为3的环
 std::vector<std::vector<U32>> Cycle1;                 // 长度为4的环
 std::vector<std::vector<U32>> Cycle2;                 // 长度为5的环
@@ -100,22 +99,11 @@ std::vector<std::vector<U32>> Cycle4;                 // 长度为7的环
 std::atomic_flag lock = ATOMIC_FLAG_INIT;
 
 void Init() {
-  Children.reserve(MaxID);
-  Parents.reserve(MaxID);
-  MapID.reserve(MaxID);
-  Jobs.reserve(MaxID);
-  for (auto &it : ThreadData) {
-    it.ReachablePoint.reserve(MaxID);
-    it.LastWeight.reserve(MaxID);
-  }
   Cycle0.reserve(MaxID);
   Cycle1.reserve(MaxID);
   Cycle2.reserve(MaxID);
   Cycle3.reserve(MaxID);
   Cycle4.reserve(MaxID);
-  for (int i = 0; i < 5; ++i) {
-    CycleBufSize[i].reserve(MaxID);
-  }
 }
 
 void ParseInteger(const U32 &x) {
@@ -256,7 +244,7 @@ void ForwardSearch(ThData &Data, const U32 &st) {
     for (const auto &it2 : Children[v1]) {
       const U32 &v2 = it2.first, &w2 = it2.second;
       if (v2 <= st || !judge(w1, w2)) continue;
-      const U32 &len2 = MapID[v2].len;
+      const U32 len = len0 + len1 + MapID[v2].len;
       for (const auto &it3 : Children[v2]) {
         const U32 &v3 = it3.first, &w3 = it3.second;
         if (v3 < st || v3 == v1 || !judge(w2, w3)) {
@@ -264,7 +252,7 @@ void ForwardSearch(ThData &Data, const U32 &st) {
         } else if (v3 == st) {
           if (!judge(w3, w1)) continue;
           Cycle0[st].insert(Cycle0[st].end(), {st, v1, v2});
-          sz0 += len0 + len1 + len2;
+          sz0 += len;
           ++ans;
           continue;
         }
@@ -276,7 +264,7 @@ void ForwardSearch(ThData &Data, const U32 &st) {
           } else if (v4 == st) {
             if (!judge(w4, w1)) continue;
             Cycle1[st].insert(Cycle1[st].end(), {st, v1, v2, v3});
-            sz1 += len0 + len1 + len2 + len3;
+            sz1 += len + len3;
             ++ans;
             continue;
           } else if (v1 == v4 || v2 == v4) {
@@ -290,7 +278,7 @@ void ForwardSearch(ThData &Data, const U32 &st) {
             } else if (v5 == st) {
               if (!judge(w5, w1)) continue;
               Cycle2[st].insert(Cycle2[st].end(), {st, v1, v2, v3, v4});
-              sz2 += len0 + len1 + len2 + len3 + len4;
+              sz2 += len + len3 + len4;
               ++ans;
               continue;
             } else if (v1 == v5 || v2 == v5 || v3 == v5) {
@@ -304,7 +292,7 @@ void ForwardSearch(ThData &Data, const U32 &st) {
               } else if (v6 == st) {
                 if (!judge(w6, w1)) continue;
                 Cycle3[st].insert(Cycle3[st].end(), {st, v1, v2, v3, v4, v5});
-                sz3 += len0 + len1 + len2 + len3 + len4 + len5;
+                sz3 += len + len3 + len4 + len5;
                 ++ans;
                 continue;
               }
@@ -315,7 +303,7 @@ void ForwardSearch(ThData &Data, const U32 &st) {
               }
               const U32 &len6 = MapID[v6].len;
               Cycle4[st].insert(Cycle4[st].end(), {st, v1, v2, v3, v4, v5, v6});
-              sz4 += len0 + len1 + len2 + len3 + len4 + len5 + len6;
+              sz4 += len + len3 + len4 + len5 + len6;
               ++ans;
             }
           }

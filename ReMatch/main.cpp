@@ -36,7 +36,7 @@
 /*
  * 常量定义
  */
-const U32 MAXEDGE = 2000000 + 7;  // 最多边数目
+const U32 MAXEDGE = 3000000 + 7;  // 最多边数目
 const U32 MAXN = MAXEDGE << 1;    // 最多点数目
 const int NTHREAD = 4;            // 线程个数
 const int NUMLENGTH = 12;         // ID最大长度
@@ -44,13 +44,13 @@ const int NUMLENGTH = 12;         // ID最大长度
 /*
  * 计数
  */
-U32 MaxID = 0;              // 最大点
-U32 Answers = 0;            // 环个数
-U32 Jobcur = 0;             // job光标
-U32 EdgesCount = 0;         // 边数目
-U32 JobsCount = 0;          // 有效点数目
-U32 IDDomCount = 0;         // ID数目
-U32 ThEdgesCount[NTHREAD];  // 线程边数目
+U32 MaxID = 0;       // 最大点
+U32 Answers = 0;     // 环个数
+U32 Jobcur = 0;      // job光标
+int EdgeCur = 0;     // 边光标
+U32 EdgesCount = 0;  // 边数目
+U32 JobsCount = 0;   // 有效点数目
+U32 IDDomCount = 0;  // ID数目
 
 /*
  * 图信息
@@ -63,7 +63,6 @@ PreBuffer MapID[MAXN];                            // 解析int
 U32 Jobs[MAXN];                                   // 有效点
 U32 IDDom[MAXN];                                  // ID集合
 U32 Edges[MAXEDGE][3];                            // 所有边
-U32 ThEdges[NTHREAD][MAXEDGE / NTHREAD + 7][3];   // 线程边
 std::vector<std::pair<U32, U32>> Children[MAXN];  // 子结点
 std::vector<std::pair<U32, U32>> Parents[MAXN];   // 子结点
 
@@ -96,7 +95,9 @@ std::vector<std::vector<U32>> Cycle4;                 // 长度为7的环
 /*
  * atomic 锁
  */
-std::atomic_flag lock = ATOMIC_FLAG_INIT;
+std::atomic_flag _JOB_LOCK_ = ATOMIC_FLAG_INIT;
+std::atomic_flag _EDGE_LOCK_ = ATOMIC_FLAG_INIT;
+std::atomic_flag _GRAPH_LOCK_[MAXN] = {ATOMIC_FLAG_INIT};
 
 void Init() {
   Cycle0.reserve(MaxID);
@@ -125,19 +126,38 @@ void ParseInteger(const U32 &x) {
     mpid.len = NUMLENGTH - idx;
   }
 }
-void HandleLoadData(int pid, int st, int ed) {
-  auto &E = ThEdges[pid];
-  auto &count = ThEdgesCount[pid];
-  for (int i = st; i < ed; ++i) {
-    const auto &e = Edges[i];
-    E[count][0] = std::lower_bound(IDDom, IDDom + MaxID, e[0]) - IDDom;
-    E[count][1] = std::lower_bound(IDDom, IDDom + MaxID, e[1]) - IDDom;
-    E[count++][2] = e[2];
+
+void GetEdgeId(int &idx) {
+  while (_EDGE_LOCK_.test_and_set())
+    ;
+  if (EdgeCur < EdgesCount) {
+    idx = EdgeCur++;
+  } else {
+    idx = -1;
+  }
+  _EDGE_LOCK_.clear();
+}
+
+void HandleLoadData() {
+  int idx = 0;
+  while (true) {
+    GetEdgeId(idx);
+    if (idx == -1) break;
+    const auto &e = Edges[idx];
+    int p1 = std::lower_bound(IDDom, IDDom + MaxID, e[0]) - IDDom;
+    int p2 = std::lower_bound(IDDom, IDDom + MaxID, e[1]) - IDDom;
+    while (_GRAPH_LOCK_[p1].test_and_set())
+      ;
+    Children[p1].emplace_back(std::make_pair(p2, e[2]));
+    _GRAPH_LOCK_[p1].clear();
+    while (_GRAPH_LOCK_[p2].test_and_set())
+      ;
+    Parents[p2].emplace_back(std::make_pair(p1, e[2]));
+    _GRAPH_LOCK_[p2].clear();
   }
 }
 
 void LoadData() {
-  std::cerr << "loadstart\n";
   U32 fd = open(TRAIN, O_RDONLY);
   U32 bufsize = lseek(fd, 0, SEEK_END);
   char *buffer = (char *)mmap(NULL, bufsize, PROT_READ, MAP_PRIVATE, fd, 0);
@@ -171,23 +191,11 @@ void LoadData() {
   std::sort(IDDom, IDDom + IDDomCount);
   MaxID = std::unique(IDDom, IDDom + IDDomCount) - IDDom;
   Init();
-  int st = 0, block = EdgesCount / NTHREAD;
   std::thread Th[NTHREAD];
   for (int i = 0; i < NTHREAD; ++i) {
-    int ed = (i == NTHREAD - 1 ? EdgesCount : st + block);
-    Th[i] = std::thread(HandleLoadData, i, st, ed);
-    st = ed;
+    Th[i] = std::thread(HandleLoadData);
   }
   for (int i = 0; i < NTHREAD; ++i) Th[i].join();
-  for (int i = 0; i < NTHREAD; ++i) {
-    const auto &E = ThEdges[i];
-    const auto &count = ThEdgesCount[i];
-    for (int j = 0; j < count; ++j) {
-      const auto &e = E[j];
-      Children[e[0]].emplace_back(std::make_pair(e[1], e[2]));
-      Parents[e[1]].emplace_back(std::make_pair(e[0], e[2]));
-    }
-  }
   for (int i = 0; i < MaxID; ++i) {
     if (!Children[i].empty() && !Parents[i].empty()) {
       Jobs[JobsCount++] = i;
@@ -321,14 +329,14 @@ void ForwardSearch(ThData &Data, const U32 &st) {
 }
 
 void GetNextJob(U32 &job) {
-  while (lock.test_and_set())
+  while (_JOB_LOCK_.test_and_set())
     ;
   if (Jobcur < JobsCount) {
     job = Jobs[Jobcur++];
   } else {
     job = -1;
   }
-  lock.clear();
+  _JOB_LOCK_.clear();
 }
 
 void FindCircle(int pid) {
@@ -359,7 +367,7 @@ void CalOffset() {
     }
   }
   Offset[tidx++] = std::make_tuple(stl, 4, stidx, JobsCount, tol);
-#ifdef LOCAL
+#ifdef TEST
   for (int i = 0; i < NTHREAD; ++i) {
     const auto &e = Offset[i];
     std::cerr << "@ offset: (" << std::get<0>(e) << ", " << std::get<1>(e)
@@ -394,7 +402,7 @@ void HandleSaveAnswer(int pid) {
       for (int j = low; j < high; ++j) {
         const auto &job = Jobs[j];
         int idx = 0;
-        for (auto &v : Cycle0[job]) {
+        for (const auto &v : Cycle0[job]) {
           ++idx;
           const auto &mpid = MapID[v];
           memcpy(result, mpid.str, mpid.len);
@@ -409,7 +417,7 @@ void HandleSaveAnswer(int pid) {
       for (int j = low; j < high; ++j) {
         const auto &job = Jobs[j];
         int idx = 0;
-        for (auto &v : Cycle1[job]) {
+        for (const auto &v : Cycle1[job]) {
           ++idx;
           const auto &mpid = MapID[v];
           memcpy(result, mpid.str, mpid.len);
@@ -424,7 +432,7 @@ void HandleSaveAnswer(int pid) {
       for (int j = low; j < high; ++j) {
         const auto &job = Jobs[j];
         int idx = 0;
-        for (auto &v : Cycle2[job]) {
+        for (const auto &v : Cycle2[job]) {
           ++idx;
           const auto &mpid = MapID[v];
           memcpy(result, mpid.str, mpid.len);
@@ -439,7 +447,7 @@ void HandleSaveAnswer(int pid) {
       for (int j = low; j < high; ++j) {
         const auto &job = Jobs[j];
         int idx = 0;
-        for (auto &v : Cycle3[job]) {
+        for (const auto &v : Cycle3[job]) {
           ++idx;
           const auto &mpid = MapID[v];
           memcpy(result, mpid.str, mpid.len);
@@ -454,7 +462,7 @@ void HandleSaveAnswer(int pid) {
       for (int j = low; j < high; ++j) {
         const auto &job = Jobs[j];
         int idx = 0;
-        for (auto &v : Cycle4[job]) {
+        for (const auto &v : Cycle4[job]) {
           ++idx;
           const auto &mpid = MapID[v];
           memcpy(result, mpid.str, mpid.len);
@@ -505,13 +513,13 @@ void Simulation() {
     TotalBufferSize += it.bufsize;
   }
 #ifdef LOCAL
-  std::cerr << "@ answers: " << Answers << "";
-  std::cerr << ", bufsize: " << TotalBufferSize << "\n";
   int idx = 0;
   for (auto &it : ThreadData) {
     std::cerr << "@ thread " << idx++ << ": " << it.answers << ", "
               << it.bufsize << "\n";
   }
+  std::cerr << "@ answers: " << Answers << "";
+  std::cerr << ", bufsize: " << TotalBufferSize << "\n";
 #endif
   SaveAnswer();
 }
