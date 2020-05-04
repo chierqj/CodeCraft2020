@@ -1,5 +1,6 @@
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -406,6 +407,12 @@ inline void GetNextJob(uint &job) {
 }
 
 void FindCircle(uint pid) {
+#ifdef LOCAL
+  struct timeval tim {};
+  gettimeofday(&tim, nullptr);
+  double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+#endif
+
   uint job = 0;
   auto &Data = ThreadData[pid];
   while (true) {
@@ -414,6 +421,12 @@ void FindCircle(uint pid) {
     BackSearch(Data, job);
     ForwardSearch(Data, job);
   }
+
+#ifdef LOCAL
+  gettimeofday(&tim, nullptr);
+  double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+  printf("@ thread %d: Search Cycle, %.4fs\n", pid, t4 - t1);
+#endif
 }
 
 void CalOffset() {
@@ -433,35 +446,22 @@ void CalOffset() {
     }
   }
   Offset[tidx++] = std::make_tuple(stl, 4, stidx, JobsCount, tol);
-#ifdef TEST
-  for (uint i = 0; i < NTHREAD; ++i) {
-    const auto &e = Offset[i];
-    std::cerr << "@ offset: (" << std::get<0>(e) << ", " << std::get<1>(e)
-              << ") (" << std::get<2>(e) << ", " << std::get<3>(e) << ") "
-              << std::get<4>(e) << "\n";
-  }
-#endif
 }
 
-void HandleSaveAnswer(uint pid) {
+void HandleSaveAnswer(uint pid, char *result) {
+#ifdef LOCAL
+  struct timeval tim {};
+  gettimeofday(&tim, nullptr);
+  double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+#endif
+
   const auto &offset = Offset[pid];
   uint stl = std::get<0>(offset);
   uint edl = std::get<1>(offset);
   uint stidx = std::get<2>(offset);
   uint edidx = std::get<3>(offset);
-  uint fd = open(RESULT, O_RDWR | O_CREAT, 0666);
-  char *result = (char *)mmap(NULL, TotalBufferSize, PROT_READ | PROT_WRITE,
-                              MAP_SHARED, fd, 0);
-  ftruncate(fd, TotalBufferSize);
-  close(fd);
-  if (pid == 0) {
-    memcpy(result, FirstBuf, FirstBufLen);
-    result += FirstBufLen;
-  } else {
-    uint offsz = FirstBufLen + std::get<4>(Offset[pid]);
-    result += offsz;
-  }
-
+  uint offsz = FirstBufLen + std::get<4>(Offset[pid]);
+  result += offsz;
   uint low = 0, high = 0;
   auto foo = [&](const uint &p, const std::vector<std::vector<uint>> &cycles) {
     for (uint i = low; i < high; ++i) {
@@ -501,6 +501,12 @@ void HandleSaveAnswer(uint pid) {
         break;
     }
   }
+
+#ifdef LOCAL
+  gettimeofday(&tim, nullptr);
+  double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+  printf("@ thread %d: Save Answer, %.4fs\n", pid, t4 - t1);
+#endif
 }
 
 void SaveAnswer() {
@@ -508,9 +514,19 @@ void SaveAnswer() {
   sprintf(FirstBuf, "%d\n", Answers);
   FirstBufLen = strlen(FirstBuf);
   TotalBufferSize += FirstBufLen;
+
+  uint fd = open(RESULT, O_RDWR | O_CREAT, 0666);
+  char *result = (char *)mmap(NULL, TotalBufferSize, PROT_READ | PROT_WRITE,
+                              MAP_SHARED, fd, 0);
+  ftruncate(fd, TotalBufferSize);
+  close(fd);
+  memcpy(result, FirstBuf, FirstBufLen);
+
   std::thread Th[NTHREAD];
-  for (uint i = 1; i < NTHREAD; ++i) Th[i] = std::thread(HandleSaveAnswer, i);
-  HandleSaveAnswer(0);
+  for (uint i = 1; i < NTHREAD; ++i) {
+    Th[i] = std::thread(HandleSaveAnswer, i, result);
+  }
+  HandleSaveAnswer(0, result);
   for (uint i = 1; i < NTHREAD; ++i) Th[i].join();
 }
 
@@ -525,16 +541,13 @@ void Simulation() {
     Answers += it.answers;
     TotalBufferSize += it.bufsize;
   }
-#ifdef LOCAL
-  uint idx = 0;
-  for (auto &it : ThreadData) {
-    std::cerr << "@ thread " << idx++ << ": " << it.answers << ", "
-              << it.bufsize << "\n";
-  }
-  std::cerr << "@ answers: " << Answers << "";
-  std::cerr << ", bufsize: " << TotalBufferSize << "\n";
-#endif
+
   SaveAnswer();
+
+#ifdef LOCAL
+  std::cerr << "@ Answers: " << Answers << "";
+  std::cerr << ", Bufsize: " << TotalBufferSize << "\n";
+#endif
 }
 
 int main() {
