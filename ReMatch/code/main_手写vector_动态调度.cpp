@@ -34,7 +34,34 @@
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
 #endif
-typedef std::pair<uint, uint> Pair;
+typedef std::pair<uint, uint> Edge;
+
+template <typename T>
+struct Vector {
+  T *a;
+  int n;
+  Vector() {
+    a = nullptr;
+    n = 0;
+  }
+  void emplace_back(T x) {
+    if ((n & -n) == n) {
+      a = (T *)realloc(a, (n * 2 + 1) * sizeof(T));
+    }
+    a[n++] = x;
+  }
+  T &operator[](int idx) { return *(a + idx); }
+  struct Iterator {
+    int index;
+    Vector &outer;
+    Iterator(Vector &o, int i) : outer(o), index(i) {}
+    void operator++() { index++; }
+    T operator*() const { return outer[index]; }
+    bool operator!=(const Iterator &i) { return i.index != index; }
+  };
+  Iterator begin() { return Iterator(*this, 0); }
+  Iterator end() { return Iterator(*this, n); }
+};
 
 /*
  * 常量定义
@@ -71,17 +98,17 @@ uint TotalBufferSize = 0;                                  // 总buffer大小
 uint FirstBufLen = 0;                                      // 换个数bufsize
 char FirstBuf[NUMLENGTH];                                  // 环个数buf
 std::tuple<uint, uint, uint, uint, uint> Offset[NTHREAD];  // 偏移量
-uint CycleBufSize[5][MAXN];             // 每个点每种环sz
-std::vector<std::vector<uint>> Cycle0;  // 长度为3的环
-std::vector<std::vector<uint>> Cycle1;  // 长度为4的环
-std::vector<std::vector<uint>> Cycle2;  // 长度为5的环
-std::vector<std::vector<uint>> Cycle3;  // 长度为6的环
-std::vector<std::vector<uint>> Cycle4;  // 长度为7的环
+uint CycleBufSize[5][MAXN];        // 每个点每种环sz
+std::vector<Vector<uint>> Cycle0;  // 长度为3的环
+std::vector<Vector<uint>> Cycle1;  // 长度为4的环
+std::vector<Vector<uint>> Cycle2;  // 长度为5的环
+std::vector<Vector<uint>> Cycle3;  // 长度为6的环
+std::vector<Vector<uint>> Cycle4;  // 长度为7的环
 
 /*
  * atomic 锁
  */
-uint JobCur = 0;
+uint JobCur = 0;  // job光标
 uint EdgeCur = 0;
 uint IDCur = 0;
 std::atomic_flag _JOB_LOCK_ = ATOMIC_FLAG_INIT;
@@ -95,23 +122,16 @@ struct PreBuffer {
   char str[NUMLENGTH];
   uint len;
 };
-struct Edge {
-  uint u, v, w;
-  bool operator<(const Edge &r) const {
-    if (u == r.u) return v < r.v;
-    return u < r.u;
-  }
-};
-PreBuffer MapID[MAXN];                              // 解析int
-uint Jobs[MAXN];                                    // 有效点
-uint IDDom[MAXN];                                   // ID集合
-Edge Edges[MAXEDGE];                                // 所有边
-Pair Children[MAXN];                                // sons
-std::vector<Pair> Parents[MAXN];                    // fathers
-std::vector<Pair> ThChildren[NTHREAD];              // thsons
-std::vector<std::vector<Pair>> ThParents[NTHREAD];  // thfather
-std::unordered_map<uint, uint> HashID;              // hashID
-std::vector<uint> Rank;                             // rankID
+PreBuffer MapID[MAXN];                          // 解析int
+uint Jobs[MAXN];                                // 有效点
+uint IDDom[MAXN];                               // ID集合
+uint Edges[MAXEDGE][3];                         // 所有边
+std::vector<Edge> Children[MAXN];               // 子结点
+std::vector<Edge> Parents[MAXN];                // 父结点
+std::vector<Vector<Edge>> ThChildren[NTHREAD];  // Thread子结点
+std::vector<Vector<Edge>> ThParents[NTHREAD];   // Thread父结点
+std::unordered_map<uint, uint> HashID;          // hashID
+std::vector<uint> Rank;                         // rankID
 
 void Init() {
   Cycle0.reserve(MaxID);
@@ -136,21 +156,17 @@ inline void GetEdgeId(uint &cur) {
 void HandleLoadData(uint pid) {
   auto &children = ThChildren[pid];
   auto &parents = ThParents[pid];
-  parents.reserve(MaxID);
   children.reserve(MaxID);
+  parents.reserve(MaxID);
   uint cur = 0;
   while (true) {
     GetEdgeId(cur);
     if (cur == -1) break;
-    auto &e = Edges[cur];
-    uint p1 = Rank[HashID[e.u]];
-    uint p2 = Rank[HashID[e.v]];
-    e.u = p1, e.v = p2;
-    if (children[p1].second == 0) {
-      children[p1].first = cur;
-    }
-    ++children[p1].second;
-    parents[p2].emplace_back(std::make_pair(p1, e.w));
+    const auto &e = Edges[cur];
+    uint p1 = Rank[HashID[e[0]]];
+    uint p2 = Rank[HashID[e[1]]];
+    children[p1].emplace_back(std::make_pair(p2, e[2]));
+    parents[p2].emplace_back(std::make_pair(p1, e[2]));
   }
 }
 
@@ -166,35 +182,20 @@ void HandleCreateGraph() {
   while (true) {
     GetIDId(cur);
     if (cur == -1) break;
-    uint minx = EdgesCount, len = 0;
     for (uint i = 0; i < NTHREAD; ++i) {
-      Parents[cur].insert(Parents[cur].end(), ThParents[i][cur].begin(),
-                          ThParents[i][cur].end());
-      const auto &cdr = ThChildren[i][cur];
-      if (cdr.second > 0) {
-        minx = std::min(minx, cdr.first);
-        len += cdr.second;
-      }
+      for (const auto &v : ThChildren[i][cur]) Children[cur].emplace_back(v);
+      for (const auto &v : ThParents[i][cur]) Parents[cur].emplace_back(v);
+      // Children[cur].insert(Children[cur].end(), ThChildren[i][cur].begin(),
+      //                      ThChildren[i][cur].end());
+      // Parents[cur].insert(Parents[cur].end(), ThParents[i][cur].begin(),
+      //                     ThParents[i][cur].end());
     }
-    Children[cur].first = minx;
-    Children[cur].second = minx + len;
+    std::sort(
+        Children[cur].begin(), Children[cur].end(),
+        [](const Edge &e1, const Edge &e2) { return e1.first < e2.first; });
     std::sort(
         Parents[cur].begin(), Parents[cur].end(),
-        [](const Pair &e1, const Pair &e2) { return e1.first > e2.first; });
-  }
-}
-
-void SortAndRank() {
-  std::sort(Edges, Edges + EdgesCount);
-  std::vector<uint> vec(MaxID);
-  for (uint i = 0; i < MaxID; ++i) vec[i] = i;
-  std::sort(vec.begin(), vec.end(),
-            [&](const uint &x, const uint &y) { return IDDom[x] < IDDom[y]; });
-  Rank.reserve(MaxID);
-  for (uint i = 0; i < MaxID; ++i) {
-    const uint &x = vec[i];
-    ParseInteger(i, IDDom[x]);
-    Rank[x] = i;
+        [](const Edge &e1, const Edge &e2) { return e1.first > e2.first; });
   }
 }
 
@@ -224,21 +225,30 @@ void LoadData() {
     }
     if (*ptr == '\r') ++ptr;
     ++ptr;
-    Edges[EdgesCount].u = u;
-    Edges[EdgesCount].v = v;
-    Edges[EdgesCount++].w = w;
+    Edges[EdgesCount][0] = u;
+    Edges[EdgesCount][1] = v;
+    Edges[EdgesCount++][2] = w;
     if (HashID.find(u) == HashID.end()) {
       IDDom[MaxID] = u;
-      HashID.insert({u, MaxID++});
+      HashID[u] = MaxID++;
     }
     if (HashID.find(v) == HashID.end()) {
       IDDom[MaxID] = v;
-      HashID.insert({v, MaxID++});
+      HashID[v] = MaxID++;
     }
     u = v = w = 0;
   }
 
-  SortAndRank();
+  std::vector<uint> vec(MaxID);
+  for (uint i = 0; i < MaxID; ++i) vec[i] = i;
+  std::sort(vec.begin(), vec.end(),
+            [&](const uint &x, const uint &y) { return IDDom[x] < IDDom[y]; });
+  Rank.reserve(MaxID);
+  for (uint i = 0; i < MaxID; ++i) {
+    const uint &x = vec[i];
+    ParseInteger(i, IDDom[x]);
+    Rank[x] = i;
+  }
 
   // 多线程存图
   std::thread Th[NTHREAD];
@@ -248,8 +258,9 @@ void LoadData() {
   for (uint i = 1; i < NTHREAD; ++i) Th[i] = std::thread(HandleCreateGraph);
   HandleCreateGraph();
   for (uint i = 1; i < NTHREAD; ++i) Th[i].join();
+
   for (uint i = 0; i < MaxID; ++i) {
-    if (Children[i].second > 0 && !Parents[i].empty()) {
+    if (!Children[i].empty() && !Parents[i].empty()) {
       Jobs[JobsCount++] = i;
     }
   }
@@ -308,79 +319,103 @@ void ForwardSearch(ThData &Data, const uint &st) {
   auto &cycle2 = Cycle2[st];
   auto &cycle3 = Cycle3[st];
   auto &cycle4 = Cycle4[st];
-  const auto &cdr1 = Children[st];
-  for (uint it1 = cdr1.first; it1 != cdr1.second; ++it1) {
-    const auto &e1 = Edges[it1];
-    if (e1.v < st) continue;
-    const uint &len1 = MapID[e1.v].len;
-    const auto &cdr2 = Children[e1.v];
-    for (uint it2 = cdr2.first; it2 != cdr2.second; ++it2) {
-      const auto &e2 = Edges[it2];
-      if (e2.v <= st || !judge(e1.w, e2.w)) continue;
-      const uint len = len0 + len1 + MapID[e2.v].len;
-      const auto &cdr3 = Children[e2.v];
-      for (uint it3 = cdr3.first; it3 != cdr3.second; ++it3) {
-        const auto &e3 = Edges[it3];
-        if (e3.v < st || e3.v == e1.v || !judge(e2.w, e3.w)) {
+  const auto &children1 = Children[st];
+  for (const auto &it1 : children1) {
+    const uint &v1 = it1.first, &w1 = it1.second;
+    if (v1 < st) continue;
+    const uint &len1 = MapID[v1].len;
+    const auto &children2 = Children[v1];
+    for (const auto &it2 : children2) {
+      const uint &v2 = it2.first, &w2 = it2.second;
+      if (v2 <= st || !judge(w1, w2)) continue;
+      const uint len = len0 + len1 + MapID[v2].len;
+      const auto &children3 = Children[v2];
+      for (const auto &it3 : children3) {
+        const uint &v3 = it3.first, &w3 = it3.second;
+        if (v3 < st || v3 == v1 || !judge(w2, w3)) {
           continue;
-        } else if (e3.v == st) {
-          if (!judge(e3.w, e1.w)) continue;
-          cycle0.insert(cycle0.end(), {st, e1.v, e2.v});
+        } else if (v3 == st) {
+          if (!judge(w3, w1)) continue;
+          // cycle0.insert(cycle0.end(), {st, v1, v2});
+          cycle0.emplace_back(st);
+          cycle0.emplace_back(v1);
+          cycle0.emplace_back(v2);
           sz0 += len;
           ++ans;
           continue;
         }
-        const uint &len3 = MapID[e3.v].len;
-        const auto &cdr4 = Children[e3.v];
-        for (uint it4 = cdr4.first; it4 != cdr4.second; ++it4) {
-          const auto &e4 = Edges[it4];
-          if (!(Data.Reach[e4.v] & 4) || !judge(e3.w, e4.w)) {
+        const uint &len3 = MapID[v3].len;
+        const auto &children4 = Children[v3];
+        for (const auto &it4 : children4) {
+          const uint &v4 = it4.first, &w4 = it4.second;
+          if (!(Data.Reach[v4] & 4) || !judge(w3, w4)) {
             continue;
-          } else if (e4.v == st) {
-            if (!judge(e4.w, e1.w)) continue;
-            cycle1.insert(cycle1.end(), {st, e1.v, e2.v, e3.v});
+          } else if (v4 == st) {
+            if (!judge(w4, w1)) continue;
+            // cycle1.insert(cycle1.end(), {st, v1, v2, v3});
+            cycle1.emplace_back(st);
+            cycle1.emplace_back(v1);
+            cycle1.emplace_back(v2);
+            cycle1.emplace_back(v3);
             sz1 += len + len3;
             ++ans;
             continue;
-          } else if (e1.v == e4.v || e2.v == e4.v) {
+          } else if (v1 == v4 || v2 == v4) {
             continue;
           }
-          const uint &len4 = MapID[e4.v].len;
-          const auto &cdr5 = Children[e4.v];
-          for (uint it5 = cdr5.first; it5 != cdr5.second; ++it5) {
-            const auto &e5 = Edges[it5];
-            if (!(Data.Reach[e5.v] & 2) || !judge(e4.w, e5.w)) {
+          const uint &len4 = MapID[v4].len;
+          const auto &children5 = Children[v4];
+          for (const auto &it5 : children5) {
+            const uint &v5 = it5.first, &w5 = it5.second;
+            if (!(Data.Reach[v5] & 2) || !judge(w4, w5)) {
               continue;
-            } else if (e5.v == st) {
-              if (!judge(e5.w, e1.w)) continue;
-              cycle2.insert(cycle2.end(), {st, e1.v, e2.v, e3.v, e4.v});
+            } else if (v5 == st) {
+              if (!judge(w5, w1)) continue;
+              // cycle2.insert(cycle2.end(), {st, v1, v2, v3, v4});
+              cycle2.emplace_back(st);
+              cycle2.emplace_back(v1);
+              cycle2.emplace_back(v2);
+              cycle2.emplace_back(v3);
+              cycle2.emplace_back(v4);
               sz2 += len + len3 + len4;
               ++ans;
               continue;
-            } else if (e1.v == e5.v || e2.v == e5.v || e3.v == e5.v) {
+            } else if (v1 == v5 || v2 == v5 || v3 == v5) {
               continue;
             }
-            const uint &len5 = MapID[e5.v].len;
-            const auto &cdr6 = Children[e5.v];
-            for (uint it6 = cdr6.first; it6 != cdr6.second; ++it6) {
-              const auto &e6 = Edges[it6];
-              if (!(Data.Reach[e6.v] & 1) || !judge(e5.w, e6.w)) {
+            const uint &len5 = MapID[v5].len;
+            const auto &children6 = Children[v5];
+            for (const auto &it6 : children6) {
+              const uint &v6 = it6.first, &w6 = it6.second;
+              if (!(Data.Reach[v6] & 1) || !judge(w5, w6)) {
                 continue;
-              } else if (e6.v == st) {
-                if (!judge(e6.w, e1.w)) continue;
-                cycle3.insert(cycle3.end(), {st, e1.v, e2.v, e3.v, e4.v, e5.v});
+              } else if (v6 == st) {
+                if (!judge(w6, w1)) continue;
+                // cycle3.insert(cycle3.end(), {st, v1, v2, v3, v4, v5});
+                cycle3.emplace_back(st);
+                cycle3.emplace_back(v1);
+                cycle3.emplace_back(v2);
+                cycle3.emplace_back(v3);
+                cycle3.emplace_back(v4);
+                cycle3.emplace_back(v5);
                 sz3 += len + len3 + len4 + len5;
                 ++ans;
                 continue;
               }
-              const uint &w7 = Data.LastWeight[e6.v];
-              if (e1.v == e6.v || e2.v == e6.v || e3.v == e6.v ||
-                  e4.v == e6.v || !judge(e6.w, w7) || !judge(w7, e1.w)) {
+              const uint &w7 = Data.LastWeight[v6];
+              if (v1 == v6 || v2 == v6 || v3 == v6 || v4 == v6 ||
+                  !judge(w6, w7) || !judge(w7, w1)) {
                 continue;
               }
-              const uint &len6 = MapID[e6.v].len;
-              cycle4.insert(cycle4.end(),
-                            {st, e1.v, e2.v, e3.v, e4.v, e5.v, e6.v});
+              const uint &len6 = MapID[v6].len;
+              // cycle4.insert(cycle4.end(), {st, v1, v2, v3, v4, v5, v6});
+              cycle4.emplace_back(st);
+              cycle4.emplace_back(v1);
+              cycle4.emplace_back(v2);
+              cycle4.emplace_back(v3);
+              cycle4.emplace_back(v4);
+              cycle4.emplace_back(v5);
+              cycle4.emplace_back(v6);
               sz4 += len + len3 + len4 + len5 + len6;
               ++ans;
             }
@@ -463,9 +498,9 @@ void HandleSaveAnswer(uint pid) {
   }
 
   uint low = 0, high = 0;
-  auto foo = [&](const uint &p, const std::vector<std::vector<uint>> &cycles) {
+  auto foo = [&](const uint &p, std::vector<Vector<uint>> &cycles) {
     for (uint i = low; i < high; ++i) {
-      const auto &cycle = cycles[Jobs[i]];
+      auto &cycle = cycles[Jobs[i]];
       uint idx = 0;
       for (const auto &v : cycle) {
         const auto &mpid = MapID[v];
