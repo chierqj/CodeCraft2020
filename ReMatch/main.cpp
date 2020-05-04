@@ -68,10 +68,10 @@ struct ThData {
 /*
  * 结果
  */
-uint TotalBufferSize = 0;                                  // 总buffer大小
-uint FirstBufLen = 0;                                      // 换个数bufsize
-char FirstBuf[NUMLENGTH];                                  // 环个数buf
-std::tuple<uint, uint, uint, uint, uint> Offset[NTHREAD];  // 偏移量
+uint TotalBufferSize = 0;               // 总buffer大小
+uint FirstBufLen = 0;                   // 换个数bufsize
+char FirstBuf[NUMLENGTH];               // 环个数buf
+uint OffSet[MAXN][5];                   // 偏移量
 uint CycleBufSize[5][MAXN];             // 每个点每种环sz
 std::vector<std::vector<uint>> Cycle0;  // 长度为3的环
 std::vector<std::vector<uint>> Cycle1;  // 长度为4的环
@@ -147,6 +147,7 @@ void HandleLoadData(uint pid) {
     uint p1 = Rank[HashID[e.u]];
     uint p2 = Rank[HashID[e.v]];
     e.u = p1, e.v = p2;
+
     if (children[p1].second == 0) {
       children[p1].first = cur;
     }
@@ -430,22 +431,41 @@ void FindCircle(uint pid) {
 }
 
 void CalOffset() {
-  uint block = TotalBufferSize / NTHREAD;
-  uint tol = 0, x = 0, stl = 0, stidx = 0;
-  uint tidx = 0;
+  uint x = FirstBufLen;
   for (uint i = 0; i < 5; ++i) {
     for (uint j = 0; j < JobsCount; ++j) {
-      if (x > block) {
-        Offset[tidx++] = std::make_tuple(stl, i, stidx, j, tol);
-        stl = i;
-        stidx = j;
-        tol += x;
-        x = 0;
-      }
-      x += CycleBufSize[i][Jobs[j]];
+      const uint &job = Jobs[j];
+      OffSet[job][i] = x;
+      x += CycleBufSize[i][job];
     }
   }
-  Offset[tidx++] = std::make_tuple(stl, 4, stidx, JobsCount, tol);
+}
+
+void WriteAnswer(const uint &job, char *result) {
+  auto foo = [&](const uint &p, const std::vector<uint> &cycle) {
+    uint idx = 0;
+    for (const auto &v : cycle) {
+      const auto &mpid = MapID[v];
+      memcpy(result, mpid.str, mpid.len);
+      if (++idx == p + 3) {
+        idx = 0;
+        *(result + mpid.len - 1) = '\n';
+      }
+      result += mpid.len;
+    }
+  };
+
+  char *ptr = result;
+  result = ptr + OffSet[job][0];
+  foo(0, Cycle0[job]);
+  result = ptr + OffSet[job][1];
+  foo(1, Cycle1[job]);
+  result = ptr + OffSet[job][2];
+  foo(2, Cycle2[job]);
+  result = ptr + OffSet[job][3];
+  foo(3, Cycle3[job]);
+  result = ptr + OffSet[job][4];
+  foo(4, Cycle4[job]);
 }
 
 void HandleSaveAnswer(uint pid, char *result) {
@@ -455,51 +475,11 @@ void HandleSaveAnswer(uint pid, char *result) {
   double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
 #endif
 
-  const auto &offset = Offset[pid];
-  uint stl = std::get<0>(offset);
-  uint edl = std::get<1>(offset);
-  uint stidx = std::get<2>(offset);
-  uint edidx = std::get<3>(offset);
-  uint offsz = FirstBufLen + std::get<4>(Offset[pid]);
-  result += offsz;
-  uint low = 0, high = 0;
-  auto foo = [&](const uint &p, const std::vector<std::vector<uint>> &cycles) {
-    for (uint i = low; i < high; ++i) {
-      const auto &cycle = cycles[Jobs[i]];
-      uint idx = 0;
-      for (const auto &v : cycle) {
-        const auto &mpid = MapID[v];
-        memcpy(result, mpid.str, mpid.len);
-        if (++idx == p + 3) {
-          idx = 0;
-          *(result + mpid.len - 1) = '\n';
-        }
-        result += mpid.len;
-      }
-    }
-  };
-  for (uint i = stl; i <= edl; ++i) {
-    low = (i == stl ? stidx : 0);
-    high = (i == edl ? edidx : JobsCount);
-    switch (i) {
-      case 0:
-        foo(i, Cycle0);
-        break;
-      case 1:
-        foo(i, Cycle1);
-        break;
-      case 2:
-        foo(i, Cycle2);
-        break;
-      case 3:
-        foo(i, Cycle3);
-        break;
-      case 4:
-        foo(i, Cycle4);
-        break;
-      default:
-        break;
-    }
+  uint job = 0;
+  while (true) {
+    GetNextJob(job);
+    if (job == -1) break;
+    WriteAnswer(job, result);
   }
 
 #ifdef LOCAL
@@ -510,17 +490,18 @@ void HandleSaveAnswer(uint pid, char *result) {
 }
 
 void SaveAnswer() {
-  CalOffset();
   sprintf(FirstBuf, "%d\n", Answers);
   FirstBufLen = strlen(FirstBuf);
   TotalBufferSize += FirstBufLen;
-
   uint fd = open(RESULT, O_RDWR | O_CREAT, 0666);
   char *result = (char *)mmap(NULL, TotalBufferSize, PROT_READ | PROT_WRITE,
                               MAP_SHARED, fd, 0);
   ftruncate(fd, TotalBufferSize);
   close(fd);
   memcpy(result, FirstBuf, FirstBufLen);
+
+  CalOffset();
+  JobCur = 0;
 
   std::thread Th[NTHREAD];
   for (uint i = 1; i < NTHREAD; ++i) {
