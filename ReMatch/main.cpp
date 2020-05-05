@@ -58,7 +58,7 @@ uint JobsCount = 0;   // 有效点数目
  */
 struct ThData {
   uint answers = 0;          // 环数目
-  uint bufsize = 0;          // 字节长度
+  uint bufsize = 0;          // bufsize
   uint ReachPointCount = 0;  // 反向可达点数目
   char Reach[MAXN];          // 标记反向可达
   uint ReachPoint[MAXN];     // 可达点集合
@@ -68,16 +68,19 @@ struct ThData {
 /*
  * 结果
  */
-uint TotalBufferSize = 0;               // 总buffer大小
-uint FirstBufLen = 0;                   // 换个数bufsize
-char FirstBuf[NUMLENGTH];               // 环个数buf
-uint OffSet[MAXN][5];                   // 偏移量
-uint CycleBufSize[5][MAXN];             // 每个点每种环sz
-std::vector<std::vector<uint>> Cycle0;  // 长度为3的环
-std::vector<std::vector<uint>> Cycle1;  // 长度为4的环
-std::vector<std::vector<uint>> Cycle2;  // 长度为5的环
-std::vector<std::vector<uint>> Cycle3;  // 长度为6的环
-std::vector<std::vector<uint>> Cycle4;  // 长度为7的环
+uint TotalBufferSize = 0;  // 总buffer大小
+uint FirstBufLen = 0;      // 换个数bufsize
+char FirstBuf[NUMLENGTH];  // 环个数buf
+uint OffSet[MAXN][5];      // 偏移量
+struct Answer {
+  uint bufsize[5];
+  std::vector<uint> cycle0;
+  std::vector<uint> cycle1;
+  std::vector<uint> cycle2;
+  std::vector<uint> cycle3;
+  std::vector<uint> cycle4;
+};
+std::vector<Answer> Cycles;
 
 /*
  * atomic 锁
@@ -107,22 +110,14 @@ PreBuffer MapID[MAXN];                              // 解析int
 uint Jobs[MAXN];                                    // 有效点
 uint IDDom[MAXN];                                   // ID集合
 Edge Edges[MAXEDGE];                                // 所有边
-Pair Children[MAXN];                                // sons
+uint Children[MAXN][2];                             // sons
 std::vector<Pair> Parents[MAXN];                    // fathers
 std::vector<Pair> ThChildren[NTHREAD];              // thsons
 std::vector<std::vector<Pair>> ThParents[NTHREAD];  // thfather
 std::unordered_map<uint, uint> HashID;              // hashID
 std::vector<uint> Rank;                             // rankID
 
-void Init() {
-  Cycle0.reserve(MaxID);
-  Cycle1.reserve(MaxID);
-  Cycle2.reserve(MaxID);
-  Cycle3.reserve(MaxID);
-  Cycle4.reserve(MaxID);
-}
-
-inline void ParseInteger(const uint &x, uint num) {
+inline void ParseInteger(const uint &x, const uint &num) {
   auto &mpid = MapID[x];
   sprintf(mpid.str, "%d,", num);
   mpid.len = strlen(mpid.str);
@@ -178,8 +173,8 @@ void HandleCreateGraph() {
         len += cdr.second;
       }
     }
-    Children[cur].first = minx;
-    Children[cur].second = minx + len;
+    Children[cur][0] = minx;
+    Children[cur][1] = minx + len;
     std::sort(
         Parents[cur].begin(), Parents[cur].end(),
         [](const Pair &e1, const Pair &e2) { return e1.first > e2.first; });
@@ -206,10 +201,11 @@ void LoadData() {
   char *buffer = (char *)mmap(NULL, bufsize, PROT_READ, MAP_PRIVATE, fd, 0);
   close(fd);
   const char *ptr = buffer;
+  const char *end = buffer + bufsize;
 
   uint u = 0, v = 0, w = 0;
   HashID.reserve(MAXN);
-  while (ptr - buffer < bufsize) {
+  while (ptr < end) {
     while (*ptr != ',') {
       u = P10(u) + *ptr - '0';
       ++ptr;
@@ -231,11 +227,11 @@ void LoadData() {
     Edges[EdgesCount++].w = w;
     if (HashID.find(u) == HashID.end()) {
       IDDom[MaxID] = u;
-      HashID.insert({u, MaxID++});
+      HashID[u] = MaxID++;
     }
     if (HashID.find(v) == HashID.end()) {
       IDDom[MaxID] = v;
-      HashID.insert({v, MaxID++});
+      HashID[v] = MaxID++;
     }
     u = v = w = 0;
   }
@@ -251,11 +247,10 @@ void LoadData() {
   HandleCreateGraph();
   for (uint i = 1; i < NTHREAD; ++i) Th[i].join();
   for (uint i = 0; i < MaxID; ++i) {
-    if (Children[i].second > 0 && !Parents[i].empty()) {
+    if (Children[i][1] > 0 && !Parents[i].empty()) {
       Jobs[JobsCount++] = i;
     }
   }
-  Init();
 #ifdef LOCAL
   std::cerr << "@ u: " << MaxID << ", e: " << EdgesCount << "\n";
 #endif
@@ -305,46 +300,43 @@ void BackSearch(ThData &Data, const uint &st) {
 void ForwardSearch(ThData &Data, const uint &st) {
   uint ans = 0, sz0 = 0, sz1 = 0, sz2 = 0, sz3 = 0, sz4 = 0;
   const uint &len0 = MapID[st].len;
-  auto &cycle0 = Cycle0[st];
-  auto &cycle1 = Cycle1[st];
-  auto &cycle2 = Cycle2[st];
-  auto &cycle3 = Cycle3[st];
-  auto &cycle4 = Cycle4[st];
+  auto &ret = Cycles[st];
   const auto &cdr1 = Children[st];
-  const Edge *edge1 = &Edges[cdr1.first];
-  for (uint it1 = cdr1.first; it1 != cdr1.second; ++it1) {
+  const Edge *edge1 = &Edges[cdr1[0]];
+  const Edge *edge2, *edge3, *edge4, *edge5, *edge6;
+  for (uint it1 = cdr1[0]; it1 != cdr1[1]; ++it1) {
     const auto &e1 = *(edge1++);
     if (e1.v < st) continue;
     const uint &len1 = MapID[e1.v].len;
     const auto &cdr2 = Children[e1.v];
-    const Edge *edge2 = &Edges[cdr2.first];
-    for (uint it2 = cdr2.first; it2 != cdr2.second; ++it2) {
+    edge2 = &Edges[cdr2[0]];
+    for (uint it2 = cdr2[0]; it2 != cdr2[1]; ++it2) {
       const auto &e2 = *(edge2++);
       if (e2.v <= st || !judge(e1.w, e2.w)) continue;
       const uint len = len0 + len1 + MapID[e2.v].len;
       const auto &cdr3 = Children[e2.v];
-      const Edge *edge3 = &Edges[cdr3.first];
-      for (uint it3 = cdr3.first; it3 != cdr3.second; ++it3) {
+      edge3 = &Edges[cdr3[0]];
+      for (uint it3 = cdr3[0]; it3 != cdr3[1]; ++it3) {
         const auto &e3 = *(edge3++);
         if (e3.v < st || e3.v == e1.v || !judge(e2.w, e3.w)) {
           continue;
         } else if (e3.v == st) {
           if (!judge(e3.w, e1.w)) continue;
-          cycle0.insert(cycle0.end(), {st, e1.v, e2.v});
+          ret.cycle0.insert(ret.cycle0.end(), {st, e1.v, e2.v});
           sz0 += len;
           ++ans;
           continue;
         }
         const uint &len3 = MapID[e3.v].len;
         const auto &cdr4 = Children[e3.v];
-        const Edge *edge4 = &Edges[cdr4.first];
-        for (uint it4 = cdr4.first; it4 != cdr4.second; ++it4) {
+        edge4 = &Edges[cdr4[0]];
+        for (uint it4 = cdr4[0]; it4 != cdr4[1]; ++it4) {
           const auto &e4 = *(edge4++);
           if (!(Data.Reach[e4.v] & 4) || !judge(e3.w, e4.w)) {
             continue;
           } else if (e4.v == st) {
             if (!judge(e4.w, e1.w)) continue;
-            cycle1.insert(cycle1.end(), {st, e1.v, e2.v, e3.v});
+            ret.cycle1.insert(ret.cycle1.end(), {st, e1.v, e2.v, e3.v});
             sz1 += len + len3;
             ++ans;
             continue;
@@ -353,14 +345,14 @@ void ForwardSearch(ThData &Data, const uint &st) {
           }
           const uint &len4 = MapID[e4.v].len;
           const auto &cdr5 = Children[e4.v];
-          const Edge *edge5 = &Edges[cdr5.first];
-          for (uint it5 = cdr5.first; it5 != cdr5.second; ++it5) {
+          edge5 = &Edges[cdr5[0]];
+          for (uint it5 = cdr5[0]; it5 != cdr5[1]; ++it5) {
             const auto &e5 = *(edge5++);
             if (!(Data.Reach[e5.v] & 2) || !judge(e4.w, e5.w)) {
               continue;
             } else if (e5.v == st) {
               if (!judge(e5.w, e1.w)) continue;
-              cycle2.insert(cycle2.end(), {st, e1.v, e2.v, e3.v, e4.v});
+              ret.cycle2.insert(ret.cycle2.end(), {st, e1.v, e2.v, e3.v, e4.v});
               sz2 += len + len3 + len4;
               ++ans;
               continue;
@@ -369,14 +361,15 @@ void ForwardSearch(ThData &Data, const uint &st) {
             }
             const uint &len5 = MapID[e5.v].len;
             const auto &cdr6 = Children[e5.v];
-            const Edge *edge6 = &Edges[cdr6.first];
-            for (uint it6 = cdr6.first; it6 != cdr6.second; ++it6) {
+            edge6 = &Edges[cdr6[0]];
+            for (uint it6 = cdr6[0]; it6 != cdr6[1]; ++it6) {
               const auto &e6 = *(edge6++);
               if (!(Data.Reach[e6.v] & 1) || !judge(e5.w, e6.w)) {
                 continue;
               } else if (e6.v == st) {
                 if (!judge(e6.w, e1.w)) continue;
-                cycle3.insert(cycle3.end(), {st, e1.v, e2.v, e3.v, e4.v, e5.v});
+                ret.cycle3.insert(ret.cycle3.end(),
+                                  {st, e1.v, e2.v, e3.v, e4.v, e5.v});
                 sz3 += len + len3 + len4 + len5;
                 ++ans;
                 continue;
@@ -387,8 +380,8 @@ void ForwardSearch(ThData &Data, const uint &st) {
                 continue;
               }
               const uint &len6 = MapID[e6.v].len;
-              cycle4.insert(cycle4.end(),
-                            {st, e1.v, e2.v, e3.v, e4.v, e5.v, e6.v});
+              ret.cycle4.insert(ret.cycle4.end(),
+                                {st, e1.v, e2.v, e3.v, e4.v, e5.v, e6.v});
               sz4 += len + len3 + len4 + len5 + len6;
               ++ans;
             }
@@ -399,11 +392,11 @@ void ForwardSearch(ThData &Data, const uint &st) {
   }
   Data.answers += ans;
   Data.bufsize += sz0 + sz1 + sz2 + sz3 + sz4;
-  CycleBufSize[0][st] = sz0;
-  CycleBufSize[1][st] = sz1;
-  CycleBufSize[2][st] = sz2;
-  CycleBufSize[3][st] = sz3;
-  CycleBufSize[4][st] = sz4;
+  ret.bufsize[0] = sz0;
+  ret.bufsize[1] = sz1;
+  ret.bufsize[2] = sz2;
+  ret.bufsize[3] = sz3;
+  ret.bufsize[4] = sz4;
 }
 
 inline void GetNextJob(uint &job) {
@@ -433,11 +426,12 @@ void HandleFindCycle(uint pid) {
 #ifdef TESTSPEED
   gettimeofday(&tim, nullptr);
   double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-  printf("@ thread %d: Search Cycle, %.4fs\n", pid, t4 - t1);
+  printf("@ thread %d: [find: %d] [cost: %.4fs]\n", pid, Data.answers, t4 - t1);
 #endif
 }
 
 void FindCircle() {
+  Cycles.reserve(MaxID);
   JobCur = 0;
   std::thread Th[NTHREAD];
   for (uint i = 1; i < NTHREAD; ++i) Th[i] = std::thread(HandleFindCycle, i);
@@ -455,7 +449,7 @@ void CalOffset() {
     for (uint j = 0; j < JobsCount; ++j) {
       const uint &job = Jobs[j];
       OffSet[job][i] = x;
-      x += CycleBufSize[i][job];
+      x += Cycles[job].bufsize[i];
     }
   }
 }
@@ -486,21 +480,22 @@ void HandleSaveAnswer(uint pid, char *result) {
     GetNextJob(job);
     if (job == -1) break;
     result = ptr + OffSet[job][0];
-    WriteAnswer(result, 0, Cycle0[job]);
+    const auto &ret = Cycles[job];
+    WriteAnswer(result, 0, ret.cycle0);
     result = ptr + OffSet[job][1];
-    WriteAnswer(result, 1, Cycle1[job]);
+    WriteAnswer(result, 1, ret.cycle1);
     result = ptr + OffSet[job][2];
-    WriteAnswer(result, 2, Cycle2[job]);
+    WriteAnswer(result, 2, ret.cycle2);
     result = ptr + OffSet[job][3];
-    WriteAnswer(result, 3, Cycle3[job]);
+    WriteAnswer(result, 3, ret.cycle3);
     result = ptr + OffSet[job][4];
-    WriteAnswer(result, 4, Cycle4[job]);
+    WriteAnswer(result, 4, ret.cycle4);
   }
 
 #ifdef TESTSPEED
   gettimeofday(&tim, nullptr);
   double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-  printf("@ thread %d: Save Answer, %.4fs\n", pid, t4 - t1);
+  printf("@ thread %d: [save: %.4fs]\n", pid, t4 - t1);
 #endif
 }
 
@@ -526,7 +521,7 @@ void SaveAnswer() {
   for (uint i = 1; i < NTHREAD; ++i) Th[i].join();
 }
 
-void Simulation() {
+int main() {
   LoadData();
   FindCircle();
   SaveAnswer();
@@ -534,9 +529,5 @@ void Simulation() {
   std::cerr << "@ Answers: " << Answers << "";
   std::cerr << ", Bufsize: " << TotalBufferSize << "\n";
 #endif
-}
-
-int main() {
-  Simulation();
   return 0;
 }
