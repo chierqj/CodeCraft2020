@@ -43,7 +43,7 @@ typedef std::pair<uint, uint> Pair;
 const uint MAXEDGE = 3000000 + 7;  // 最多边数目
 const uint MAXN = MAXEDGE << 1;    // 最多点数目
 const uint NTHREAD = 4;            // 线程个数
-const uint NUMLENGTH = 11;         // ID最大长度
+const uint NUMLENGTH = 12;         // ID最大长度
 
 /*
  * 计数
@@ -103,9 +103,6 @@ struct Edge {
     return u < r.u;
   }
 };
-struct Two {
-  uint mid, end, w;
-};
 PreBuffer MapID[MAXN];                              // 解析int
 uint Jobs[MAXN];                                    // 有效点
 uint IDDom[MAXN];                                   // ID集合
@@ -116,7 +113,6 @@ std::vector<Pair> ThChildren[NTHREAD];              // thsons
 std::vector<std::vector<Pair>> ThParents[NTHREAD];  // thfather
 std::unordered_map<uint, uint> HashID;              // hashID
 std::vector<uint> Rank;                             // rankID
-std::vector<uint> TwoStep[MAXN];                    // 两步可达,边id
 
 void Init() {
   Cycle0.reserve(MaxID);
@@ -315,18 +311,21 @@ void ForwardSearch(ThData &Data, const uint &st) {
   auto &cycle3 = Cycle3[st];
   auto &cycle4 = Cycle4[st];
   const auto &cdr1 = Children[st];
+  const Edge *edge1 = &Edges[cdr1.first];
   for (uint it1 = cdr1.first; it1 != cdr1.second; ++it1) {
-    const auto &e1 = Edges[it1];
+    const auto &e1 = *(edge1++);
     if (e1.v < st) continue;
     const uint &len1 = MapID[e1.v].len;
     const auto &cdr2 = Children[e1.v];
+    const Edge *edge2 = &Edges[cdr2.first];
     for (uint it2 = cdr2.first; it2 != cdr2.second; ++it2) {
-      const auto &e2 = Edges[it2];
+      const auto &e2 = *(edge2++);
       if (e2.v <= st || !judge(e1.w, e2.w)) continue;
       const uint len = len0 + len1 + MapID[e2.v].len;
       const auto &cdr3 = Children[e2.v];
+      const Edge *edge3 = &Edges[cdr3.first];
       for (uint it3 = cdr3.first; it3 != cdr3.second; ++it3) {
-        const auto &e3 = Edges[it3];
+        const auto &e3 = *(edge3++);
         if (e3.v < st || e3.v == e1.v || !judge(e2.w, e3.w)) {
           continue;
         } else if (e3.v == st) {
@@ -338,8 +337,9 @@ void ForwardSearch(ThData &Data, const uint &st) {
         }
         const uint &len3 = MapID[e3.v].len;
         const auto &cdr4 = Children[e3.v];
+        const Edge *edge4 = &Edges[cdr4.first];
         for (uint it4 = cdr4.first; it4 != cdr4.second; ++it4) {
-          const auto &e4 = Edges[it4];
+          const auto &e4 = *(edge4++);
           if (!(Data.Reach[e4.v] & 4) || !judge(e3.w, e4.w)) {
             continue;
           } else if (e4.v == st) {
@@ -353,8 +353,9 @@ void ForwardSearch(ThData &Data, const uint &st) {
           }
           const uint &len4 = MapID[e4.v].len;
           const auto &cdr5 = Children[e4.v];
+          const Edge *edge5 = &Edges[cdr5.first];
           for (uint it5 = cdr5.first; it5 != cdr5.second; ++it5) {
-            const auto &e5 = Edges[it5];
+            const auto &e5 = *(edge5++);
             if (!(Data.Reach[e5.v] & 2) || !judge(e4.w, e5.w)) {
               continue;
             } else if (e5.v == st) {
@@ -368,8 +369,9 @@ void ForwardSearch(ThData &Data, const uint &st) {
             }
             const uint &len5 = MapID[e5.v].len;
             const auto &cdr6 = Children[e5.v];
+            const Edge *edge6 = &Edges[cdr6.first];
             for (uint it6 = cdr6.first; it6 != cdr6.second; ++it6) {
-              const auto &e6 = Edges[it6];
+              const auto &e6 = *(edge6++);
               if (!(Data.Reach[e6.v] & 1) || !judge(e5.w, e6.w)) {
                 continue;
               } else if (e6.v == st) {
@@ -420,6 +422,7 @@ void HandleFindCycle(uint pid) {
 
   uint job = 0;
   auto &Data = ThreadData[pid];
+
   while (true) {
     GetNextJob(job);
     if (job == -1) break;
@@ -457,31 +460,17 @@ void CalOffset() {
   }
 }
 
-void WriteAnswer(const uint &job, char *result) {
-  auto foo = [&](const uint &p, const std::vector<uint> &cycle) {
-    uint idx = 0;
-    for (const auto &v : cycle) {
-      const auto &mpid = MapID[v];
-      memcpy(result, mpid.str, mpid.len);
-      if (++idx == p + 3) {
-        idx = 0;
-        *(result + mpid.len - 1) = '\n';
-      }
-      result += mpid.len;
+void WriteAnswer(char *result, const uint &p, const std::vector<uint> &cycle) {
+  uint idx = 0;
+  for (const auto &v : cycle) {
+    const auto &mpid = MapID[v];
+    memcpy(result, mpid.str, mpid.len);
+    if (++idx == p + 3) {
+      idx = 0;
+      *(result + mpid.len - 1) = '\n';
     }
-  };
-
-  char *ptr = result;
-  result = ptr + OffSet[job][0];
-  foo(0, Cycle0[job]);
-  result = ptr + OffSet[job][1];
-  foo(1, Cycle1[job]);
-  result = ptr + OffSet[job][2];
-  foo(2, Cycle2[job]);
-  result = ptr + OffSet[job][3];
-  foo(3, Cycle3[job]);
-  result = ptr + OffSet[job][4];
-  foo(4, Cycle4[job]);
+    result += mpid.len;
+  }
 }
 
 void HandleSaveAnswer(uint pid, char *result) {
@@ -491,11 +480,21 @@ void HandleSaveAnswer(uint pid, char *result) {
   double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
 #endif
 
+  char *ptr = result;
   uint job = 0;
   while (true) {
     GetNextJob(job);
     if (job == -1) break;
-    WriteAnswer(job, result);
+    result = ptr + OffSet[job][0];
+    WriteAnswer(result, 0, Cycle0[job]);
+    result = ptr + OffSet[job][1];
+    WriteAnswer(result, 1, Cycle1[job]);
+    result = ptr + OffSet[job][2];
+    WriteAnswer(result, 2, Cycle2[job]);
+    result = ptr + OffSet[job][3];
+    WriteAnswer(result, 3, Cycle3[job]);
+    result = ptr + OffSet[job][4];
+    WriteAnswer(result, 4, Cycle4[job]);
   }
 
 #ifdef TESTSPEED
@@ -527,52 +526,8 @@ void SaveAnswer() {
   for (uint i = 1; i < NTHREAD; ++i) Th[i].join();
 }
 
-void doCreateTwoStep(const uint &st) {
-  const auto &cdr1 = Children[st];
-  auto &two = TwoStep[st];
-  for (uint it1 = cdr1.first; it1 != cdr1.second; ++it1) {
-    const auto &e1 = Edges[it1];
-    const auto &cdr2 = Children[e1.v];
-    for (uint it2 = cdr2.first; it2 != cdr2.second; ++it2) {
-      const auto &e2 = Edges[it2];
-      if (!judge(e2.w, e1.w)) continue;
-      two.emplace_back(it2);
-    }
-  }
-}
-void HandleCreateTwoStep(uint pid) {
-  uint job = 0;
-  while (true) {
-    GetNextJob(job);
-    if (job == -1) break;
-    doCreateTwoStep(job);
-  }
-}
-
-void CreateTwoStep() {
-#ifdef LOCAL
-  struct timeval tim {};
-  gettimeofday(&tim, nullptr);
-  double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-#endif
-
-  JobCur = 0;
-  std::thread Th[NTHREAD];
-  for (uint i = 1; i < NTHREAD; ++i)
-    Th[i] = std::thread(HandleCreateTwoStep, i);
-  HandleCreateTwoStep(0);
-  for (uint i = 1; i < NTHREAD; ++i) Th[i].join();
-
-#ifdef LOCAL
-  gettimeofday(&tim, nullptr);
-  double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-  printf("@ create two step %.4fs\n", t4 - t1);
-#endif
-}
-
 void Simulation() {
   LoadData();
-  // CreateTwoStep();
   FindCircle();
   SaveAnswer();
 #ifdef LOCAL
