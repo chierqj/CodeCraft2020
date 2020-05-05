@@ -29,8 +29,8 @@
 #define P10(x) ((x << 3) + (x << 1))
 
 #ifdef LOCAL
-#define TRAIN "./data/18908526/test_data.txt"
-#define RESULT "./data/18908526/result.txt"
+#define TRAIN "./data/19630345/test_data.txt"
+#define RESULT "./data/19630345/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -93,8 +93,8 @@ std::atomic_flag _ID_LOCK_ = ATOMIC_FLAG_INIT;
  * 图信息
  */
 struct PreBuffer {
-  char str[NUMLENGTH];
   uint len;
+  char str[NUMLENGTH];
 };
 struct Edge {
   uint u, v, w;
@@ -102,6 +102,9 @@ struct Edge {
     if (u == r.u) return v < r.v;
     return u < r.u;
   }
+};
+struct Two {
+  uint mid, end, w;
 };
 PreBuffer MapID[MAXN];                              // 解析int
 uint Jobs[MAXN];                                    // 有效点
@@ -113,6 +116,7 @@ std::vector<Pair> ThChildren[NTHREAD];              // thsons
 std::vector<std::vector<Pair>> ThParents[NTHREAD];  // thfather
 std::unordered_map<uint, uint> HashID;              // hashID
 std::vector<uint> Rank;                             // rankID
+std::vector<uint> TwoStep[MAXN];                    // 两步可达,边id
 
 void Init() {
   Cycle0.reserve(MaxID);
@@ -144,8 +148,8 @@ void HandleLoadData(uint pid) {
     GetEdgeId(cur);
     if (cur == -1) break;
     auto &e = Edges[cur];
-    uint p1 = Rank[HashID[e.u]];
-    uint p2 = Rank[HashID[e.v]];
+    const uint &p1 = Rank[HashID[e.u]];
+    const uint &p2 = Rank[HashID[e.v]];
     e.u = p1, e.v = p2;
 
     if (children[p1].second == 0) {
@@ -407,8 +411,8 @@ inline void GetNextJob(uint &job) {
   _JOB_LOCK_.clear();
 }
 
-void FindCircle(uint pid) {
-#ifdef LOCAL
+void HandleFindCycle(uint pid) {
+#ifdef TESTSPEED
   struct timeval tim {};
   gettimeofday(&tim, nullptr);
   double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
@@ -423,11 +427,23 @@ void FindCircle(uint pid) {
     ForwardSearch(Data, job);
   }
 
-#ifdef LOCAL
+#ifdef TESTSPEED
   gettimeofday(&tim, nullptr);
   double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
   printf("@ thread %d: Search Cycle, %.4fs\n", pid, t4 - t1);
 #endif
+}
+
+void FindCircle() {
+  JobCur = 0;
+  std::thread Th[NTHREAD];
+  for (uint i = 1; i < NTHREAD; ++i) Th[i] = std::thread(HandleFindCycle, i);
+  HandleFindCycle(0);
+  for (uint i = 1; i < NTHREAD; ++i) Th[i].join();
+  for (auto &it : ThreadData) {
+    Answers += it.answers;
+    TotalBufferSize += it.bufsize;
+  }
 }
 
 void CalOffset() {
@@ -469,7 +485,7 @@ void WriteAnswer(const uint &job, char *result) {
 }
 
 void HandleSaveAnswer(uint pid, char *result) {
-#ifdef LOCAL
+#ifdef TESTSPEED
   struct timeval tim {};
   gettimeofday(&tim, nullptr);
   double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
@@ -482,7 +498,7 @@ void HandleSaveAnswer(uint pid, char *result) {
     WriteAnswer(job, result);
   }
 
-#ifdef LOCAL
+#ifdef TESTSPEED
   gettimeofday(&tim, nullptr);
   double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
   printf("@ thread %d: Save Answer, %.4fs\n", pid, t4 - t1);
@@ -511,20 +527,54 @@ void SaveAnswer() {
   for (uint i = 1; i < NTHREAD; ++i) Th[i].join();
 }
 
-void Simulation() {
-  LoadData();
+void doCreateTwoStep(const uint &st) {
+  const auto &cdr1 = Children[st];
+  auto &two = TwoStep[st];
+  for (uint it1 = cdr1.first; it1 != cdr1.second; ++it1) {
+    const auto &e1 = Edges[it1];
+    const auto &cdr2 = Children[e1.v];
+    for (uint it2 = cdr2.first; it2 != cdr2.second; ++it2) {
+      const auto &e2 = Edges[it2];
+      if (!judge(e2.w, e1.w)) continue;
+      two.emplace_back(it2);
+    }
+  }
+}
+void HandleCreateTwoStep(uint pid) {
+  uint job = 0;
+  while (true) {
+    GetNextJob(job);
+    if (job == -1) break;
+    doCreateTwoStep(job);
+  }
+}
+
+void CreateTwoStep() {
+#ifdef LOCAL
+  struct timeval tim {};
+  gettimeofday(&tim, nullptr);
+  double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+#endif
+
+  JobCur = 0;
   std::thread Th[NTHREAD];
-  for (uint i = 1; i < NTHREAD; ++i) Th[i] = std::thread(FindCircle, i);
-  FindCircle(0);
+  for (uint i = 1; i < NTHREAD; ++i)
+    Th[i] = std::thread(HandleCreateTwoStep, i);
+  HandleCreateTwoStep(0);
   for (uint i = 1; i < NTHREAD; ++i) Th[i].join();
 
-  for (auto &it : ThreadData) {
-    Answers += it.answers;
-    TotalBufferSize += it.bufsize;
-  }
+#ifdef LOCAL
+  gettimeofday(&tim, nullptr);
+  double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+  printf("@ create two step %.4fs\n", t4 - t1);
+#endif
+}
 
+void Simulation() {
+  LoadData();
+  // CreateTwoStep();
+  FindCircle();
   SaveAnswer();
-
 #ifdef LOCAL
   std::cerr << "@ Answers: " << Answers << "";
   std::cerr << ", Bufsize: " << TotalBufferSize << "\n";
