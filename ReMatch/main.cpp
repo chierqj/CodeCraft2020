@@ -71,7 +71,8 @@ struct ThData {
 uint TotalBufferSize = 0;  // 总buffer大小
 uint FirstBufLen = 0;      // 换个数bufsize
 char FirstBuf[NUMLENGTH];  // 环个数buf
-uint OffSet[MAXN][5];      // 偏移量
+// uint OffSet[MAXN][5];      // 偏移量
+std::tuple<uint, uint, uint, uint, uint> OffSet[NTHREAD];  // 偏移量
 struct Answer {
   uint bufsize[5];
   std::vector<uint> cycle0;
@@ -298,7 +299,7 @@ void BackSearch(ThData &Data, const uint &st) {
 }
 
 void ForwardSearch(ThData &Data, const uint &st) {
-  uint ans = 0, sz0 = 0, sz1 = 0, sz2 = 0, sz3 = 0, sz4 = 0;
+  uint sz0 = 0, sz1 = 0, sz2 = 0, sz3 = 0, sz4 = 0;
   const uint &len0 = MapID[st].len;
   auto &ret = Cycles[st];
   const auto &cdr1 = Children[st];
@@ -307,13 +308,13 @@ void ForwardSearch(ThData &Data, const uint &st) {
   for (uint it1 = cdr1[0]; it1 != cdr1[1]; ++it1) {
     const auto &e1 = *(edge1++);
     if (e1.v < st) continue;
-    const uint &len1 = MapID[e1.v].len;
+    const uint &len1 = MapID[e1.v].len + len0;
     const auto &cdr2 = Children[e1.v];
     edge2 = &Edges[cdr2[0]];
     for (uint it2 = cdr2[0]; it2 != cdr2[1]; ++it2) {
       const auto &e2 = *(edge2++);
       if (e2.v <= st || !judge(e1.w, e2.w)) continue;
-      const uint len = len0 + len1 + MapID[e2.v].len;
+      const uint len = MapID[e2.v].len + len1;
       const auto &cdr3 = Children[e2.v];
       edge3 = &Edges[cdr3[0]];
       for (uint it3 = cdr3[0]; it3 != cdr3[1]; ++it3) {
@@ -324,7 +325,6 @@ void ForwardSearch(ThData &Data, const uint &st) {
           if (!judge(e3.w, e1.w)) continue;
           ret.cycle0.insert(ret.cycle0.end(), {st, e1.v, e2.v});
           sz0 += len;
-          ++ans;
           continue;
         }
         const uint &len3 = MapID[e3.v].len;
@@ -338,7 +338,6 @@ void ForwardSearch(ThData &Data, const uint &st) {
             if (!judge(e4.w, e1.w)) continue;
             ret.cycle1.insert(ret.cycle1.end(), {st, e1.v, e2.v, e3.v});
             sz1 += len + len3;
-            ++ans;
             continue;
           } else if (e1.v == e4.v || e2.v == e4.v) {
             continue;
@@ -354,7 +353,6 @@ void ForwardSearch(ThData &Data, const uint &st) {
               if (!judge(e5.w, e1.w)) continue;
               ret.cycle2.insert(ret.cycle2.end(), {st, e1.v, e2.v, e3.v, e4.v});
               sz2 += len + len3 + len4;
-              ++ans;
               continue;
             } else if (e1.v == e5.v || e2.v == e5.v || e3.v == e5.v) {
               continue;
@@ -371,7 +369,6 @@ void ForwardSearch(ThData &Data, const uint &st) {
                 ret.cycle3.insert(ret.cycle3.end(),
                                   {st, e1.v, e2.v, e3.v, e4.v, e5.v});
                 sz3 += len + len3 + len4 + len5;
-                ++ans;
                 continue;
               }
               const uint &w7 = Data.LastWeight[e6.v];
@@ -383,14 +380,15 @@ void ForwardSearch(ThData &Data, const uint &st) {
               ret.cycle4.insert(ret.cycle4.end(),
                                 {st, e1.v, e2.v, e3.v, e4.v, e5.v, e6.v});
               sz4 += len + len3 + len4 + len5 + len6;
-              ++ans;
             }
           }
         }
       }
     }
   }
-  Data.answers += ans;
+  Data.answers +=
+      (ret.cycle0.size() / 3 + ret.cycle1.size() / 4 + ret.cycle2.size() / 5 +
+       ret.cycle3.size() / 6 + ret.cycle4.size() / 7);
   Data.bufsize += sz0 + sz1 + sz2 + sz3 + sz4;
   ret.bufsize[0] = sz0;
   ret.bufsize[1] = sz1;
@@ -444,27 +442,22 @@ void FindCircle() {
 }
 
 void CalOffset() {
-  uint x = FirstBufLen;
+  uint block = TotalBufferSize / NTHREAD;
+  uint tol = 0, x = 0, stl = 0, stidx = 0;
+  uint tidx = 0;
   for (uint i = 0; i < 5; ++i) {
     for (uint j = 0; j < JobsCount; ++j) {
-      const uint &job = Jobs[j];
-      OffSet[job][i] = x;
-      x += Cycles[job].bufsize[i];
+      if (x > block) {
+        OffSet[tidx++] = std::make_tuple(stl, i, stidx, j, tol);
+        stl = i;
+        stidx = j;
+        tol += x;
+        x = 0;
+      }
+      x += Cycles[Jobs[j]].bufsize[i];
     }
   }
-}
-
-void WriteAnswer(char *result, const uint &p, const std::vector<uint> &cycle) {
-  uint idx = 0;
-  for (const auto &v : cycle) {
-    const auto &mpid = MapID[v];
-    memcpy(result, mpid.str, mpid.len);
-    if (++idx == p + 3) {
-      idx = 0;
-      *(result + mpid.len - 1) = '\n';
-    }
-    result += mpid.len;
-  }
+  OffSet[tidx++] = std::make_tuple(stl, 4, stidx, JobsCount, tol);
 }
 
 void HandleSaveAnswer(uint pid, char *result) {
@@ -476,20 +469,60 @@ void HandleSaveAnswer(uint pid, char *result) {
 
   char *ptr = result;
   uint job = 0;
-  while (true) {
-    GetNextJob(job);
-    if (job == -1) break;
-    result = ptr + OffSet[job][0];
-    const auto &ret = Cycles[job];
-    WriteAnswer(result, 0, ret.cycle0);
-    result = ptr + OffSet[job][1];
-    WriteAnswer(result, 1, ret.cycle1);
-    result = ptr + OffSet[job][2];
-    WriteAnswer(result, 2, ret.cycle2);
-    result = ptr + OffSet[job][3];
-    WriteAnswer(result, 3, ret.cycle3);
-    result = ptr + OffSet[job][4];
-    WriteAnswer(result, 4, ret.cycle4);
+  const auto &offset = OffSet[pid];
+  uint stl = std::get<0>(offset);
+  uint edl = std::get<1>(offset);
+  uint stidx = std::get<2>(offset);
+  uint edidx = std::get<3>(offset);
+  uint offsz = FirstBufLen + std::get<4>(OffSet[pid]);
+  result = ptr + offsz;
+
+  auto foo = [&](const uint &p, const std::vector<uint> &cycle) {
+    uint idx = 0;
+    for (const auto &v : cycle) {
+      const auto &mpid = MapID[v];
+      memcpy(result, mpid.str, mpid.len);
+      if (++idx == p + 3) {
+        idx = 0;
+        *(result + mpid.len - 1) = '\n';
+      }
+      result += mpid.len;
+      offsz += mpid.len;
+    }
+  };
+
+  for (uint i = stl; i <= edl; ++i) {
+    uint low = (i == stl ? stidx : 0);
+    uint high = (i == edl ? edidx : JobsCount);
+    switch (i) {
+      case 0:
+        for (uint j = low; j < high; ++j) {
+          foo(i, Cycles[Jobs[j]].cycle0);
+        }
+        break;
+      case 1:
+        for (uint j = low; j < high; ++j) {
+          foo(i, Cycles[Jobs[j]].cycle1);
+        }
+        break;
+      case 2:
+        for (uint j = low; j < high; ++j) {
+          foo(i, Cycles[Jobs[j]].cycle2);
+        }
+        break;
+      case 3:
+        for (uint j = low; j < high; ++j) {
+          foo(i, Cycles[Jobs[j]].cycle3);
+        }
+        break;
+      case 4:
+        for (uint j = low; j < high; ++j) {
+          foo(i, Cycles[Jobs[j]].cycle4);
+        }
+        break;
+      default:
+        break;
+    }
   }
 
 #ifdef TESTSPEED
@@ -500,6 +533,8 @@ void HandleSaveAnswer(uint pid, char *result) {
 }
 
 void SaveAnswer() {
+  CalOffset();
+
   sprintf(FirstBuf, "%d\n", Answers);
   FirstBufLen = strlen(FirstBuf);
   TotalBufferSize += FirstBufLen;
@@ -510,7 +545,6 @@ void SaveAnswer() {
   close(fd);
   memcpy(result, FirstBuf, FirstBufLen);
 
-  CalOffset();
   JobCur = 0;
 
   std::thread Th[NTHREAD];
