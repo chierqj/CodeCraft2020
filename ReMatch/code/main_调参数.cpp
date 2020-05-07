@@ -328,7 +328,7 @@ void ForwardSearch(ThData &Data, const uint &st) {
           const auto &mpid4 = MapID[v4];
           for (const auto &it5 : children5) {
             const uint &v5 = it5.first, &w5 = it5.second;
-            if (!(Data.Reach[v5] & 2) || !judge(w4, w5)) {
+            if (!Data.Reach[v5] || !judge(w4, w5)) {
               continue;
             } else if (v5 == st) {
               if (!judge(w5, w1)) continue;

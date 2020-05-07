@@ -110,14 +110,12 @@ struct Edge {
 struct DFSEdge {
   uint v, w;
 };
-PreBuffer MapID[MAXN];                              // 解析int
-uint Jobs[MAXN];                                    // 有效点
-Edge Edges[MAXEDGE];                                // 所有边
-DFSEdge DFSEdges[MAXEDGE];                          // 所有边
-uint Children[MAXN][2];                             // sons
-std::vector<Pair> Parents[MAXN];                    // fathers
-std::vector<Pair> ThChildren[NTHREAD];              // thsons
-std::vector<std::vector<Pair>> ThParents[NTHREAD];  // thfather
+PreBuffer MapID[MAXN];            // 解析int
+uint Jobs[MAXN];                  // 有效点
+Edge Edges[MAXEDGE];              // 所有边
+DFSEdge DFSEdges[MAXEDGE];        // 所有边
+uint Children[MAXN][2];           // sons
+std::vector<Pair> Parents[MAXN];  // fathers
 
 struct HashTable {
   static const int MOD1 = 6893911;
@@ -171,7 +169,13 @@ struct HashTable {
 };
 HashTable HashID;
 
-void SortEdgeAndHash() {
+// inline void ParseInteger(const uint &x, const uint &num) {
+//   auto &mpid = MapID[x];
+//   sprintf(mpid.str, "%d,", num);
+//   mpid.len = strlen(mpid.str);
+// }
+
+void SortAndRank() {
   std::sort(Edges, Edges + EdgesCount);
   uint pre = 0;
   for (uint i = 0; i < EdgesCount; ++i) {
@@ -183,53 +187,49 @@ void SortEdgeAndHash() {
     pre = e.u;
   }
   HashID.Sort();
-}
-
-void CreateSubGraph(int pid) {
-  auto &children = ThChildren[pid];
-  auto &parents = ThParents[pid];
-  parents.reserve(MaxID);
-  children.reserve(MaxID);
-  for (int i = pid; i < EdgesCount; i += NTHREAD) {
+  for (uint i = 0; i < EdgesCount; ++i) {
     auto &e = Edges[i];
     e.u = HashID.Query(e.u);
     e.v = HashID.Query(e.v);
-    DFSEdges[i].v = e.v;
-    DFSEdges[i].w = e.w;
-    if (children[e.u].second == 0) {
-      children[e.u].first = i;
-    }
-    ++children[e.u].second;
-    parents[e.v].emplace_back(std::make_pair(e.u, e.w));
   }
 }
-void CreateGraph(int pid) {
-  for (int i = pid; i < MaxID; i += NTHREAD) {
-    uint minx = EdgesCount, len = 0;
-    for (uint j = 0; j < NTHREAD; ++j) {
-      Parents[i].insert(Parents[i].end(), ThParents[j][i].begin(),
-                        ThParents[j][i].end());
-      const auto &cdr = ThChildren[j][i];
-      if (cdr.second > 0) {
-        minx = std::min(minx, cdr.first);
-        len += cdr.second;
-      }
+
+void CreateChildren() {
+  uint pre = 0;
+  for (uint i = 0; i < EdgesCount; ++i) {
+    auto &e = Edges[i];
+    DFSEdges[i].v = e.v;
+    DFSEdges[i].w = e.w;
+
+    if (i == 0) {
+      Children[e.u][0] = 0;
+      pre = e.u;
+      continue;
     }
-    Children[i][0] = minx;
-    Children[i][1] = minx + len;
+    if (e.u == pre) {
+      continue;
+    }
+    Children[pre][1] = i;
+    Children[e.u][0] = i;
+    pre = e.u;
+  }
+  Children[pre][1] = EdgesCount;
+}
+void CreateParents() {
+  for (uint i = 0; i < EdgesCount; ++i) {
+    const auto &e = Edges[i];
+    Parents[e.v].emplace_back(std::make_pair(e.u, e.w));
+  }
+}
+void SortParents(uint st, uint ed) {
+  for (uint i = st; i < ed; ++i) {
+    const uint &job = Jobs[i];
     std::sort(
-        Parents[i].begin(), Parents[i].end(),
+        Parents[job].begin(), Parents[job].end(),
         [](const Pair &e1, const Pair &e2) { return e1.first > e2.first; });
   }
 }
-
 void LoadData() {
-#ifdef LOCAL
-  struct timeval tim {};
-  gettimeofday(&tim, nullptr);
-  double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-#endif
-
   uint fd = open(TRAIN, O_RDONLY);
   uint bufsize = lseek(fd, 0, SEEK_END);
   char *buffer = (char *)mmap(NULL, bufsize, PROT_READ, MAP_PRIVATE, fd, 0);
@@ -262,25 +262,30 @@ void LoadData() {
     u = v = w = 0;
   }
 
-  SortEdgeAndHash();
+  SortAndRank();
   // 多线程存图
   std::thread Th[NTHREAD];
-  for (int i = 0; i < NTHREAD; ++i) Th[i] = std::thread(CreateSubGraph, i);
-  for (int i = 0; i < NTHREAD; ++i) Th[i].join();
-  for (int i = 0; i < NTHREAD; ++i) Th[i] = std::thread(CreateGraph, i);
-  for (int i = 0; i < NTHREAD; ++i) Th[i].join();
+  Th[0] = std::thread(CreateChildren);
+  Th[1] = std::thread(CreateParents);
+  Th[0].join();
+  Th[1].join();
 
   for (uint i = 0; i < MaxID; ++i) {
     if (Children[i][1] > 0 && !Parents[i].empty()) {
       Jobs[JobsCount++] = i;
     }
   }
+  uint st = 0, block = JobsCount / NTHREAD;
+  for (uint i = 0; i < NTHREAD; ++i) {
+    uint ed = (i == NTHREAD - 1 ? JobsCount : st + block);
+    Th[i] = std::thread(SortParents, st, ed);
+    st = ed;
+  }
+  for (int i = 0; i < NTHREAD; ++i) Th[i].join();
 
 #ifdef LOCAL
-  gettimeofday(&tim, nullptr);
-  double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-  printf("@ Load Data: [U: %d, E: %d, Job: %d] [cost: %.4fs]\n", MaxID,
-         EdgesCount, JobsCount, t4 - t1);
+  std::cerr << "@ u: " << MaxID << ", e: " << EdgesCount
+            << ", job: " << JobsCount << "\n";
 #endif
 }
 
@@ -322,7 +327,6 @@ void BackSearch(ThData &Data, const uint &st) {
         const uint &v3 = it3.first;
         if (v3 <= st) break;
         const uint &w3 = it3.second;
-        if (v3 == v1) continue;
         if (!judge(w3, w2)) continue;
         Data.Reach[v3] |= 4;
         Data.ReachPoint[Data.ReachCount++] = v3;
@@ -347,7 +351,7 @@ void ForwardSearch(ThData &Data, const uint &st) {
     for (uint it2 = cdr2[0]; it2 != cdr2[1]; ++it2) {
       const auto &e2 = *(edge2++);
       if (e2.v <= st || !judge(e1, e2)) continue;
-      const uint &len = MapID[e2.v].len + len1;
+      const uint len = MapID[e2.v].len + len1;
       const auto &cdr3 = Children[e2.v];
       edge3 = &DFSEdges[cdr3[0]];
       for (uint it3 = cdr3[0]; it3 != cdr3[1]; ++it3) {
@@ -365,14 +369,14 @@ void ForwardSearch(ThData &Data, const uint &st) {
         edge4 = &DFSEdges[cdr4[0]];
         for (uint it4 = cdr4[0]; it4 != cdr4[1]; ++it4) {
           const auto &e4 = *(edge4++);
-          if (!(Data.Reach[e4.v] & 4) || e1.v == e4.v || e2.v == e4.v) {
-            continue;
-          } else if (!judge(e3, e4)) {
+          if (!(Data.Reach[e4.v] & 4) || !judge(e3, e4)) {
             continue;
           } else if (e4.v == st) {
             if (!judge(e4, e1)) continue;
             ret.cycle1.insert(ret.cycle1.end(), {st, e1.v, e2.v, e3.v});
             sz1 += len + len3;
+            continue;
+          } else if (e1.v == e4.v || e2.v == e4.v) {
             continue;
           }
           const uint &len4 = MapID[e4.v].len;
@@ -380,15 +384,14 @@ void ForwardSearch(ThData &Data, const uint &st) {
           edge5 = &DFSEdges[cdr5[0]];
           for (uint it5 = cdr5[0]; it5 != cdr5[1]; ++it5) {
             const auto &e5 = *(edge5++);
-            if (!(Data.Reach[e5.v] & 2) || e1.v == e5.v || e2.v == e5.v ||
-                e3.v == e5.v) {
-              continue;
-            } else if (!judge(e4, e5)) {
+            if (!(Data.Reach[e5.v] & 2) || !judge(e4, e5)) {
               continue;
             } else if (e5.v == st) {
               if (!judge(e5, e1)) continue;
               ret.cycle2.insert(ret.cycle2.end(), {st, e1.v, e2.v, e3.v, e4.v});
               sz2 += len + len3 + len4;
+              continue;
+            } else if (e1.v == e5.v || e2.v == e5.v || e3.v == e5.v) {
               continue;
             }
             const uint &len5 = MapID[e5.v].len;
@@ -396,10 +399,7 @@ void ForwardSearch(ThData &Data, const uint &st) {
             edge6 = &DFSEdges[cdr6[0]];
             for (uint it6 = cdr6[0]; it6 != cdr6[1]; ++it6) {
               const auto &e6 = *(edge6++);
-              if (!(Data.Reach[e6.v] & 1) || e1.v == e6.v || e2.v == e6.v ||
-                  e3.v == e6.v || e4.v == e6.v) {
-                continue;
-              } else if (!judge(e5, e6)) {
+              if (!(Data.Reach[e6.v] & 1) || !judge(e5, e6)) {
                 continue;
               } else if (e6.v == st) {
                 if (!judge(e6, e1)) continue;
@@ -409,7 +409,8 @@ void ForwardSearch(ThData &Data, const uint &st) {
                 continue;
               }
               const uint &w7 = Data.LastWeight[e6.v];
-              if (!judge(e6.w, w7) || !judge(w7, e1.w)) {
+              if (e1.v == e6.v || e2.v == e6.v || e3.v == e6.v ||
+                  e4.v == e6.v || !judge(e6.w, w7) || !judge(w7, e1.w)) {
                 continue;
               }
               const uint &len6 = MapID[e6.v].len;

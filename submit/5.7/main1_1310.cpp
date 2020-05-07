@@ -110,14 +110,12 @@ struct Edge {
 struct DFSEdge {
   uint v, w;
 };
-PreBuffer MapID[MAXN];                              // 解析int
-uint Jobs[MAXN];                                    // 有效点
-Edge Edges[MAXEDGE];                                // 所有边
-DFSEdge DFSEdges[MAXEDGE];                          // 所有边
-uint Children[MAXN][2];                             // sons
-std::vector<Pair> Parents[MAXN];                    // fathers
-std::vector<Pair> ThChildren[NTHREAD];              // thsons
-std::vector<std::vector<Pair>> ThParents[NTHREAD];  // thfather
+PreBuffer MapID[MAXN];            // 解析int
+uint Jobs[MAXN];                  // 有效点
+Edge Edges[MAXEDGE];              // 所有边
+DFSEdge DFSEdges[MAXEDGE];        // 所有边
+uint Children[MAXN][2];           // sons
+std::vector<Pair> Parents[MAXN];  // fathers
 
 struct HashTable {
   static const int MOD1 = 6893911;
@@ -171,7 +169,7 @@ struct HashTable {
 };
 HashTable HashID;
 
-void SortEdgeAndHash() {
+void SortAndRank() {
   std::sort(Edges, Edges + EdgesCount);
   uint pre = 0;
   for (uint i = 0; i < EdgesCount; ++i) {
@@ -183,53 +181,49 @@ void SortEdgeAndHash() {
     pre = e.u;
   }
   HashID.Sort();
-}
-
-void CreateSubGraph(int pid) {
-  auto &children = ThChildren[pid];
-  auto &parents = ThParents[pid];
-  parents.reserve(MaxID);
-  children.reserve(MaxID);
-  for (int i = pid; i < EdgesCount; i += NTHREAD) {
+  for (uint i = 0; i < EdgesCount; ++i) {
     auto &e = Edges[i];
     e.u = HashID.Query(e.u);
     e.v = HashID.Query(e.v);
-    DFSEdges[i].v = e.v;
-    DFSEdges[i].w = e.w;
-    if (children[e.u].second == 0) {
-      children[e.u].first = i;
-    }
-    ++children[e.u].second;
-    parents[e.v].emplace_back(std::make_pair(e.u, e.w));
   }
 }
-void CreateGraph(int pid) {
-  for (int i = pid; i < MaxID; i += NTHREAD) {
-    uint minx = EdgesCount, len = 0;
-    for (uint j = 0; j < NTHREAD; ++j) {
-      Parents[i].insert(Parents[i].end(), ThParents[j][i].begin(),
-                        ThParents[j][i].end());
-      const auto &cdr = ThChildren[j][i];
-      if (cdr.second > 0) {
-        minx = std::min(minx, cdr.first);
-        len += cdr.second;
-      }
+
+void CreateChildren() {
+  uint pre = 0;
+  for (uint i = 0; i < EdgesCount; ++i) {
+    auto &e = Edges[i];
+    DFSEdges[i].v = e.v;
+    DFSEdges[i].w = e.w;
+
+    if (i == 0) {
+      Children[e.u][0] = 0;
+      pre = e.u;
+      continue;
     }
-    Children[i][0] = minx;
-    Children[i][1] = minx + len;
+    if (e.u == pre) {
+      continue;
+    }
+    Children[pre][1] = i;
+    Children[e.u][0] = i;
+    pre = e.u;
+  }
+  Children[pre][1] = EdgesCount;
+}
+void CreateParents() {
+  for (uint i = 0; i < EdgesCount; ++i) {
+    const auto &e = Edges[i];
+    Parents[e.v].emplace_back(std::make_pair(e.u, e.w));
+  }
+}
+void SortParents(uint st, uint ed) {
+  for (uint i = st; i < ed; ++i) {
+    const uint &job = Jobs[i];
     std::sort(
-        Parents[i].begin(), Parents[i].end(),
+        Parents[job].begin(), Parents[job].end(),
         [](const Pair &e1, const Pair &e2) { return e1.first > e2.first; });
   }
 }
-
 void LoadData() {
-#ifdef LOCAL
-  struct timeval tim {};
-  gettimeofday(&tim, nullptr);
-  double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-#endif
-
   uint fd = open(TRAIN, O_RDONLY);
   uint bufsize = lseek(fd, 0, SEEK_END);
   char *buffer = (char *)mmap(NULL, bufsize, PROT_READ, MAP_PRIVATE, fd, 0);
@@ -262,25 +256,30 @@ void LoadData() {
     u = v = w = 0;
   }
 
-  SortEdgeAndHash();
+  SortAndRank();
   // 多线程存图
   std::thread Th[NTHREAD];
-  for (int i = 0; i < NTHREAD; ++i) Th[i] = std::thread(CreateSubGraph, i);
-  for (int i = 0; i < NTHREAD; ++i) Th[i].join();
-  for (int i = 0; i < NTHREAD; ++i) Th[i] = std::thread(CreateGraph, i);
-  for (int i = 0; i < NTHREAD; ++i) Th[i].join();
+  Th[0] = std::thread(CreateChildren);
+  Th[1] = std::thread(CreateParents);
+  Th[0].join();
+  Th[1].join();
 
   for (uint i = 0; i < MaxID; ++i) {
     if (Children[i][1] > 0 && !Parents[i].empty()) {
       Jobs[JobsCount++] = i;
     }
   }
+  uint st = 0, block = JobsCount / NTHREAD;
+  for (uint i = 0; i < NTHREAD; ++i) {
+    uint ed = (i == NTHREAD - 1 ? JobsCount : st + block);
+    Th[i] = std::thread(SortParents, st, ed);
+    st = ed;
+  }
+  for (int i = 0; i < NTHREAD; ++i) Th[i].join();
 
 #ifdef LOCAL
-  gettimeofday(&tim, nullptr);
-  double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-  printf("@ Load Data: [U: %d, E: %d, Job: %d] [cost: %.4fs]\n", MaxID,
-         EdgesCount, JobsCount, t4 - t1);
+  std::cerr << "@ u: " << MaxID << ", e: " << EdgesCount
+            << ", job: " << JobsCount << "\n";
 #endif
 }
 
@@ -347,7 +346,7 @@ void ForwardSearch(ThData &Data, const uint &st) {
     for (uint it2 = cdr2[0]; it2 != cdr2[1]; ++it2) {
       const auto &e2 = *(edge2++);
       if (e2.v <= st || !judge(e1, e2)) continue;
-      const uint &len = MapID[e2.v].len + len1;
+      const uint len = MapID[e2.v].len + len1;
       const auto &cdr3 = Children[e2.v];
       edge3 = &DFSEdges[cdr3[0]];
       for (uint it3 = cdr3[0]; it3 != cdr3[1]; ++it3) {
