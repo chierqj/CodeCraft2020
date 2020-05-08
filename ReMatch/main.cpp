@@ -77,27 +77,27 @@ struct ThData {
   uint LastWeight[MAXN];  // 最后一步权重
 } ThreadData[NTHREAD];    // 线程找环
 
-uint MaxID = 0;                                            // 最大点
-uint Answers = 0;                                          // 环个数
-uint EdgesCount = 0;                                       // 边数目
-uint JobsCount = 0;                                        // 有效点数目
-uint TotalBufferSize = 0;                                  // 总buffer大小
-uint FirstBufLen = 0;                                      // 换个数bufsize
-uint JobCur = 0;                                           // Job光标
-std::atomic_flag _JOB_LOCK_ = ATOMIC_FLAG_INIT;            // job lock
-char FirstBuf[NUMLENGTH];                                  // 环个数buf
-uint ThEdgesCount[NTHREAD];                                // count
-std::tuple<uint, uint, uint, uint, uint> OffSet[NTHREAD];  // 偏移量
-uint Jobs[MAXN];                                           // 有效点
-PreBuffer MapID[MAXN];                                     // 解析int
-uint Children[MAXN][2];                                    // sons
-std::vector<Pair> Parents[MAXN];                           // fathers
-std::vector<Pair> ThChildren[NTHREAD];                     // thsons
-std::vector<std::vector<Pair>> ThParents[NTHREAD];         // thfather
-std::vector<Answer> Cycles;                                // 所有答案
-DFSEdge DFSEdges[MAXEDGE];                                 // 所有边
-Edge Edges[MAXEDGE];                                       // 所有边
-Edge ThEdges[NTHREAD][MAXEDGE];                            // 线程边
+uint MaxID = 0;                                     // 最大点
+uint Answers = 0;                                   // 环个数
+uint EdgesCount = 0;                                // 边数目
+uint JobsCount = 0;                                 // 有效点数目
+uint TotalBufferSize = 0;                           // 总buffer大小
+uint FirstBufLen = 0;                               // 换个数bufsize
+uint JobCur = 0;                                    // Job光标
+std::atomic_flag _JOB_LOCK_ = ATOMIC_FLAG_INIT;     // job lock
+char FirstBuf[NUMLENGTH];                           // 环个数buf
+uint ThEdgesCount[NTHREAD];                         // count
+uint OffSet[NTHREAD][5];                            // 偏移量
+uint Jobs[MAXN];                                    // 有效点
+PreBuffer MapID[MAXN];                              // 解析int
+uint Children[MAXN][2];                             // sons
+std::vector<Pair> Parents[MAXN];                    // fathers
+std::vector<Pair> ThChildren[NTHREAD];              // thsons
+std::vector<std::vector<Pair>> ThParents[NTHREAD];  // thfather
+std::vector<Answer> Cycles;                         // 所有答案
+DFSEdge DFSEdges[MAXEDGE];                          // 所有边
+Edge Edges[MAXEDGE];                                // 所有边
+Edge ThEdges[NTHREAD][MAXEDGE];                     // 线程边
 
 struct HashTable {
   static const int MOD1 = 6893911;
@@ -145,7 +145,7 @@ struct HashTable {
       Map[idx].val = i;
       auto &mpid = MapID[i];
       sprintf(mpid.str, "%d,", Map[idx].key);
-      mpid.len = strlen(mpid.str);
+      mpid.len = (uint)(std::log10(Map[idx].key) + 2);
     }
   }
 };
@@ -531,7 +531,11 @@ void CalOffset() {
   for (uint i = 0; i < 5; ++i) {
     for (uint j = 0; j < JobsCount; ++j) {
       if (x > block) {
-        OffSet[tidx++] = std::make_tuple(stl, i, stidx, j, tol);
+        OffSet[tidx][0] = stl;
+        OffSet[tidx][1] = i;
+        OffSet[tidx][2] = stidx;
+        OffSet[tidx][3] = j;
+        OffSet[tidx++][4] = tol;
         stl = i;
         stidx = j;
         tol += x;
@@ -540,7 +544,12 @@ void CalOffset() {
       x += Cycles[Jobs[j]].bufsize[i];
     }
   }
-  OffSet[tidx++] = std::make_tuple(stl, 4, stidx, JobsCount, tol);
+  OffSet[tidx][0] = stl;
+  OffSet[tidx][1] = 4;
+  OffSet[tidx][2] = stidx;
+  OffSet[tidx][3] = JobsCount;
+  OffSet[tidx++][4] = tol;
+  // OffSet[tidx++] = std::make_tuple(stl, 4, stidx, JobsCount, tol);
 }
 
 void WriteAnswer(char *&result, const uint &p, const std::vector<uint> &cycle) {
@@ -553,7 +562,6 @@ void WriteAnswer(char *&result, const uint &p, const std::vector<uint> &cycle) {
       *(result + mpid.len - 1) = '\n';
     }
     result += mpid.len;
-    // offsz += mpid.len;
   }
 };
 
@@ -567,11 +575,9 @@ void HandleSaveAnswer(uint pid, char *result) {
   char *ptr = result;
   uint job = 0;
   const auto &offset = OffSet[pid];
-  uint stl = std::get<0>(offset);
-  uint edl = std::get<1>(offset);
-  uint stidx = std::get<2>(offset);
-  uint edidx = std::get<3>(offset);
-  uint offsz = FirstBufLen + std::get<4>(OffSet[pid]);
+  uint stl = offset[0], edl = offset[1];
+  uint stidx = offset[2], edidx = offset[3];
+  uint offsz = FirstBufLen + offset[4];
   result = ptr + offsz;
 
   for (uint i = stl; i <= edl; ++i) {
