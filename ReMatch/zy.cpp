@@ -33,14 +33,149 @@ using namespace std;
 #define ushort uint8_t
 
 const uint kMaxResult = 20000008;  //最大结果数
-#define kMaxE 3000024              //最大边数
-#define kMaxN 6000024              //最大点数
-#define kThreadNum 4               //进程/线程数量
-#define kMaxIdStrLen 12            //整数表示的ID有多长
+const uint kMaxE = 3000024;        //最大边数
+const uint kMaxN = 6000024;        //最大点数
+const uint kThreadNum = 4;         //进程/线程数量
+const uint kMaxIdStrLen = 12;      //整数表示的ID有多长
 const uint kCannotReachFlg = 2147123456;
 
 string g_test_file;     //输入文件
 string g_predict_file;  //输出文件
+
+template <class T>
+class Vec {
+  uint elem_cnt;
+  uint elem_capacity;
+  T *elem;
+
+ public:
+  /** Default constructor */
+  explicit Vec<T>(size_t s)
+      : elem_cnt(0),
+        elem_capacity(s),
+        elem{static_cast<T *>(::operator new(sizeof(T) * elem_capacity))} {};
+  explicit Vec<T>() : elem_cnt(0), elem_capacity(0), elem(nullptr){};
+  Vec<T>(const Vec<T> &other)
+      : elem_cnt(other.elem_cnt),
+        elem_capacity(other.elem_capacity),
+        elem(new T[elem_cnt]) {
+    for (size_t i = 0; i < elem_cnt; ++i) elem[i] = other.elem[i];
+  }
+
+  Vec<T> &operator=(const Vec<T> &other) {
+    for (size_t i = 0; i < elem_cnt; ++i) elem[i] = other.elem[i];
+    elem_cnt = other.elem_cnt;
+    elem_capacity = other.elem_capacity;
+    return *this;
+  }
+
+  T *begin() { return elem; }
+
+  T *begin() const { return elem; }
+
+  T *end() { return (elem + elem_cnt); }
+
+  T *end() const { return (elem + elem_cnt); }
+
+  T &operator[](size_t n) { return elem[n]; }
+
+  T &operator[](size_t n) const { return elem[n]; }
+
+  size_t size() const { return elem_cnt; }
+
+  /*    size_t capacity() const {
+          return elem_capacity;
+      }
+
+
+      void push_back(T &value) {
+          if (elem_cnt >= elem_capacity) {
+              reserve(elem_capacity * 2+8);
+          }
+          elem[elem_cnt++] = value;
+      }
+      void push_back(const T &value) {
+          if (elem_cnt >= elem_capacity) {
+              reserve(elem_capacity * 2+8);
+          }
+          elem[elem_cnt++] = value;
+      }
+
+      void push_list(const T &v0,const T &v1,const T &v2){
+          if (elem_cnt+3 >= elem_capacity) {
+              reserve(elem_capacity * 2+8);
+          }
+          elem[elem_cnt++] = v0;
+          elem[elem_cnt++] = v1;
+          elem[elem_cnt++] = v2;
+      }
+      void push_list(const T &v0,const T &v1,const T &v2,const T &v3){
+          if (elem_cnt+4 >= elem_capacity) {
+              reserve(elem_capacity * 2+8);
+          }
+          elem[elem_cnt++] = v0;
+          elem[elem_cnt++] = v1;
+          elem[elem_cnt++] = v2;
+          elem[elem_cnt++] = v3;
+      }
+      void push_list(const T &v0,const T &v1,const T &v2,const T &v3,const T
+     &v4){ if (elem_cnt+5 >= elem_capacity) { reserve(elem_capacity * 2+8);
+          }
+          elem[elem_cnt++] = v0;
+          elem[elem_cnt++] = v1;
+          elem[elem_cnt++] = v2;
+          elem[elem_cnt++] = v3;
+          elem[elem_cnt++] = v4;
+      }
+      void push_list(const T &v0,const T &v1,const T &v2,const T &v3,const T
+     &v4,const T &v5){ if (elem_cnt+6 >= elem_capacity) { reserve(elem_capacity
+     * 2+8);
+          }
+          elem[elem_cnt++] = v0;
+          elem[elem_cnt++] = v1;
+          elem[elem_cnt++] = v2;
+          elem[elem_cnt++] = v3;
+          elem[elem_cnt++] = v4;
+          elem[elem_cnt++] = v5;
+      }
+      void push_list(const T &v0,const T &v1,const T &v2,const T &v3,const T
+     &v4,const T &v5,const T &v6){ if (elem_cnt+7 >= elem_capacity) {
+              reserve(elem_capacity * 2+8);
+          }
+          T *p=elem+elem_cnt;
+          *(p++)=v0;
+          *(p++)=v1;
+          *(p++)=v2;
+          *(p++)=v3;
+          *(p++)=v4;
+          *(p++)=v5;
+          *(p++)=v6;
+          elem_cnt+=7;
+      }*/
+
+  template <typename... Args>
+  void emplace_back(Args &&... args) noexcept {
+    if (elem_cnt == elem_capacity) {
+      reserve(elem_capacity * 2 + 8);
+    }
+    new (&elem[elem_cnt++]) T(std::forward<Args>(args)...);
+  }
+  void reserve(const size_t &n) {
+    /*        if (elem_capacity < n) {
+                T* tmp=static_cast<T*>(realloc(elem,n* sizeof(T)));
+                elem=tmp;
+                elem_capacity = n;
+            }*/
+    if (elem_capacity < n) {
+      elem_capacity = n;
+      T *tmp{static_cast<T *>(::operator new(sizeof(T) * elem_capacity))};
+      memmove(tmp, &elem[0], sizeof(T) * elem_cnt);
+      ::operator delete(elem);
+      elem = tmp;
+    }
+  }
+  bool empty() { return elem_cnt == 0; }
+};
 
 typedef pair<uint, ulong> Edge;  //邻接表的边的数据结构
 typedef struct BriefEdge {
@@ -67,8 +202,12 @@ typedef struct NodeIdstr {
   // NodeIdstr(const char *p, uint l) : val(p), len(l) {};
 } Ids;  //存储节点id的数据结构
 
-typedef uint
-    Path;  //输入变成每个点5个vector，所有路径节点依次放进去，取的时候每隔3/4/5/6/7即为一行
+// typedef uint Path;
+// //输入变成每个点5个vector，所有路径节点依次放进去，取的时候每隔3/4/5/6/7即为一行
+typedef struct Path {
+  vector<uint> path[5];
+  // uint len[5];
+} Path;
 /*typedef struct CirclePath {
     uint path[7];//不初始化 初始化浪费时间
 
@@ -114,7 +253,6 @@ typedef uint
         path[6] = g;
     }
 } Path;//存储结果环的数据结构*/
-
 typedef struct WorkerData {
   uint changed_num = 0;  //记录反向搜索改了多少点的dist
   ulong end_weight
@@ -141,56 +279,55 @@ Ids g_node_str[kMaxN];            //排序过后的str和strlen
 RawEdge g_raw_edge[kMaxE];        //原始输入的边
 pair<uint, uint> g_out_list[kMaxN]{};  //前向星存储
 BriefEdge g_brief_edge[kMaxE];         //不存u
-vector<Edge> g_in_list[kMaxN];         //邻接表
+Vec<Edge> g_in_list[kMaxN];            //邻接表
 
-vector<vector<Path>> g_result[5];
-uint g_answer_len[5][kMaxN];
-
+vector<Path> g_result;
+// uint g_answer_len[5][kMaxN];
 WorkerData g_worker_data[kThreadNum];  //每个线程的独立数据
 
 /********************************************third
  * party************************************************/
-void *memcpy_tiny(void *dst, const void *src, uint len) {
-  // register
-  unsigned char *dd = (unsigned char *)dst + len;
-  const unsigned char *ss = (const unsigned char *)src + len;
-  switch (len) {
-    case 12:
-      *((int *)(dd - 12)) = *((int *)(ss - 12));
-    case 8:
-      *((int *)(dd - 8)) = *((int *)(ss - 8));
-    case 4:
-      *((int *)(dd - 4)) = *((int *)(ss - 4));
-      break;
-    case 11:
-      *((int *)(dd - 11)) = *((int *)(ss - 11));
-    case 7:
-      *((int *)(dd - 7)) = *((int *)(ss - 7));
-      break;
-    case 3:
-      *((short *)(dd - 3)) = *((short *)(ss - 3));
-      dd[-1] = ss[-1];
-      break;
-    case 10:
-      *((int *)(dd - 10)) = *((int *)(ss - 10));
-    case 6:
-      *((int *)(dd - 6)) = *((int *)(ss - 6));
-    case 2:
-      *((short *)(dd - 2)) = *((short *)(ss - 2));
-      break;
-    case 9:
-      *((int *)(dd - 9)) = *((int *)(ss - 9));
-    case 5:
-      *((int *)(dd - 5)) = *((int *)(ss - 5));
-    case 1:
-      dd[-1] = ss[-1];
-      break;
-    case 0:
-    default:
-      break;
-  }
-  return dd;
-}
+/*void *memcpy_tiny(void *dst, const void *src, uint len) {
+    //register
+    unsigned char *dd = (unsigned char *) dst + len;
+    const unsigned char *ss = (const unsigned char *) src + len;
+    switch (len) {
+        case 12:
+            *((int *) (dd - 12)) = *((int *) (ss - 12));
+        case 8:
+            *((int *) (dd - 8)) = *((int *) (ss - 8));
+        case 4:
+            *((int *) (dd - 4)) = *((int *) (ss - 4));
+            break;
+        case 11:
+            *((int *) (dd - 11)) = *((int *) (ss - 11));
+        case 7:
+            *((int *) (dd - 7)) = *((int *) (ss - 7));
+            break;
+        case 3:
+            *((short *) (dd - 3)) = *((short *) (ss - 3));
+            dd[-1] = ss[-1];
+            break;
+        case 10:
+            *((int *) (dd - 10)) = *((int *) (ss - 10));
+        case 6:
+            *((int *) (dd - 6)) = *((int *) (ss - 6));
+        case 2:
+            *((short *) (dd - 2)) = *((short *) (ss - 2));
+            break;
+        case 9:
+            *((int *) (dd - 9)) = *((int *) (ss - 9));
+        case 5:
+            *((int *) (dd - 5)) = *((int *) (ss - 5));
+        case 1:
+            dd[-1] = ss[-1];
+            break;
+        case 0:
+        default:
+            break;
+    }
+    return dd;
+}*/
 
 /********************************************local********************************************************/
 
@@ -509,6 +646,11 @@ inline bool cmpWeight(const ulong &x, const ulong &y) {
          (x > MULT3_MAX || (x + (x << 1)) >= y);
 }
 
+inline bool judge(const BriefEdge *e1, const BriefEdge *e2) {
+  return (e2->w > MULT5_MAX || e1->w <= (e2->w + (e2->w << 2))) &&
+         (e1->w > MULT3_MAX || (e1->w + (e1->w << 1)) >= e2->w);
+}
+
 /**
  * 找环的思路：
  * 基本和初赛思路一样，先反向搜索inlist记录搜到的点的距离dist，同时保存这些点到changed_list,这里的距离改为用三位二进制表示了
@@ -517,6 +659,13 @@ inline bool cmpWeight(const ulong &x, const ulong &y) {
 void findCycleAt(uint st, WorkerData &data) {
   // TODO w*3 w*5可能溢出  用longlong或者预先存的时候 判断>INTMAX/3 INTMAX/5
   // 若大于则直接置为INTMAX
+
+  for (int i = 0; i < data.changed_num; ++i) {
+    data.dist[data.changed_list[i]] = 0;
+  }
+  data.changed_list[0] = st;
+  data.changed_num = 1;
+  data.dist[st] = 7;
 
   for (auto &e1 : g_in_list[st]) {
     const uint &v1 = e1.first;
@@ -527,7 +676,6 @@ void findCycleAt(uint st, WorkerData &data) {
     data.changed_list[data.changed_num++] = v1;
     for (auto &e2 : g_in_list[v1]) {
       const uint &v2 = e2.first;
-
       if (v2 <= st) break;
       const ulong &w2 = e2.second;
       if (!cmpWeight(w2, w1)) continue;
@@ -543,97 +691,126 @@ void findCycleAt(uint st, WorkerData &data) {
       }
     }
   }
-  data.dist[st] = 7;
-  uint temp_size[5]{};
+
+  // uint temp_size[5]{};
   // TODO 提前计算size st~v2
-  const ushort sum_len0 = g_node_str[st].len;
-  for (uint i1 = g_out_list[st].first; i1 < g_out_list[st].second; ++i1) {
-    const BriefEdge &e1 = g_brief_edge[i1];
-    const uint &v1 = e1.v;
+  // const ushort sum_len0 = g_node_str[st].len;
+  vector<uint>(&st_result)[5] = g_result[st].path;
+  // uint(&st_resut_len)[5] = g_result[st].len;
+  uint i1 = g_out_list[st].first;
+  for (const BriefEdge *e1 = &g_brief_edge[i1]; i1 < g_out_list[st].second;
+       ++i1, ++e1) {
+    // const BriefEdge &e1 = g_brief_edge[i1];
+    const uint &v1 = e1->v;
     if (v1 < st) continue;
-    const ulong &w1 = e1.w;
-    const ushort sum_len1 = sum_len0 + g_node_str[v1].len;
-    for (uint i2 = g_out_list[v1].first; i2 < g_out_list[v1].second; ++i2) {
-      const BriefEdge &e2 = g_brief_edge[i2];
-      const uint &v2 = e2.v;
-      const ulong &w2 = e2.w;
+    const ulong &w1 = e1->w;
+    // const ushort sum_len1 = sum_len0 + g_node_str[v1].len;
+
+    uint i2 = g_out_list[v1].first;
+    for (const BriefEdge *e2 = &g_brief_edge[i2]; i2 < g_out_list[v1].second;
+         ++i2, ++e2) {
+      // const BriefEdge &e2 = g_brief_edge[i2];
+      const uint &v2 = e2->v;
+      const ulong &w2 = e2->w;
       if (v2 <= st || !cmpWeight(w1, w2)) continue;
-      const ushort sum_len2 = sum_len1 + g_node_str[v2].len;
-      for (uint i3 = g_out_list[v2].first; i3 < g_out_list[v2].second; ++i3) {
-        const BriefEdge &e3 = g_brief_edge[i3];
-        const uint &v3 = e3.v;
-        const ulong &w3 = e3.w;
+      // const ushort sum_len2 = sum_len1 + g_node_str[v2].len;
+
+      uint i3 = g_out_list[v2].first;
+      for (const BriefEdge *e3 = &g_brief_edge[i3]; i3 < g_out_list[v2].second;
+           ++i3, ++e3) {
+        // const BriefEdge &e3 = g_brief_edge[i3];
+        const uint &v3 = e3->v;
+        const ulong &w3 = e3->w;
         if (v3 < st || v3 == v1 || !cmpWeight(w2, w3)) continue;
         if (v3 == st) {
           if (cmpWeight(w3, w1)) {
-            // g_result[0][st].emplace_back(st, v1, v2);
-            g_result[0][st].insert(g_result[0][st].end(), {st, v1, v2});
-            temp_size[0] += (sum_len2);
+            st_result[0].insert(st_result[0].end(), {st, v1, v2});
+            // st_result[0].push_list(st, v1, v2);
+            // temp_size[0] += (sum_len2);
           }
           continue;
         };
-        const ushort sum_len3 = sum_len2 + g_node_str[v3].len;
-        for (uint i4 = g_out_list[v3].first; i4 < g_out_list[v3].second; ++i4) {
-          const BriefEdge &e4 = g_brief_edge[i4];
-          const uint &v4 = e4.v;
+        // const ushort sum_len3 = sum_len2 + g_node_str[v3].len;
+
+        uint i4 = g_out_list[v3].first;
+        for (const BriefEdge *e4 = &g_brief_edge[i4];
+             i4 < g_out_list[v3].second; ++i4, ++e4) {
+          // const BriefEdge &e4 = g_brief_edge[i4];
+          const uint &v4 = e4->v;
           if (!(data.dist[v4] & 1)) continue;
-          const ulong &w4 = e4.w;
+          const ulong &w4 = e4->w;
           if (!cmpWeight(w3, w4))
             continue;
           else if (v4 == st) {
             if (cmpWeight(w4, w1)) {
               // g_result[1][st].emplace_back(st, v1, v2, v3);
-              g_result[1][st].insert(g_result[1][st].end(), {st, v1, v2, v3});
-              temp_size[1] += (sum_len3);
+              // g_result[1][st].insert(g_result[1][st].end(), {st, v1, v2,
+              // v3});
+              st_result[1].insert(st_result[1].end(), {st, v1, v2, v3});
+              // st_result[1].push_list(st, v1, v2, v3);
+              // temp_size[1] += (sum_len3);
             }
             continue;
           } else if (v4 == v2 || v4 == v1)
             continue;
-          const ushort len4 = g_node_str[v4].len;
-          for (uint i5 = g_out_list[v4].first; i5 < g_out_list[v4].second;
-               ++i5) {
-            const BriefEdge &e5 = g_brief_edge[i5];
-            const uint &v5 = e5.v;
+          // const ushort len4 = g_node_str[v4].len;
+
+          uint i5 = g_out_list[v4].first;
+          for (const BriefEdge *e5 = &g_brief_edge[i5];
+               i5 < g_out_list[v4].second; ++i5, ++e5) {
+            // const BriefEdge &e5 = g_brief_edge[i5];
+            const uint &v5 = e5->v;
             if (!(data.dist[v5] & 2)) continue;
-            const ulong &w5 = e5.w;
+            const ulong &w5 = e5->w;
             if (!cmpWeight(w4, w5))
               continue;
             else if (v5 == st) {
               if (cmpWeight(w5, w1)) {  // TODO 这里好像不用判断了
 
                 // g_result[2][st].emplace_back(st, v1, v2, v3, v4);
-                g_result[2][st].insert(g_result[2][st].end(),
-                                       {st, v1, v2, v3, v4});
-                temp_size[2] += (sum_len3 + len4);
+                // g_result[2][st].insert(g_result[2][st].end(), {st, v1, v2,
+                // v3, v4});
+                st_result[2].insert(st_result[2].end(), {st, v1, v2, v3, v4});
+                // st_result[2].push_list(st, v1, v2, v3,v4);
+                // temp_size[2] += (sum_len3 + len4);
               }
               continue;
             } else if (v5 == v1 || v5 == v2 || v5 == v3)
               continue;
-            const ushort len5 = g_node_str[v5].len;
-            for (uint i6 = g_out_list[v5].first; i6 < g_out_list[v5].second;
-                 ++i6) {
-              const BriefEdge &e6 = g_brief_edge[i6];
-              const uint &v6 = e6.v;
-              const ulong &w6 = e6.w;
+            // const ushort len5 = g_node_str[v5].len;
+
+            uint i6 = g_out_list[v5].first;
+            for (const BriefEdge *e6 = &g_brief_edge[i6];
+                 i6 < g_out_list[v5].second; ++i6, ++e6) {
+              // const BriefEdge &e6 = g_brief_edge[i6];
+              const uint v6 = e6->v;
+              const ulong w6 = e6->w;
               if (!(data.dist[v6] & 4)) continue;
               if (!cmpWeight(w5, w6))
                 continue;
               else if (v6 == st) {
                 if (cmpWeight(w6, w1)) {
                   // g_result[3][st].emplace_back(st, v1, v2, v3, v4, v5);
-                  g_result[3][st].insert(g_result[3][st].end(),
-                                         {st, v1, v2, v3, v4, v5});
-                  temp_size[3] += (sum_len3 + len4 + len5);
+                  // g_result[3][st].insert(g_result[3][st].end(), {st, v1, v2,
+                  // v3, v4, v5});
+                  st_result[3].insert(st_result[3].end(),
+                                      {st, v1, v2, v3, v4, v5});
+                  // st_result[3].push_list(st, v1, v2, v3,v4,v5);
+                  // temp_size[3] += (sum_len3 + len4 + len5);
                 }
                 continue;
               } else if (v6 == v1 || v6 == v2 || v6 == v3 || v6 == v4)
                 continue;
-              const ulong &w7 = data.end_weight[v6];
+              const ulong w7 = data.end_weight[v6];
               if (cmpWeight(w6, w7) && cmpWeight(w7, w1)) {
                 // g_result[4][st].emplace_back(st, v1, v2, v3, v4, v5, v6);
-                g_result[4][st].insert(g_result[4][st].end(),
-                                       {st, v1, v2, v3, v4, v5, v6});
-                temp_size[4] += (sum_len3 + len4 + len5 + g_node_str[v6].len);
+                // g_result[4][st].insert(g_result[4][st].end(), {st, v1, v2,
+                // v3, v4, v5, v6});
+                st_result[4].insert(st_result[4].end(),
+                                    {st, v1, v2, v3, v4, v5, v6});
+                // st_result[4].push_list(st, v1, v2, v3,v4,v5,v6);
+                // temp_size[4] += (sum_len3 + len4 + len5 +
+                // g_node_str[v6].len);
               }
             }
           }
@@ -641,50 +818,120 @@ void findCycleAt(uint st, WorkerData &data) {
       }
     }
   }
-  for (int i = 0; i < data.changed_num; ++i) {
-    data.dist[data.changed_list[i]] = 0;
-  }
-  data.dist[st] = 0;
-  data.changed_num = 0;
-  g_answer_len[0][st] = temp_size[0];
-  g_answer_len[1][st] = temp_size[1];
-  g_answer_len[2][st] = temp_size[2];
-  g_answer_len[3][st] = temp_size[3];
-  g_answer_len[4][st] = temp_size[4];
+
+  /*   uint sz0 = 0, sz1 = 0, sz2 = 0, sz3 = 0, sz4 = 0;
+     const uint &len0 = g_node_str[st].len;
+     auto &ret = g_result[st];
+     const auto &cdr1 = g_out_list[st];
+     const BriefEdge *e1 = &g_brief_edge[cdr1.first];
+     for (uint it1 = cdr1.first; it1 != cdr1.second; ++it1, ++e1) {
+         if (e1->v < st) continue;
+         const uint &len1 = g_node_str[e1->v].len + len0;
+         const auto &cdr2 = g_out_list[e1->v];
+         const BriefEdge *e2 = &g_brief_edge[cdr2.first];
+         for (uint it2 = cdr2.first; it2 != cdr2.second; ++it2, ++e2) {
+             if (e2->v <= st || !judge(e1, e2)) continue;
+             const uint &len = g_node_str[e2->v].len + len1;
+             const auto &cdr3 = g_out_list[e2->v];
+             const BriefEdge *e3 = &g_brief_edge[cdr3.first];
+             for (uint it3 = cdr3.first; it3 != cdr3.second; ++it3, ++e3) {
+                 if (e3->v < st || e3->v == e1->v || !judge(e2, e3)) {
+                     continue;
+                 } else if (e3->v == st) {
+                     if (!judge(e3, e1)) continue;
+                     ret.path[0].insert(ret.path[0].end(), {st, e1->v, e2->v});
+                     sz0 += len;
+                     continue;
+                 }
+                 const uint &len3 = g_node_str[e3->v].len;
+                 const auto &cdr4 = g_out_list[e3->v];
+                 const BriefEdge *e4 = &g_brief_edge[cdr4.first];
+                 for (uint it4 = cdr4.first; it4 != cdr4.second; ++it4, ++e4) {
+                     if (!(data.dist[e4->v] & 1) || e1->v == e4->v || e2->v ==
+     e4->v) { continue; } else if (!judge(e3, e4)) { continue; } else if (e4->v
+     == st) { if (!judge(e4, e1)) continue;
+                         ret.path[1].insert(ret.path[1].end(), {st, e1->v,
+     e2->v, e3->v}); sz1 += len + len3; continue;
+                     }
+                     const uint &len4 = g_node_str[e4->v].len;
+                     const auto &cdr5 = g_out_list[e4->v];
+                     const BriefEdge *e5 = &g_brief_edge[cdr5.first];
+                     for (uint it5 = cdr5.first; it5 != cdr5.second; ++it5,
+     ++e5) { if (!(data.dist[e5->v] & 2) || e1->v == e5->v || e2->v == e5->v ||
+                             e3->v == e5->v) {
+                             continue;
+                         } else if (!judge(e4, e5)) {
+                             continue;
+                         } else if (e5->v == st) {
+                             if (!judge(e5, e1)) continue;
+                             ret.path[2].insert(ret.path[2].end(),
+                                               {st, e1->v, e2->v, e3->v,
+     e4->v}); sz2 += len + len3 + len4; continue;
+                         }
+                         const uint &len5 = g_node_str[e5->v].len;
+                         const auto &cdr6 = g_out_list[e5->v];
+                         const BriefEdge *e6 = &g_brief_edge[cdr6.first];
+                         for (uint it6 = cdr6.first; it6 != cdr6.second; ++it6,
+     ++e6) { if (!(data.dist[e6->v] & 4) || e1->v == e6->v || e2->v == e6->v ||
+     e3->v == e6->v || e4->v == e6->v) { continue; } else if (!judge(e5, e6)) {
+                                 continue;
+                             } else if (e6->v == st) {
+                                 if (!judge(e6, e1)) continue;
+                                 ret.path[3].insert(ret.path[3].end(),
+                                                   {st, e1->v, e2->v, e3->v,
+     e4->v, e5->v}); sz3 += len + len3 + len4 + len5; continue;
+                             }
+                             const uint &w7 = data.end_weight[e6->v];
+                             if (!cmpWeight(e6->w, w7) || !cmpWeight(w7, e1->w))
+     { continue;
+                             }
+                             const uint &len6 = g_node_str[e6->v].len;
+                             ret.path[4].insert(ret.path[4].end(),
+                                               {st, e1->v, e2->v, e3->v, e4->v,
+     e5->v, e6->v}); sz4 += len + len3 + len4 + len5 + len6;
+                         }
+                     }
+                 }
+             }
+         }
+     }
+
+     ret.len[0] = sz0;
+     ret.len[1] = sz1;
+     ret.len[2] = sz2;
+     ret.len[3] = sz3;
+     ret.len[4] = sz4;*/
 }
 
 void findCycleSkip(uint pid) {
   for (uint i = pid; i < g_node_num; i += kThreadNum) {
-    if (g_in_list[i].empty() || !g_out_list[i].second) continue;
+    if (g_in_list[i].empty()) continue;
     // printf("find%d\n",i);
     findCycleAt(i, g_worker_data[pid]);
   }
 }
 
 vector<uint> g_start_idx_list;
-vector<uint> g_start_offset_list;
 vector<uint> g_end_idx_list;
+uint g_buffer_step;
 
 void setProcessWriteNodeNum(uint all_answer_len) {
   g_start_idx_list = {0};
-  g_start_offset_list = {0};
   g_end_idx_list = {};
 
   uint step = all_answer_len / kThreadNum + 1;
+  g_buffer_step = step * kMaxIdStrLen;
   uint next_bar = step;
   uint cnt = 0;
   uint visit_times = 0;
-  uint offset = 0;
 
   for (uint i = 0; i < 5; ++i) {
     for (uint j = 0; j < g_node_num; ++j) {
-      offset += g_answer_len[i][j];
-      cnt += g_result[i][j].size();
+      cnt += g_result[j].path[i].size();
       visit_times++;
       if (cnt > next_bar) {
         g_start_idx_list.push_back(visit_times);
         g_end_idx_list.push_back(visit_times);
-        g_start_offset_list.push_back(offset);
         cout << i << " " << next_bar << " " << cnt << endl;
         next_bar += step;
       }
@@ -702,13 +949,16 @@ void setProcessWriteNodeNum(uint all_answer_len) {
 #endif
 }
 
+char *g_result_num_char;
+char *g_worker_answer_buffer[kThreadNum];
+uint g_worker_answer_len[kThreadNum];
 void writePrePare() {
   uint R = 0;
   uint R2 = 0;
   for (uint t = 0; t < 5; t++) {
     uint temp_R = 0;
-    for (auto &i : g_result[t]) {
-      temp_R += i.size();
+    for (uint i = 0; i < g_node_num; ++i) {
+      temp_R += g_result[i].path[t].size();
     }
     R += temp_R / (t + 3);
     R2 += temp_R;
@@ -717,43 +967,22 @@ void writePrePare() {
   // int *x;
   char *temp_c = new char[20];
 
-  ulong all_answer_len = 0;
-
-  for (uint i = 0; i < 5; ++i) {
-    for (uint j = 0; j < g_node_num; ++j) {
-      all_answer_len += g_answer_len[i][j];
-    }
-  }
   setProcessWriteNodeNum(R2);
 
   sprintf(temp_c, "%d\n", R);
-  all_answer_len += strlen(temp_c);
+  g_result_num_char = temp_c;
+
 #ifdef LOCAL
-  printf("%d cycles, %d characters\n", R, all_answer_len);
+  printf("%d cycles, \n", R);
 #endif
 
-  int fd = open(g_predict_file.c_str(), O_RDWR | O_CREAT, 0666);
-
-  fallocate(fd, 0, 0, all_answer_len);
-  // ftruncate(fd,all_answer_len);
-
-  char *answer_mmap = (char *)mmap(NULL, all_answer_len, PROT_READ | PROT_WRITE,
-                                   MAP_SHARED, fd, 0);
-
-  lseek(fd, all_answer_len - 1, SEEK_SET);
-  write(fd, "\0", 1);
-  close(fd);
-  char *p = answer_mmap;
-  for (int i = 0; i < strlen(temp_c); ++i) {
-    *p = temp_c[i];
-    p++;
-  }
-  g_path_mmap_begin = p;
+  // memset(answer_mmap, '\0', all_answer_len);
 }
 
 // TODO： 分块写入
 void writeResult(int pid) {
-  char *p = g_path_mmap_begin + g_start_offset_list[pid];
+  g_worker_answer_buffer[pid] = new char[g_buffer_step];
+  char *p = g_worker_answer_buffer[pid];
   int mod_res = 0;
   uint st = g_start_idx_list[pid];
   uint ed = g_end_idx_list[pid];
@@ -761,7 +990,7 @@ void writeResult(int pid) {
   for (uint i = 0; i < 5; ++i) {
     for (uint j = 0; j < g_node_num; ++j) {
       if (visit_times >= st) {
-        for (auto &x : g_result[i][j]) {
+        for (auto &x : g_result[j].path[i]) {
           const auto &str = g_node_str[x];
           memcpy(p, str.val, str.len);
           p += str.len;
@@ -776,9 +1005,34 @@ void writeResult(int pid) {
       if (visit_times >= ed) break;
     }
   }
+  g_worker_answer_len[pid] = p - g_worker_answer_buffer[pid];
 }
 
-void findCycleTheading(uint pid) {
+/*void writeResult(int pid) {
+    char *p = g_path_mmap_begin;
+    int mod_res = 0;
+    for (uint i = 0; i < 5; ++i) {
+        for (uint j = 0; j < g_node_num; ++j) {
+            if (j % kThreadNum == pid) {
+                for (auto &x:g_result[j].path[i]) {
+                    const auto &str = g_node_str[x];
+                    memcpy(p, str.val, str.len);
+                    p += str.len;
+                    ++mod_res;
+                    if (mod_res == i + 3) {
+                        mod_res = 0;
+                        *(p - 1) = '\n';
+                    }
+                }
+            } else {
+                p += g_result[j].len[i];
+            }
+        }
+    }
+
+}*/
+
+void findCycleThreading(uint pid) {
 #ifdef LOCAL
   struct timeval tim {};
   gettimeofday(&tim, nullptr);
@@ -849,14 +1103,24 @@ void solve() {
 #endif
 
   // setProcessNodeNum();
-  for (auto &i : g_result) i = vector<vector<Path>>(g_node_num);
+  //    for (auto &i : g_result)
+  //        i = vector<vector<Path>>(g_node_num);
+  g_result = vector<Path>(g_node_num);
+  // g_result.reserve(g_node_num);
 
   thread pool[kThreadNum - 1];
   for (uint i = 0; i < kThreadNum - 1; ++i) {
-    pool[i] = thread(findCycleTheading, i);
+    pool[i] = thread(findCycleThreading, i);
   }
-  findCycleTheading(kThreadNum - 1);
+  findCycleThreading(kThreadNum - 1);
   for (auto &th : pool) th.join();
+
+  FILE *fd = fopen(g_predict_file.c_str(), "w+");
+  // fallocate(fd, 0, 0, all_answer_len);
+  fwrite(g_result_num_char, strlen(g_result_num_char), 1, fd);
+  for (uint i = 0; i < kThreadNum; ++i) {
+    fwrite(g_worker_answer_buffer[i], g_worker_answer_len[i], 1, fd);
+  }
 
   exit(0);
 }
@@ -867,7 +1131,9 @@ int main() {
 #ifdef LOCAL
   g_test_file = "testdata/standard.txt";
   g_test_file = "testdata/test_data_massive.txt";
+  // g_test_file = "testdata/1004812/test_data.txt";
   g_predict_file = "data/result.txt";
+  g_predict_file = "/tmp/result.txt";
 #endif
   solve();
 }

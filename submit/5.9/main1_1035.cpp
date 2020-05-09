@@ -61,43 +61,35 @@ struct PreBuffer {
   char str[NUMLENGTH];
 };
 struct Answer {
-  uint bufsize[5];
   std::vector<uint> cycle[5];
 };
 struct ThData {
-  uint answers = 0;       // 环数目
-  uint bufsize = 0;       // bufsize
   uint ReachCount = 0;    // 反向可达点数目
   char Reach[MAXN];       // 标记反向可达
   uint ReachPoint[MAXN];  // 可达点集合
   uint LastWeight[MAXN];  // 最后一步权重
 } ThreadData[NTHREAD];    // 线程找环
 
-uint MaxID = 0;                                  // 最大点
-uint Answers = 0;                                // 环个数
-uint EdgesCount = 0;                             // 边数目
-uint JobsCount = 0;                              // 有效点数目
-uint TotalBufferSize = 0;                        // 总buffer大小
-uint FirstBufLen = 0;                            // 换个数bufsize
-uint JobCur = 0;                                 // Job光标
-std::atomic_flag _JOB_LOCK_ = ATOMIC_FLAG_INIT;  // job lock
-char FirstBuf[NUMLENGTH];                        // 环个数buf
-uint ThEdgesCount[NTHREAD];                      // thread: 正向边cnt
-uint ThBackEdgesCount[NTHREAD];                  // thread: 反向边cnt
-uint OffSet[NTHREAD][5];                         // 偏移量
-uint Jobs[MAXN];                                 // 有效点
-PreBuffer MapID[MAXN];                           // 解析int
-DFSEdge *Children[MAXN][2];                      // 子结点
-DFSEdge *Parents[MAXN][2];                       // 父亲结点
-std::vector<Pair> ThChildren[NTHREAD];           // thread: 子结点
-std::vector<Pair> ThParents[NTHREAD];            // thread: 父结点
-std::vector<Answer> Cycles;                      // 所有答案
-DFSEdge DFSEdges[MAXEDGE];                       // 搜索正向边集合
-DFSEdge BackDFSEdges[MAXEDGE];                   // 搜索反向边集合
-Edge Edges[MAXEDGE];                             // 读入正向边集合
-Edge BackEdges[MAXEDGE];                         // 读入反向边集合
-Edge ThEdges[NTHREAD][MAXEDGE];                  // thread: 正向边集合
-Edge ThBackEdges[NTHREAD][MAXEDGE];              // thread: 反向边集合
+uint MaxID = 0;                                     // 最大点
+uint Answers = 0;                                   // 环个数
+uint EdgesCount = 0;                                // 边数目
+uint JobsCount = 0;                                 // 有效点数目
+uint JobCur = 0;                                    // Job光标
+std::atomic_flag _JOB_LOCK_ = ATOMIC_FLAG_INIT;     // job lock
+uint ThEdgesCount[NTHREAD];                         // count
+uint AnswerBufferSize[NTHREAD];                     //
+uint OffSet[NTHREAD][4];                            // 偏移量
+uint Jobs[MAXN];                                    // 有效点
+PreBuffer MapID[MAXN];                              // 解析int
+uint Children[MAXN][2];                             // sons
+std::vector<Pair> Parents[MAXN];                    // fathers
+std::vector<Pair> ThChildren[NTHREAD];              // thsons
+std::vector<std::vector<Pair>> ThParents[NTHREAD];  // thfather
+std::vector<Answer> Cycles;                         // 所有答案
+DFSEdge DFSEdges[MAXEDGE];                          // 所有边
+Edge Edges[MAXEDGE];                                // 所有边
+Edge ThEdges[NTHREAD][MAXEDGE];                     // 线程边
+char *AnswerBuffer[NTHREAD];                        // AnswerBuffer
 
 struct HashTable {
   static const int MOD1 = 6893911;
@@ -153,14 +145,8 @@ HashTable HashID;
 
 void HandleSortEdge(int pid) {
   std::sort(ThEdges[pid], ThEdges[pid] + ThEdgesCount[pid]);
-  std::sort(ThBackEdges[pid], ThBackEdges[pid] + ThBackEdgesCount[pid],
-            [&](const Edge &e1, const Edge &e2) {
-              if (e1.v == e2.v) return e1.u > e2.u;
-              return e1.v < e2.v;
-            });
 }
-
-void SortEdge() {
+void SortEdgeAndHash() {
 #ifdef LOCAL
   struct timeval tim {};
   gettimeofday(&tim, nullptr);
@@ -170,16 +156,12 @@ void SortEdge() {
   std::thread Th[NTHREAD];
   for (int i = 0; i < NTHREAD; ++i) Th[i] = std::thread(HandleSortEdge, i);
   for (int i = 0; i < NTHREAD; ++i) Th[i].join();
-  Edge *ptr = Edges, *ptr1 = BackEdges;
+  Edge *ptr = Edges;
   for (int i = 0; i < NTHREAD; ++i) {
     const uint &cnt = ThEdgesCount[i];
     memcpy(ptr, ThEdges[i], cnt * sizeof(Edge));
     ptr += cnt;
     EdgesCount += cnt;
-
-    const uint &cnt1 = ThBackEdgesCount[i];
-    memcpy(ptr1, ThBackEdges[i], cnt1 * sizeof(Edge));
-    ptr1 += cnt1;
   }
 
 #ifdef LOCAL
@@ -187,12 +169,11 @@ void SortEdge() {
   double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
   printf("@ SortEdge:\t[cost: %.4fs]\n", t4 - t1);
 #endif
-}
-void CreateHashTable() {
+
 #ifdef LOCAL
-  struct timeval tim {};
-  gettimeofday(&tim, nullptr);
-  double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+  struct timeval tim1 {};
+  gettimeofday(&tim1, nullptr);
+  double t11 = tim1.tv_sec + (tim1.tv_usec / 1000000.0);
 #endif
 
   uint pre = 0;
@@ -207,9 +188,9 @@ void CreateHashTable() {
   HashID.Sort();
 
 #ifdef LOCAL
-  gettimeofday(&tim, nullptr);
-  double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-  printf("@ HashID:\t[cost: %.4fs]\n", t4 - t1);
+  gettimeofday(&tim1, nullptr);
+  double t41 = tim1.tv_sec + (tim1.tv_usec / 1000000.0);
+  printf("@ HashID:\t[cost: %.4fs]\n", t41 - t11);
 #endif
 }
 
@@ -220,24 +201,15 @@ void HandleCreateSubGraph(int pid) {
   children.reserve(MaxID);
   for (int i = pid; i < EdgesCount; i += NTHREAD) {
     auto &e = Edges[i];
-    const uint &p1 = HashID.Query(e.u);
-    const uint &p2 = HashID.Query(e.v);
-    DFSEdges[i].v = p2;
+    e.u = HashID.Query(e.u);
+    e.v = HashID.Query(e.v);
+    DFSEdges[i].v = e.v;
     DFSEdges[i].w = e.w;
-    if (children[p1].second == 0) {
-      children[p1].first = i;
+    if (children[e.u].second == 0) {
+      children[e.u].first = i;
     }
-    ++children[p1].second;
-
-    auto &e1 = BackEdges[i];
-    const uint &p11 = HashID.Query(e1.u);
-    const uint &p22 = HashID.Query(e1.v);
-    BackDFSEdges[i].v = p11;
-    BackDFSEdges[i].w = e1.w;
-    if (parents[p22].second == 0) {
-      parents[p22].first = i;
-    }
-    ++parents[p22].second;
+    ++children[e.u].second;
+    parents[e.v].emplace_back(std::make_pair(e.u, e.w));
   }
 }
 void CreateSubGraph() {
@@ -260,23 +232,22 @@ void CreateSubGraph() {
 void HandleCreateGraph(int pid) {
   for (int i = pid; i < MaxID; i += NTHREAD) {
     uint minx = EdgesCount, len = 0;
-    uint minx1 = EdgesCount, len1 = 0;
     for (uint j = 0; j < NTHREAD; ++j) {
+      Parents[i].insert(Parents[i].end(), ThParents[j][i].begin(),
+                        ThParents[j][i].end());
       const auto &cdr = ThChildren[j][i];
       if (cdr.second > 0) {
         minx = std::min(minx, cdr.first);
         len += cdr.second;
       }
-      const auto &pat = ThParents[j][i];
-      if (pat.second > 0) {
-        minx1 = std::min(minx1, pat.first);
-        len1 += pat.second;
-      }
     }
-    Children[i][0] = &DFSEdges[minx];
-    Children[i][1] = &DFSEdges[minx + len];
-    Parents[i][0] = &BackDFSEdges[minx1];
-    Parents[i][1] = &BackDFSEdges[minx1 + len1];
+    // Children[i][0] = &DFSEdges[minx];
+    // Children[i][1] = &DFSEdges[minx + len];
+    Children[i][0] = minx;
+    Children[i][1] = minx + len;
+    std::sort(
+        Parents[i].begin(), Parents[i].end(),
+        [](const Pair &e1, const Pair &e2) { return e1.first > e2.first; });
   }
 }
 void CreateGraph() {
@@ -295,18 +266,6 @@ void CreateGraph() {
 #endif
 }
 
-void addEdge(const uint &u, const uint &v, const uint &w) {
-  uint pid = u % NTHREAD;
-  auto &e = ThEdges[pid][ThEdgesCount[pid]++];
-  e.u = u;
-  e.v = v;
-  e.w = w;
-  pid = v % NTHREAD;
-  auto &e1 = ThBackEdges[pid][ThBackEdgesCount[pid]++];
-  e1.u = u;
-  e1.v = v;
-  e1.w = w;
-}
 void LoadData() {
 #ifdef LOCAL
   struct timeval tim {};
@@ -339,7 +298,12 @@ void LoadData() {
     }
     if (*ptr == '\r') ++ptr;
     ++ptr;
-    addEdge(u, v, w);
+    uint pid = u % NTHREAD;
+    auto &cnt = ThEdgesCount[pid];
+    auto &e = ThEdges[pid][cnt++];
+    e.u = u;
+    e.v = v;
+    e.w = w;
     u = v = w = 0;
   }
 
@@ -349,14 +313,12 @@ void LoadData() {
   printf("@ Buffer:\t[cost: %.4fs]\n", t4 - t1);
 #endif
 
-  SortEdge();
-  CreateHashTable();
+  SortEdgeAndHash();
   CreateSubGraph();
   CreateGraph();
 
   for (uint i = 0; i < MaxID; ++i) {
-    if (Children[i][1] - Children[i][0] > 0 &&
-        Parents[i][1] - Parents[i][0] > 0) {
+    if (Children[i][1] > 0 && !Parents[i].empty()) {
       Jobs[JobsCount++] = i;
     }
   }
@@ -386,25 +348,29 @@ void BackSearch(ThData &Data, const uint &st) {
   Data.ReachCount = 0;
   Data.ReachPoint[Data.ReachCount++] = st;
   Data.Reach[st] = 7;
-  const auto &f1 = Parents[st];
-  for (const auto *e1 = f1[0]; e1 < f1[1]; ++e1) {
-    const uint &v1 = e1->v;
+  const auto &parent1 = Parents[st];
+  for (const auto &it1 : parent1) {
+    const uint &v1 = it1.first;
     if (v1 <= st) break;
-    Data.LastWeight[v1] = e1->w;
+    const uint &w1 = it1.second;
+    Data.LastWeight[v1] = w1;
     Data.Reach[v1] = 7;
     Data.ReachPoint[Data.ReachCount++] = v1;
-    const auto &f2 = Parents[v1];
-    for (const auto *e2 = f2[0]; e2 < f2[1]; ++e2) {
-      const uint &v2 = e2->v;
+    const auto &parent2 = Parents[v1];
+    for (const auto &it2 : parent2) {
+      const uint &v2 = it2.first;
       if (v2 <= st) break;
-      if (!judge(e2, e1)) continue;
+      const uint &w2 = it2.second;
+      if (!judge(w2, w1)) continue;
       Data.Reach[v2] |= 6;
       Data.ReachPoint[Data.ReachCount++] = v2;
-      const auto &f3 = Parents[v2];
-      for (const auto *e3 = f3[0]; e3 < f3[1]; ++e3) {
-        const uint &v3 = e3->v;
+      const auto &parent3 = Parents[v2];
+      for (const auto &it3 : parent3) {
+        const uint &v3 = it3.first;
         if (v3 <= st) break;
-        if (v3 == v1 || !judge(e3, e2)) continue;
+        const uint &w3 = it3.second;
+        if (v3 == v1) continue;
+        if (!judge(w3, w2)) continue;
         Data.Reach[v3] |= 4;
         Data.ReachPoint[Data.ReachCount++] = v3;
       }
@@ -412,99 +378,156 @@ void BackSearch(ThData &Data, const uint &st) {
   }
 }
 
+/*
 void ForwardSearch(ThData &Data, const uint &st) {
-  uint sz0 = 0, sz1 = 0, sz2 = 0, sz3 = 0, sz4 = 0;
-  const uint &len0 = MapID[st].len;
   auto &ret = Cycles[st];
   const auto &c1 = Children[st];
-  for (const auto *e1 = c1[0]; e1 < c1[1]; ++e1) {
-    if (e1->v < st) continue;
-    const uint &len1 = MapID[e1->v].len + len0;
-    const auto &c2 = Children[e1->v];
-    for (const auto *e2 = c2[0]; e2 < c2[1]; ++e2) {
-      if (e2->v <= st || !judge(e1, e2)) continue;
-      const uint &len = MapID[e2->v].len + len1;
-      const auto &c3 = Children[e2->v];
-      for (const auto *e3 = c3[0]; e3 < c3[1]; ++e3) {
-        if (e3->v < st || e3->v == e1->v || !judge(e2, e3)) {
+  for (const DFSEdge *e1 = c1[0]; e1 < c1[1]; ++e1) {
+    const uint &v1 = e1->v;
+    if (v1 < st) continue;
+    const uint &w1 = e1->w;
+    const auto &c2 = Children[v1];
+    for (const DFSEdge *e2 = c2[0]; e2 < c2[1]; ++e2) {
+      const uint &v2 = e2->v;
+      if (v2 <= st || !judge(e1, e2)) continue;
+      const auto &c3 = Children[v2];
+      for (const DFSEdge *e3 = c3[0]; e3 < c3[1]; ++e3) {
+        const uint &v3 = e3->v;
+        if (v3 < st || v3 == v1 || !judge(e2, e3)) {
           continue;
-        } else if (e3->v == st) {
-          if (judge(e3, e1)) {
-            ret.cycle[0].insert(ret.cycle[0].end(), {st, e1->v, e2->v});
-            sz0 += len;
-          }
+        } else if (v3 == st) {
+          if (!judge(e3, e1)) continue;
+          ret.cycle[0].insert(ret.cycle[0].end(), {st, v1, v2});
           continue;
         }
-        const uint &len3 = MapID[e3->v].len;
-        const auto &c4 = Children[e3->v];
-        for (const auto *e4 = c4[0]; e4 < c4[1]; ++e4) {
-          if (!(Data.Reach[e4->v] & 4) || e1->v == e4->v || e2->v == e4->v) {
+        const auto &c4 = Children[v3];
+        for (const DFSEdge *e4 = c4[0]; e4 < c4[1]; ++e4) {
+          const uint &v4 = e4->v;
+          if (!(Data.Reach[v4] & 4) || v1 == v4 || v2 == v4) {
             continue;
           } else if (!judge(e3, e4)) {
             continue;
-          } else if (e4->v == st) {
-            if (judge(e4, e1)) {
-              ret.cycle[1].insert(ret.cycle[1].end(),
-                                  {st, e1->v, e2->v, e3->v});
-              sz1 += len + len3;
-            }
+          } else if (v4 == st) {
+            if (!judge(e4, e1)) continue;
+            ret.cycle[1].insert(ret.cycle[1].end(), {st, v1, v2, v3});
             continue;
           }
-          const uint &len4 = MapID[e4->v].len;
-          const auto &c5 = Children[e4->v];
-          for (const auto *e5 = c5[0]; e5 < c5[1]; ++e5) {
-            if (!(Data.Reach[e5->v] & 2) || e1->v == e5->v || e2->v == e5->v ||
-                e3->v == e5->v) {
+          const auto &c5 = Children[v4];
+          for (const DFSEdge *e5 = c5[0]; e5 < c5[1]; ++e5) {
+            const uint &v5 = e5->v;
+            if (!(Data.Reach[v5] & 2) || v1 == v5 || v2 == v5 || v3 == v5) {
               continue;
             } else if (!judge(e4, e5)) {
               continue;
-            } else if (e5->v == st) {
-              if (judge(e5, e1)) {
-                ret.cycle[2].insert(ret.cycle[2].end(),
-                                    {st, e1->v, e2->v, e3->v, e4->v});
-                sz2 += len + len3 + len4;
-              }
+            } else if (v5 == st) {
+              if (!judge(e5, e1)) continue;
+              ret.cycle[2].insert(ret.cycle[2].end(), {st, v1, v2, v3, v4});
               continue;
             }
-            const uint &len5 = MapID[e5->v].len;
-            const auto &c6 = Children[e5->v];
-            for (const auto *e6 = c6[0]; e6 < c6[1]; ++e6) {
-              if (!(Data.Reach[e6->v] & 1) || e1->v == e6->v ||
-                  e2->v == e6->v || e3->v == e6->v || e4->v == e6->v) {
+            const auto &c6 = Children[v5];
+            for (const DFSEdge *e6 = c6[0]; e6 < c6[1]; ++e6) {
+              const uint &v6 = e6->v;
+              if (!(Data.Reach[v6] & 1) || v1 == v6 || v2 == v6 || v3 == v6 ||
+                  v4 == v6) {
                 continue;
               } else if (!judge(e5, e6)) {
                 continue;
-              } else if (e6->v == st) {
-                if (judge(e6, e1)) {
-                  ret.cycle[3].insert(ret.cycle[3].end(),
-                                      {st, e1->v, e2->v, e3->v, e4->v, e5->v});
-                  sz3 += len + len3 + len4 + len5;
-                }
+              } else if (v6 == st) {
+                if (!judge(e6, e1)) continue;
+                ret.cycle[3].insert(ret.cycle[3].end(),
+                                    {st, v1, v2, v3, v4, v5});
                 continue;
               }
-              const uint &w7 = Data.LastWeight[e6->v];
-              if (!judge(e6->w, w7) || !judge(w7, e1->w)) {
+              const uint &w7 = Data.LastWeight[v6];
+              if (!judge(e6->w, w7) || !judge(w7, w1)) {
                 continue;
               }
-              const uint &len6 = MapID[e6->v].len;
-              ret.cycle[4].insert(ret.cycle[4].end(), {st, e1->v, e2->v, e3->v,
-                                                       e4->v, e5->v, e6->v});
-              sz4 += len + len3 + len4 + len5 + len6;
+              ret.cycle[4].insert(ret.cycle[4].end(),
+                                  {st, v1, v2, v3, v4, v5, v6});
             }
           }
         }
       }
     }
   }
-  for (int i = 0; i < 5; ++i) {
-    Data.answers += ret.cycle[i].size() / (i + 3);
+}
+*/
+void ForwardSearch(ThData &Data, const uint &st) {
+  auto &ret = Cycles[st];
+  const auto &cdr1 = Children[st];
+  const DFSEdge *e1 = &DFSEdges[cdr1[0]];
+  for (uint it1 = cdr1[0]; it1 != cdr1[1]; ++it1, ++e1) {
+    const uint &v1 = e1->v;
+    if (v1 < st) continue;
+    const auto &cdr2 = Children[v1];
+    const DFSEdge *e2 = &DFSEdges[cdr2[0]];
+    for (uint it2 = cdr2[0]; it2 != cdr2[1]; ++it2, ++e2) {
+      const uint &v2 = e2->v;
+      if (v2 <= st || !judge(e1, e2)) continue;
+      const auto &cdr3 = Children[v2];
+      const DFSEdge *e3 = &DFSEdges[cdr3[0]];
+      for (uint it3 = cdr3[0]; it3 != cdr3[1]; ++it3, ++e3) {
+        const uint &v3 = e3->v;
+        if (v3 < st || v3 == v1 || !judge(e2, e3)) {
+          continue;
+        } else if (v3 == st) {
+          if (!judge(e3, e1)) continue;
+          ret.cycle[0].insert(ret.cycle[0].end(), {st, v1, v2});
+          continue;
+        }
+        const auto &cdr4 = Children[v3];
+        const DFSEdge *e4 = &DFSEdges[cdr4[0]];
+        for (uint it4 = cdr4[0]; it4 != cdr4[1]; ++it4, ++e4) {
+          const uint &v4 = e4->v;
+          if (!(Data.Reach[v4] & 4) || v1 == v4 || v2 == v4) {
+            continue;
+          } else if (!judge(e3, e4)) {
+            continue;
+          } else if (v4 == st) {
+            if (!judge(e4, e1)) continue;
+            ret.cycle[1].insert(ret.cycle[1].end(), {st, v1, v2, v3});
+            continue;
+          }
+          const auto &cdr5 = Children[v4];
+          const DFSEdge *e5 = &DFSEdges[cdr5[0]];
+          for (uint it5 = cdr5[0]; it5 != cdr5[1]; ++it5, ++e5) {
+            const uint &v5 = e5->v;
+            if (!(Data.Reach[v5] & 2) || v1 == v5 || v2 == v5 || v3 == v5) {
+              continue;
+            } else if (!judge(e4, e5)) {
+              continue;
+            } else if (v5 == st) {
+              if (!judge(e5, e1)) continue;
+              ret.cycle[2].insert(ret.cycle[2].end(), {st, v1, v2, v3, v4});
+              continue;
+            }
+            const auto &cdr6 = Children[v5];
+            const DFSEdge *e6 = &DFSEdges[cdr6[0]];
+            for (uint it6 = cdr6[0]; it6 != cdr6[1]; ++it6, ++e6) {
+              const uint &v6 = e6->v;
+              if (!(Data.Reach[v6] & 1) || v1 == v6 || v2 == v6 || v3 == v6 ||
+                  v4 == v6) {
+                continue;
+              } else if (!judge(e5, e6)) {
+                continue;
+              } else if (v6 == st) {
+                if (!judge(e6, e1)) continue;
+                ret.cycle[3].insert(ret.cycle[3].end(),
+                                    {st, v1, v2, v3, v4, v5});
+                continue;
+              }
+              const uint &w7 = Data.LastWeight[v6];
+              if (!judge(e6->w, w7) || !judge(w7, e1->w)) {
+                continue;
+              }
+              ret.cycle[4].insert(ret.cycle[4].end(),
+                                  {st, v1, v2, v3, v4, v5, v6});
+            }
+          }
+        }
+      }
+    }
   }
-  Data.bufsize += sz0 + sz1 + sz2 + sz3 + sz4;
-  ret.bufsize[0] = sz0;
-  ret.bufsize[1] = sz1;
-  ret.bufsize[2] = sz2;
-  ret.bufsize[3] = sz3;
-  ret.bufsize[4] = sz4;
 }
 
 inline void GetNextJob(uint &job) {
@@ -534,7 +557,7 @@ void HandleFindCycle(uint pid) {
 #ifdef TESTSPEED
   gettimeofday(&tim, nullptr);
   double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-  printf("@ thread %d: [find: %d] [cost: %.4fs]\n", pid, Data.answers, t4 - t1);
+  printf("@ thread %d: FindCycle [cost: %.4fs]\n", pid, t4 - t1);
 #endif
 }
 
@@ -545,37 +568,56 @@ void FindCircle() {
   for (uint i = 1; i < NTHREAD; ++i) Th[i] = std::thread(HandleFindCycle, i);
   HandleFindCycle(0);
   for (uint i = 1; i < NTHREAD; ++i) Th[i].join();
-  for (auto &it : ThreadData) {
-    Answers += it.answers;
-    TotalBufferSize += it.bufsize;
-  }
 }
 
 void CalOffset() {
-  uint block = TotalBufferSize / NTHREAD;
-  uint tol = 0, x = 0, strow = 0, stcol = 0;
+#ifdef TESTSPEED
+  struct timeval tim {};
+  gettimeofday(&tim, nullptr);
+  double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+#endif
+
+  uint TolSize = 0;
+  for (int i = 0; i < JobsCount; ++i) {
+    const uint &job = Jobs[i];
+    const auto &ans = Cycles[job];
+    for (int j = 0; j < 5; ++j) {
+      const uint &sz = ans.cycle[j].size();
+      TolSize += sz;
+      Answers += sz / (j + 3);
+    }
+  }
+  uint block = TolSize / NTHREAD;
+  uint x = 0, stl = 0, stidx = 0;
   uint tidx = 0;
   for (uint i = 0; i < 5; ++i) {
     for (uint j = 0; j < JobsCount; ++j) {
-      if (x > block) {
-        OffSet[tidx][0] = strow;
+      const uint &sz = Cycles[Jobs[j]].cycle[i].size();
+      if (x < block) {
+        x += sz;
+      } else {
+        AnswerBuffer[tidx] = new char[x * NUMLENGTH];
+        OffSet[tidx][0] = stl;
         OffSet[tidx][1] = i;
-        OffSet[tidx][2] = stcol;
-        OffSet[tidx][3] = j;
-        OffSet[tidx++][4] = tol;
-        strow = i;
-        stcol = j;
-        tol += x;
+        OffSet[tidx][2] = stidx;
+        OffSet[tidx++][3] = j;
+        stl = i;
+        stidx = j;
         x = 0;
       }
-      x += Cycles[Jobs[j]].bufsize[i];
     }
   }
-  OffSet[tidx][0] = strow;
+  AnswerBuffer[tidx] = new char[x * NUMLENGTH];
+  OffSet[tidx][0] = stl;
   OffSet[tidx][1] = 4;
-  OffSet[tidx][2] = stcol;
+  OffSet[tidx][2] = stidx;
   OffSet[tidx][3] = JobsCount;
-  OffSet[tidx++][4] = tol;
+
+#ifdef TESTSPEED
+  gettimeofday(&tim, nullptr);
+  double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+  printf("@ CalOffSet [cost: %.4fs]\n", t4 - t1);
+#endif
 }
 
 void WriteAnswer(char *&result, const uint &p, const std::vector<uint> &cycle) {
@@ -590,64 +632,75 @@ void WriteAnswer(char *&result, const uint &p, const std::vector<uint> &cycle) {
     result += mpid.len;
   }
 };
-
-void HandleSaveAnswer(uint pid, char *result) {
+void HandleSaveAnswer(uint pid) {
 #ifdef TESTSPEED
   struct timeval tim {};
   gettimeofday(&tim, nullptr);
   double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
 #endif
-
-  char *ptr = result;
+  char *result = AnswerBuffer[pid];
+  uint job = 0;
   const auto &offset = OffSet[pid];
   uint stl = offset[0], edl = offset[1];
   uint stidx = offset[2], edidx = offset[3];
-  uint offsz = FirstBufLen + offset[4];
-  result = ptr + offsz;
-
   for (uint i = stl; i <= edl; ++i) {
     uint low = (i == stl ? stidx : 0);
     uint high = (i == edl ? edidx : JobsCount);
     for (uint j = low; j < high; ++j) {
-      WriteAnswer(result, i, Cycles[Jobs[j]].cycle[i]);
+      uint idx = 0;
+      for (const auto &v : Cycles[Jobs[j]].cycle[i]) {
+        const auto &mpid = MapID[v];
+        memcpy(result, mpid.str, mpid.len);
+        if (++idx == i + 3) {
+          idx = 0;
+          *(result + mpid.len - 1) = '\n';
+        }
+        result += mpid.len;
+      }
     }
   }
+  AnswerBufferSize[pid] = result - AnswerBuffer[pid];
 
 #ifdef TESTSPEED
   gettimeofday(&tim, nullptr);
   double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-  printf("@ thread %d: [save: %.4fs]\n", pid, t4 - t1);
+  printf("@ thread %d: CreateBuffer [cost: %.4fs]\n", pid, t4 - t1);
 #endif
 }
 
 void SaveAnswer() {
-  CalOffset();
-
-  sprintf(FirstBuf, "%d\n", Answers);
-  FirstBufLen = strlen(FirstBuf);
-  TotalBufferSize += FirstBufLen;
-  uint fd = open(RESULT, O_RDWR | O_CREAT, 0666);
-  char *result = (char *)mmap(NULL, TotalBufferSize, PROT_READ | PROT_WRITE,
-                              MAP_SHARED, fd, 0);
-  ftruncate(fd, TotalBufferSize);
-  close(fd);
-  memcpy(result, FirstBuf, FirstBufLen);
-
   std::thread Th[NTHREAD];
-  for (uint i = 1; i < NTHREAD; ++i) {
-    Th[i] = std::thread(HandleSaveAnswer, i, result);
+  for (uint i = 0; i < NTHREAD; ++i) Th[i] = std::thread(HandleSaveAnswer, i);
+  for (uint i = 0; i < NTHREAD; ++i) Th[i].join();
+
+#ifdef TESTSPEED
+  struct timeval tim {};
+  gettimeofday(&tim, nullptr);
+  double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+#endif
+  char tmp[NUMLENGTH];
+  sprintf(tmp, "%d\n", Answers);
+  uint firlen = (uint)(std::log10(Answers) + 2);
+  FILE *fp = fopen(RESULT, "w");
+  fwrite(tmp, 1, firlen, fp);
+  for (int i = 0; i < NTHREAD; ++i) {
+    fwrite(AnswerBuffer[i], 1, AnswerBufferSize[i], fp);
   }
-  HandleSaveAnswer(0, result);
-  for (uint i = 1; i < NTHREAD; ++i) Th[i].join();
+  fclose(fp);
+#ifdef TESTSPEED
+  gettimeofday(&tim, nullptr);
+  double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+  printf("@ Fwrite: [cost: %.4fs]\n", t4 - t1);
+#endif
 }
 
 int main() {
   LoadData();
   FindCircle();
+  CalOffset();
   SaveAnswer();
 #ifdef LOCAL
-  std::cerr << "@ Answers: " << Answers << "";
-  std::cerr << ", Bufsize: " << TotalBufferSize << "\n";
+  std::cerr << "@ Answers: " << Answers << "\n";
 #endif
   return 0;
 }
