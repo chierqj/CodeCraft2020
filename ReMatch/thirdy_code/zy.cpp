@@ -920,7 +920,7 @@ void setProcessWriteNodeNum(uint all_answer_len) {
   g_end_idx_list = {};
 
   uint step = all_answer_len / kThreadNum + 1;
-  g_buffer_step = step * kMaxIdStrLen;
+  // g_buffer_step = step * kMaxIdStrLen;
   uint next_bar = step;
   uint cnt = 0;
   uint visit_times = 0;

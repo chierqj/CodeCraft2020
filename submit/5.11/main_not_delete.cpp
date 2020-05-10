@@ -30,8 +30,8 @@
 #define P10(x) ((x << 3) + (x << 1))
 
 #ifdef LOCAL
-#define TRAIN "./data/19630345/test_data.txt"
-#define RESULT "./data/19630345/result.txt"
+#define TRAIN "../data/19630345/test_data.txt"
+#define RESULT "../data/19630345/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -42,7 +42,7 @@ typedef std::pair<uint, uint> Pair;
  * 常量定义
  */
 const uint MAXEDGE = 2000000 + 7;  // 最多边数目
-const uint MAXN = MAXEDGE;         // 最多点数目
+const uint MAXN = MAXEDGE << 1;    // 最多点数目
 const uint NTHREAD = 4;            // 线程个数
 const uint NUMLENGTH = 12;         // ID最大长度
 
@@ -51,10 +51,6 @@ struct DFSEdge {
 };
 struct Edge {
   uint u, v, w;
-  bool operator<(const Edge &r) const {
-    if (u == r.u) return v < r.v;
-    return u < r.u;
-  }
 };
 struct PreBuffer {
   uint len;
@@ -71,7 +67,7 @@ struct ThData {
   char Reach[MAXN];       // 标记反向可达
   uint ReachPoint[MAXN];  // 可达点集合
   uint LastWeight[MAXN];  // 最后一步权重
-} ThreadData[NTHREAD];    // 线程找环
+};
 
 uint MaxID = 0;                                  // 最大点
 uint Answers = 0;                                // 环个数
@@ -98,6 +94,7 @@ Edge Edges[MAXEDGE];                             // 读入正向边集合
 Edge BackEdges[MAXEDGE];                         // 读入反向边集合
 Edge ThEdges[NTHREAD][MAXEDGE];                  // thread: 正向边集合
 Edge ThBackEdges[NTHREAD][MAXEDGE];              // thread: 反向边集合
+ThData ThreadData[NTHREAD];                      // 线程找环
 
 struct HashTable {
   static const int MOD1 = 6893911;
@@ -152,7 +149,11 @@ struct HashTable {
 HashTable HashID;
 
 void HandleSortEdge(int pid) {
-  std::sort(ThEdges[pid], ThEdges[pid] + ThEdgesCount[pid]);
+  std::sort(ThEdges[pid], ThEdges[pid] + ThEdgesCount[pid],
+            [&](const Edge &e1, const Edge &e2) {
+              if (e1.u == e2.u) return e1.v < e2.v;
+              return e1.u < e2.u;
+            });
   std::sort(ThBackEdges[pid], ThBackEdges[pid] + ThBackEdgesCount[pid],
             [&](const Edge &e1, const Edge &e2) {
               if (e1.v == e2.v) return e1.u > e2.u;
@@ -414,17 +415,23 @@ void BackSearch(ThData &Data, const uint &st) {
 
 void ForwardSearch(ThData &Data, const uint &st) {
   uint sz0 = 0, sz1 = 0, sz2 = 0, sz3 = 0, sz4 = 0;
-  const uint &len0 = MapID[st].len;
+
   auto &ret = Cycles[st];
   const auto &c1 = Children[st];
+  const uint &len0 = MapID[st].len;
+
   for (const auto *e1 = c1[0]; e1 < c1[1]; ++e1) {
     if (e1->v < st) continue;
+
     const uint &len1 = MapID[e1->v].len + len0;
     const auto &c2 = Children[e1->v];
+
     for (const auto *e2 = c2[0]; e2 < c2[1]; ++e2) {
       if (e2->v <= st || !judge(e1, e2)) continue;
+
       const uint &len = MapID[e2->v].len + len1;
       const auto &c3 = Children[e2->v];
+
       for (const auto *e3 = c3[0]; e3 < c3[1]; ++e3) {
         if (e3->v < st || e3->v == e1->v || !judge(e2, e3)) {
           continue;
@@ -435,8 +442,10 @@ void ForwardSearch(ThData &Data, const uint &st) {
           }
           continue;
         }
+
         const uint &len3 = MapID[e3->v].len;
         const auto &c4 = Children[e3->v];
+
         for (const auto *e4 = c4[0]; e4 < c4[1]; ++e4) {
           if (!(Data.Reach[e4->v] & 4) || e1->v == e4->v || e2->v == e4->v) {
             continue;
@@ -450,8 +459,10 @@ void ForwardSearch(ThData &Data, const uint &st) {
             }
             continue;
           }
+
           const uint &len4 = MapID[e4->v].len;
           const auto &c5 = Children[e4->v];
+
           for (const auto *e5 = c5[0]; e5 < c5[1]; ++e5) {
             if (!(Data.Reach[e5->v] & 2) || e1->v == e5->v || e2->v == e5->v ||
                 e3->v == e5->v) {
@@ -466,8 +477,10 @@ void ForwardSearch(ThData &Data, const uint &st) {
               }
               continue;
             }
+
             const uint &len5 = MapID[e5->v].len;
             const auto &c6 = Children[e5->v];
+
             for (const auto *e6 = c6[0]; e6 < c6[1]; ++e6) {
               if (!(Data.Reach[e6->v] & 1) || e1->v == e6->v ||
                   e2->v == e6->v || e3->v == e6->v || e4->v == e6->v) {
@@ -486,6 +499,7 @@ void ForwardSearch(ThData &Data, const uint &st) {
               if (!judge(e6->w, w7) || !judge(w7, e1->w)) {
                 continue;
               }
+
               const uint &len6 = MapID[e6->v].len;
               ret.cycle[4].insert(ret.cycle[4].end(), {st, e1->v, e2->v, e3->v,
                                                        e4->v, e5->v, e6->v});
@@ -552,23 +566,30 @@ void FindCircle() {
 }
 
 void CalOffset() {
+#ifdef TESTSPEED
+  struct timeval tim {};
+  gettimeofday(&tim, nullptr);
+  double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+#endif
+
   uint block = TotalBufferSize / NTHREAD;
-  uint tol = 0, x = 0, strow = 0, stcol = 0;
+  uint nextcur = block * 0.8;
+  uint tol = 0, times = 0, strow = 0, stcol = 0;
   uint tidx = 0;
   for (uint i = 0; i < 5; ++i) {
     for (uint j = 0; j < JobsCount; ++j) {
-      if (x > block) {
+      if (times > nextcur) {
         OffSet[tidx][0] = strow;
         OffSet[tidx][1] = i;
         OffSet[tidx][2] = stcol;
         OffSet[tidx][3] = j;
         OffSet[tidx++][4] = tol;
+        tol = times;
         strow = i;
         stcol = j;
-        tol += x;
-        x = 0;
+        nextcur += block * 0.9;
       }
-      x += Cycles[Jobs[j]].bufsize[i];
+      times += Cycles[Jobs[j]].bufsize[i];
     }
   }
   OffSet[tidx][0] = strow;
@@ -576,6 +597,12 @@ void CalOffset() {
   OffSet[tidx][2] = stcol;
   OffSet[tidx][3] = JobsCount;
   OffSet[tidx++][4] = tol;
+
+#ifdef TESTSPEED
+  gettimeofday(&tim, nullptr);
+  double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+  printf("@ CalOffSet: [cost: %.4fs]\n", t4 - t1);
+#endif
 }
 
 void WriteAnswer(char *&result, const uint &p, const std::vector<uint> &cycle) {
@@ -645,6 +672,7 @@ int main() {
   LoadData();
   FindCircle();
   SaveAnswer();
+  sleep(1);
 #ifdef LOCAL
   std::cerr << "@ Answers: " << Answers << "";
   std::cerr << ", Bufsize: " << TotalBufferSize << "\n";
