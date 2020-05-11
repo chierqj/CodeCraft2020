@@ -30,8 +30,8 @@
 #define P10(x) ((x << 3) + (x << 1))
 
 #ifdef LOCAL
-#define TRAIN "../data/18908526/test_data.txt"
-#define RESULT "../data/18908526/result.txt"
+#define TRAIN "../data/19630345/test_data.txt"
+#define RESULT "../data/19630345/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -41,7 +41,7 @@ typedef std::pair<uint, uint> Pair;
 /*
  * 常量定义
  */
-const uint MAXEDGE = 3000000 + 7;  // 最多边数目
+const uint MAXEDGE = 2000000 + 7;  // 最多边数目
 const uint MAXN = MAXEDGE << 1;    // 最多点数目
 const uint NTHREAD = 4;            // 线程个数
 const uint NUMLENGTH = 12;         // ID最大长度
@@ -77,12 +77,6 @@ uint TotalBufferSize = 0;                        // 总buffer大小
 uint FirstBufLen = 0;                            // 换个数bufsize
 uint JobCur = 0;                                 // Job光标
 std::atomic_flag _JOB_LOCK_ = ATOMIC_FLAG_INIT;  // job lock
-std::vector<uint> MaxWeight, BackMaxWeight;      // MaxWeight
-std::vector<uint> MinWeight, BackMinWeight;      // MinWeight
-std::vector<uint> ThMaxWeight[NTHREAD];          // thread:
-std::vector<uint> ThBackMaxWeight[NTHREAD];      // MaxWeight
-std::vector<uint> ThMinWeight[NTHREAD];          // thread:
-std::vector<uint> ThBackMinWeight[NTHREAD];      // MinWeight
 char FirstBuf[NUMLENGTH];                        // 环个数buf
 uint ThEdgesCount[NTHREAD];                      // thread: 正向边cnt
 uint ThBackEdgesCount[NTHREAD];                  // thread: 反向边cnt
@@ -195,50 +189,6 @@ void SortEdge() {
   printf("@ SortEdge:\t[cost: %.4fs]\n", t4 - t1);
 #endif
 }
-
-inline bool deleteForword(const Edge &e) {
-  const uint &maxx = MaxWeight[e.v];
-  const uint &minx = MinWeight[e.v];
-  return (maxx <= W5_MAX && e.w > P5(maxx)) ||
-         (e.w <= W3_MAX && P3(e.w) < minx);
-}
-inline bool deleteBack(const Edge &e) {
-  const uint &maxx = BackMaxWeight[e.u];
-  const uint &minx = BackMinWeight[e.u];
-  return (e.w <= W5_MAX && minx > P5(e.w)) ||
-         (maxx <= W3_MAX && P3(maxx) < e.w);
-}
-
-void HandleHashEdge(int pid) {
-  const uint inf = std::numeric_limits<uint>::max();
-  auto &maxWeight = ThMaxWeight[pid];
-  auto &minWeight = ThMinWeight[pid];
-  auto &backMaxWeight = ThBackMaxWeight[pid];
-  auto &backMinWeight = ThBackMinWeight[pid];
-  maxWeight = backMaxWeight = std::vector<uint>(MaxID, 0);
-  minWeight = backMinWeight = std::vector<uint>(MaxID, inf);
-  const uint &cnt = ThEdgesCount[pid];
-  auto &edges = ThEdges[pid];
-  for (int i = 0; i < cnt; ++i) {
-    Edge &e = edges[i];
-    e.u = HashID.Query(e.u);
-    e.v = HashID.Query(e.v);
-    maxWeight[e.u] = std::max(maxWeight[e.u], e.w);
-    minWeight[e.u] = std::min(minWeight[e.u], e.w);
-    backMaxWeight[e.v] = std::max(backMaxWeight[e.v], e.w);
-    backMinWeight[e.v] = std::min(backMinWeight[e.v], e.w);
-  }
-}
-void HandleDelete(int pid) {
-  const uint &cnt = ThEdgesCount[pid];
-  auto &edges = ThEdges[pid];
-  const uint inf = std::numeric_limits<uint>::max();
-  for (int i = 0; i < cnt; ++i) {
-    Edge &e = edges[i];
-    if (deleteForword(e) && deleteForword(e)) e.v = inf;
-  }
-}
-
 void CreateHashTable() {
 #ifdef LOCAL
   struct timeval tim {};
@@ -246,35 +196,16 @@ void CreateHashTable() {
   double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
 #endif
 
-  for (uint i = 0; i < NTHREAD; ++i) {
-    const uint &cnt = ThEdgesCount[i];
-    for (int j = 0; j < cnt; ++j) {
-      const Edge &e = ThEdges[i][j];
+  uint pre = 0;
+  for (uint i = 0; i < EdgesCount; ++i) {
+    const auto &e = Edges[i];
+    if (i == 0 || (i > 0 && e.u != pre)) {
       HashID.Insert(e.u);
-      HashID.Insert(e.v);
     }
+    HashID.Insert(e.v);
+    pre = e.u;
   }
   HashID.Sort();
-
-  std::thread Th[NTHREAD];
-  for (int i = 0; i < NTHREAD; ++i) Th[i] = std::thread(HandleHashEdge, i);
-  for (int i = 0; i < NTHREAD; ++i) Th[i].join();
-
-  const uint inf = std::numeric_limits<uint>::max();
-  MaxWeight = BackMaxWeight = std::vector<uint>(MaxID, 0);
-  MinWeight = BackMinWeight = std::vector<uint>(MaxID, inf);
-
-  for (int i = 0; i < NTHREAD; ++i) {
-    for (int j = 0; j < MaxID; ++j) {
-      MaxWeight[j] = std::max(MaxWeight[j], ThMaxWeight[i][j]);
-      MinWeight[j] = std::min(MinWeight[j], ThMinWeight[i][j]);
-      BackMaxWeight[j] = std::max(BackMaxWeight[j], ThBackMaxWeight[i][j]);
-      BackMinWeight[j] = std::min(BackMinWeight[j], ThBackMinWeight[i][j]);
-    }
-  }
-
-  for (int i = 0; i < NTHREAD; ++i) Th[i] = std::thread(HandleDelete, i);
-  for (int i = 0; i < NTHREAD; ++i) Th[i].join();
 
 #ifdef LOCAL
   gettimeofday(&tim, nullptr);
@@ -288,27 +219,26 @@ void HandleCreateSubGraph(int pid) {
   auto &parents = ThParents[pid];
   parents.reserve(MaxID);
   children.reserve(MaxID);
-  const uint inf = std::numeric_limits<uint>::max();
   for (int i = pid; i < EdgesCount; i += NTHREAD) {
-    const auto &e = Edges[i];
-    if (e.v != inf) {
-      if (children[e.u].second == 0) {
-        children[e.u].first = i;
-      }
-      ++children[e.u].second;
-      DFSEdges[i].v = e.v;
-      DFSEdges[i].w = e.w;
+    auto &e = Edges[i];
+    const uint &p1 = HashID.Query(e.u);
+    const uint &p2 = HashID.Query(e.v);
+    DFSEdges[i].v = p2;
+    DFSEdges[i].w = e.w;
+    if (children[p1].second == 0) {
+      children[p1].first = i;
     }
+    ++children[p1].second;
 
-    const auto &e1 = BackEdges[i];
-    const uint &p1 = HashID.Query(e1.u);
-    const uint &p2 = HashID.Query(e1.v);
-    BackDFSEdges[i].v = p1;
+    auto &e1 = BackEdges[i];
+    const uint &p11 = HashID.Query(e1.u);
+    const uint &p22 = HashID.Query(e1.v);
+    BackDFSEdges[i].v = p11;
     BackDFSEdges[i].w = e1.w;
-    if (parents[p2].second == 0) {
-      parents[p2].first = i;
+    if (parents[p22].second == 0) {
+      parents[p22].first = i;
     }
-    ++parents[p2].second;
+    ++parents[p22].second;
   }
 }
 void CreateSubGraph() {
@@ -420,8 +350,8 @@ void LoadData() {
   printf("@ Buffer:\t[cost: %.4fs]\n", t4 - t1);
 #endif
 
-  CreateHashTable();
   SortEdge();
+  CreateHashTable();
   CreateSubGraph();
   CreateGraph();
 
@@ -507,8 +437,8 @@ void ForwardSearch(ThData &Data, const uint &st) {
           continue;
         } else if (e3->v == st) {
           if (judge(e3, e1)) {
-            // ret.cycle[0].insert(ret.cycle[0].end(), {st, e1->v, e2->v});
-            // sz0 += len;
+            ret.cycle[0].insert(ret.cycle[0].end(), {st, e1->v, e2->v});
+            sz0 += len;
           }
           continue;
         }
@@ -523,8 +453,8 @@ void ForwardSearch(ThData &Data, const uint &st) {
             continue;
           } else if (e4->v == st) {
             if (judge(e4, e1)) {
-              // ret.cycle[1].insert(ret.cycle[1].end(),
-              //                     {st, e1->v, e2->v, e3->v});
+              ret.cycle[1].insert(ret.cycle[1].end(),
+                                  {st, e1->v, e2->v, e3->v});
               sz1 += len + len3;
             }
             continue;
@@ -541,8 +471,8 @@ void ForwardSearch(ThData &Data, const uint &st) {
               continue;
             } else if (e5->v == st) {
               if (judge(e5, e1)) {
-                // ret.cycle[2].insert(ret.cycle[2].end(),
-                //                     {st, e1->v, e2->v, e3->v, e4->v});
+                ret.cycle[2].insert(ret.cycle[2].end(),
+                                    {st, e1->v, e2->v, e3->v, e4->v});
                 sz2 += len + len3 + len4;
               }
               continue;
@@ -559,9 +489,8 @@ void ForwardSearch(ThData &Data, const uint &st) {
                 continue;
               } else if (e6->v == st) {
                 if (judge(e6, e1)) {
-                  // ret.cycle[3].insert(ret.cycle[3].end(),
-                  //                     {st, e1->v, e2->v, e3->v, e4->v,
-                  //                     e5->v});
+                  ret.cycle[3].insert(ret.cycle[3].end(),
+                                      {st, e1->v, e2->v, e3->v, e4->v, e5->v});
                   sz3 += len + len3 + len4 + len5;
                 }
                 continue;
@@ -572,9 +501,8 @@ void ForwardSearch(ThData &Data, const uint &st) {
               }
 
               const uint &len6 = MapID[e6->v].len;
-              // ret.cycle[4].insert(ret.cycle[4].end(), {st, e1->v, e2->v,
-              // e3->v,
-              //                                          e4->v, e5->v, e6->v});
+              ret.cycle[4].insert(ret.cycle[4].end(), {st, e1->v, e2->v, e3->v,
+                                                       e4->v, e5->v, e6->v});
               sz4 += len + len3 + len4 + len5 + len6;
             }
           }
@@ -645,7 +573,8 @@ void CalOffset() {
 #endif
 
   uint block = TotalBufferSize / NTHREAD;
-  uint nextcur = block * 0.8;
+  // uint nextcur = block * 0.9;
+  uint nextcur = block;
   uint tol = 0, times = 0, strow = 0, stcol = 0;
   uint tidx = 0;
   for (uint i = 0; i < 5; ++i) {
@@ -659,10 +588,13 @@ void CalOffset() {
         tol = times;
         strow = i;
         stcol = j;
-        nextcur += block * 0.9;
+        // nextcur += block * 0.9;
+        nextcur += block;
       }
       times += Cycles[Jobs[j]].bufsize[i];
+      if (tidx == NTHREAD - 1) break;
     }
+    if (tidx == NTHREAD - 1) break;
   }
   OffSet[tidx][0] = strow;
   OffSet[tidx][1] = 4;
@@ -744,17 +676,10 @@ int main() {
   LoadData();
   FindCircle();
   SaveAnswer();
-  // sleep(1);
+  sleep(1);
 #ifdef LOCAL
   std::cerr << "@ Answers: " << Answers << "";
   std::cerr << ", Bufsize: " << TotalBufferSize << "\n";
-  int cnt = 0;
-  const uint inf = std::numeric_limits<uint>::max();
-  for (int i = 0; i < EdgesCount; ++i) {
-    auto &e = Edges[i];
-    if (e.v == inf) ++cnt;
-  }
-  std::cerr << "@ delete: " << cnt << "\n";
 #endif
   return 0;
 }

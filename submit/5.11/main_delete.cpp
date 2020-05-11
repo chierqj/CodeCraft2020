@@ -235,7 +235,7 @@ void HandleDelete(int pid) {
   const uint inf = std::numeric_limits<uint>::max();
   for (int i = 0; i < cnt; ++i) {
     Edge &e = edges[i];
-    if (deleteForword(e) && deleteForword(e)) e.v = inf;
+    if (deleteForword(e) && deleteBack(e)) e.v = inf;
   }
 }
 

@@ -573,7 +573,8 @@ void CalOffset() {
 #endif
 
   uint block = TotalBufferSize / NTHREAD;
-  uint nextcur = block * 0.8;
+  // uint nextcur = block * 0.9;
+  uint nextcur = block;
   uint tol = 0, times = 0, strow = 0, stcol = 0;
   uint tidx = 0;
   for (uint i = 0; i < 5; ++i) {
@@ -587,10 +588,13 @@ void CalOffset() {
         tol = times;
         strow = i;
         stcol = j;
-        nextcur += block * 0.9;
+        // nextcur += block * 0.9;
+        nextcur += block;
       }
       times += Cycles[Jobs[j]].bufsize[i];
+      if (tidx == NTHREAD - 1) break;
     }
+    if (tidx == NTHREAD - 1) break;
   }
   OffSet[tidx][0] = strow;
   OffSet[tidx][1] = 4;
