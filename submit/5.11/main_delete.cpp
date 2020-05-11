@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <cmath>
@@ -30,8 +31,8 @@
 #define P10(x) ((x << 3) + (x << 1))
 
 #ifdef LOCAL
-#define TRAIN "../data/18908526/test_data.txt"
-#define RESULT "../data/18908526/result.txt"
+#define TRAIN "../data/19630345/test_data.txt"
+#define RESULT "../data/19630345/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -69,38 +70,40 @@ struct ThData {
   uint LastWeight[MAXN];  // 最后一步权重
 };
 
-uint MaxID = 0;                                  // 最大点
-uint Answers = 0;                                // 环个数
-uint EdgesCount = 0;                             // 边数目
-uint JobsCount = 0;                              // 有效点数目
-uint TotalBufferSize = 0;                        // 总buffer大小
-uint FirstBufLen = 0;                            // 换个数bufsize
-uint JobCur = 0;                                 // Job光标
-std::atomic_flag _JOB_LOCK_ = ATOMIC_FLAG_INIT;  // job lock
-std::vector<uint> MaxWeight, BackMaxWeight;      // MaxWeight
-std::vector<uint> MinWeight, BackMinWeight;      // MinWeight
-std::vector<uint> ThMaxWeight[NTHREAD];          // thread:
-std::vector<uint> ThBackMaxWeight[NTHREAD];      // MaxWeight
-std::vector<uint> ThMinWeight[NTHREAD];          // thread:
-std::vector<uint> ThBackMinWeight[NTHREAD];      // MinWeight
-char FirstBuf[NUMLENGTH];                        // 环个数buf
-uint ThEdgesCount[NTHREAD];                      // thread: 正向边cnt
-uint ThBackEdgesCount[NTHREAD];                  // thread: 反向边cnt
-uint OffSet[NTHREAD][5];                         // 偏移量
-uint Jobs[MAXN];                                 // 有效点
-PreBuffer MapID[MAXN];                           // 解析int
-DFSEdge *Children[MAXN][2];                      // 子结点
-DFSEdge *Parents[MAXN][2];                       // 父亲结点
-std::vector<Pair> ThChildren[NTHREAD];           // thread: 子结点
-std::vector<Pair> ThParents[NTHREAD];            // thread: 父结点
-std::vector<Answer> Cycles;                      // 所有答案
-DFSEdge DFSEdges[MAXEDGE];                       // 搜索正向边集合
-DFSEdge BackDFSEdges[MAXEDGE];                   // 搜索反向边集合
-Edge Edges[MAXEDGE];                             // 读入正向边集合
-Edge BackEdges[MAXEDGE];                         // 读入反向边集合
-Edge ThEdges[NTHREAD][MAXEDGE];                  // thread: 正向边集合
-Edge ThBackEdges[NTHREAD][MAXEDGE];              // thread: 反向边集合
-ThData ThreadData[NTHREAD];                      // 线程找环
+uint MaxID = 0;                                     // 最大点
+uint Answers = 0;                                   // 环个数
+uint EdgesCount = 0;                                // 边数目
+uint JobsCount = 0;                                 // 有效点数目
+uint TotalBufferSize = 0;                           // 总buffer大小
+uint FirstBufLen = 0;                               // 换个数bufsize
+uint JobCur = 0;                                    // Job光标
+uint OffSetCur = 0;                                 // OffSet光标
+std::atomic_flag _JOB_LOCK_ = ATOMIC_FLAG_INIT;     // job lock
+std::atomic_flag _OFFSET_LOCK_ = ATOMIC_FLAG_INIT;  // offset lock
+std::vector<uint> MaxWeight, BackMaxWeight;         // MaxWeight
+std::vector<uint> MinWeight, BackMinWeight;         // MinWeight
+std::vector<uint> ThMaxWeight[NTHREAD];             // thread:
+std::vector<uint> ThBackMaxWeight[NTHREAD];         // MaxWeight
+std::vector<uint> ThMinWeight[NTHREAD];             // thread:
+std::vector<uint> ThBackMinWeight[NTHREAD];         // MinWeight
+char FirstBuf[NUMLENGTH];                           // 环个数buf
+uint ThEdgesCount[NTHREAD];                         // thread: 正向边cnt
+uint ThBackEdgesCount[NTHREAD];                     // thread: 反向边cnt
+std::vector<std::array<uint, 5>> OffSet;  // 分块输出，每一块位置
+uint Jobs[MAXN];                          // 有效点
+PreBuffer MapID[MAXN];                    // 解析int
+DFSEdge *Children[MAXN][2];               // 子结点
+DFSEdge *Parents[MAXN][2];                // 父亲结点
+std::vector<Pair> ThChildren[NTHREAD];    // thread: 子结点
+std::vector<Pair> ThParents[NTHREAD];     // thread: 父结点
+std::vector<Answer> Cycles;               // 所有答案
+DFSEdge DFSEdges[MAXEDGE];                // 搜索正向边集合
+DFSEdge BackDFSEdges[MAXEDGE];            // 搜索反向边集合
+Edge Edges[MAXEDGE];                      // 读入正向边集合
+Edge BackEdges[MAXEDGE];                  // 读入反向边集合
+Edge ThEdges[NTHREAD][MAXEDGE];           // thread: 正向边集合
+Edge ThBackEdges[NTHREAD][MAXEDGE];       // thread: 反向边集合
+ThData ThreadData[NTHREAD];               // 线程找环
 
 struct HashTable {
   static const int MOD1 = 6893911;
@@ -641,37 +644,25 @@ void CalOffset() {
   gettimeofday(&tim, nullptr);
   double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
 #endif
-
-  uint block = TotalBufferSize / NTHREAD;
-  uint nextcur = block * 0.8;
-  uint tol = 0, times = 0, strow = 0, stcol = 0;
-  uint tidx = 0;
+  uint block = std::sqrt(TotalBufferSize);
+  uint strow = 0, endrow = 0, stcol = 0, edcol = 0, times = 0, offsz = 0;
   for (uint i = 0; i < 5; ++i) {
     for (uint j = 0; j < JobsCount; ++j) {
-      if (times > nextcur) {
-        OffSet[tidx][0] = strow;
-        OffSet[tidx][1] = i;
-        OffSet[tidx][2] = stcol;
-        OffSet[tidx][3] = j;
-        OffSet[tidx++][4] = tol;
-        tol = times;
-        strow = i;
-        stcol = j;
-        nextcur += block * 0.9;
+      const uint &job = Jobs[j];
+      if (times >= block && !(i == 4 && j == JobsCount - 1)) {
+        OffSet.emplace_back(std::array<uint, 5>{strow, i, stcol, j, offsz});
+        offsz += times;
+        times = 0;
+        strow = i, stcol = j;
       }
-      times += Cycles[Jobs[j]].bufsize[i];
+      times += Cycles[job].bufsize[i];
     }
   }
-  OffSet[tidx][0] = strow;
-  OffSet[tidx][1] = 4;
-  OffSet[tidx][2] = stcol;
-  OffSet[tidx][3] = JobsCount;
-  OffSet[tidx++][4] = tol;
-
+  OffSet.emplace_back(std::array<uint, 5>{strow, 4, stcol, JobsCount, offsz});
 #ifdef TESTSPEED
   gettimeofday(&tim, nullptr);
   double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-  printf("@ CalOffSet: [cost: %.4fs]\n", t4 - t1);
+  printf("@ CalOffSet: [offset: %d] [cost: %.4fs]\n", OffSet.size(), t4 - t1);
 #endif
 }
 
@@ -688,6 +679,12 @@ void WriteAnswer(char *&result, const uint &p, const std::vector<uint> &cycle) {
   }
 };
 
+void GetNextOffSet(uint &ret) {
+  while (_OFFSET_LOCK_.test_and_set())
+    ;
+  ret = OffSetCur < OffSet.size() ? OffSetCur++ : -1;
+  _OFFSET_LOCK_.clear();
+}
 void HandleSaveAnswer(uint pid, char *result) {
 #ifdef TESTSPEED
   struct timeval tim {};
@@ -695,18 +692,22 @@ void HandleSaveAnswer(uint pid, char *result) {
   double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
 #endif
 
+  uint offcur = 0;
   char *ptr = result;
-  const auto &offset = OffSet[pid];
-  uint stl = offset[0], edl = offset[1];
-  uint stidx = offset[2], edidx = offset[3];
-  uint offsz = FirstBufLen + offset[4];
-  result = ptr + offsz;
-
-  for (uint i = stl; i <= edl; ++i) {
-    uint low = (i == stl ? stidx : 0);
-    uint high = (i == edl ? edidx : JobsCount);
-    for (uint j = low; j < high; ++j) {
-      WriteAnswer(result, i, Cycles[Jobs[j]].cycle[i]);
+  while (true) {
+    GetNextOffSet(offcur);
+    if (offcur == -1) break;
+    const auto &offset = OffSet[offcur];
+    uint stl = offset[0], edl = offset[1];
+    uint stidx = offset[2], edidx = offset[3];
+    uint offsz = FirstBufLen + offset[4];
+    result = ptr + offsz;
+    for (uint i = stl; i <= edl; ++i) {
+      uint low = (i == stl ? stidx : 0);
+      uint high = (i == edl ? edidx : JobsCount);
+      for (uint j = low; j < high; ++j) {
+        WriteAnswer(result, i, Cycles[Jobs[j]].cycle[i]);
+      }
     }
   }
 
@@ -718,8 +719,6 @@ void HandleSaveAnswer(uint pid, char *result) {
 }
 
 void SaveAnswer() {
-  CalOffset();
-
   sprintf(FirstBuf, "%d\n", Answers);
   FirstBufLen = strlen(FirstBuf);
   TotalBufferSize += FirstBufLen;
@@ -741,6 +740,7 @@ void SaveAnswer() {
 int main() {
   LoadData();
   FindCircle();
+  CalOffset();
   SaveAnswer();
   sleep(1);
 #ifdef LOCAL

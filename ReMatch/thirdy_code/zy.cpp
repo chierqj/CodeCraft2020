@@ -15,9 +15,8 @@
 #include <unordered_map>
 //#include<unordered_set>
 #include <fcntl.h>
-#include <sys/mman.h>
 #include <unistd.h>
-
+//#include <sys/mman.h>
 #include <thread>
 //#include<fcntl.h>
 //#include <mutex>
@@ -25,6 +24,7 @@
 #include <sys/time.h>
 #include <sys/types.h>
 
+#include <atomic>
 #include <random>
 
 using namespace std;
@@ -32,15 +32,8 @@ using namespace std;
 #define ulong uint32_t
 #define ushort uint8_t
 
-const uint kMaxResult = 20000008;  //最大结果数
-const uint kMaxE = 3000024;        //最大边数
-const uint kMaxN = 6000024;        //最大点数
-const uint kThreadNum = 4;         //进程/线程数量
-const uint kMaxIdStrLen = 12;      //整数表示的ID有多长
-const uint kCannotReachFlg = 2147123456;
-
-string g_test_file;     //输入文件
-string g_predict_file;  //输出文件
+/********************************************third
+ * party************************************************/
 
 template <class T>
 class Vec {
@@ -54,7 +47,9 @@ class Vec {
       : elem_cnt(0),
         elem_capacity(s),
         elem{static_cast<T *>(::operator new(sizeof(T) * elem_capacity))} {};
+
   explicit Vec<T>() : elem_cnt(0), elem_capacity(0), elem(nullptr){};
+
   Vec<T>(const Vec<T> &other)
       : elem_cnt(other.elem_cnt),
         elem_capacity(other.elem_capacity),
@@ -160,6 +155,7 @@ class Vec {
     }
     new (&elem[elem_cnt++]) T(std::forward<Args>(args)...);
   }
+
   void reserve(const size_t &n) {
     /*        if (elem_capacity < n) {
                 T* tmp=static_cast<T*>(realloc(elem,n* sizeof(T)));
@@ -174,10 +170,26 @@ class Vec {
       elem = tmp;
     }
   }
+
   bool empty() { return elem_cnt == 0; }
 };
 
-typedef pair<uint, ulong> Edge;  //邻接表的边的数据结构
+/********************************************local********************************************************/
+
+const uint kMaxResult = 22000128;     //最大结果数
+const uint kMaxE = 3000024;           //最大边数
+const uint kMaxN = 6000024;           //最大点数
+const uint kThreadNum = 4;            //进程/线程数量
+const uint kMaxIdStrLen = 12;         //整数表示的ID有多长
+const uint kUselessFlg = 2147123456;  //标记没有出边的点
+
+const uint kBufferNum = 64;
+
+string g_test_file;     //输入文件
+string g_predict_file;  //输出文件
+
+typedef pair<uint, ulong>
+    Edge;  // in_list邻接表的边的数据结构  u-v-w  in_list[v]=[{u1,w1},{u2,w2}]
 typedef struct BriefEdge {
   uint v;
   ulong w;
@@ -204,10 +216,11 @@ typedef struct NodeIdstr {
 
 // typedef uint Path;
 // //输入变成每个点5个vector，所有路径节点依次放进去，取的时候每隔3/4/5/6/7即为一行
+// TODO 存的时候可以不存自己  3 4 5 6 7-> 2 3 4 5 6
 typedef struct Path {
   vector<uint> path[5];
   // uint len[5];
-} Path;
+} Cycle;
 /*typedef struct CirclePath {
     uint path[7];//不初始化 初始化浪费时间
 
@@ -259,78 +272,53 @@ typedef struct WorkerData {
       [kMaxN];  //记录反向搜索第一层的点，用于比较最后一条边和第一条边的weight是否合法
   uint changed_list[kMaxN];  //改了哪些点的dist
   char dist[kMaxN];          //反向搜索得到的点离st的距离
-  bool is_finish = false;
 
 } WorkerData;  //存储每个线程所使用的独立的数据结构
 
+/*********************************load*/
 uint g_edge_num = 0;      //边的数量
 uint g_node_num = 0;      //点的数量
 char *g_path_mmap_begin;  //输出文件的mmap指针
 
-uint g_worker_node_num[kThreadNum]{};
-unordered_map<uint, uint> g_worker_id_map[kThreadNum];
-uint g_worker_map_offset[kThreadNum]{};
-uint g_worker_edge_num[kThreadNum]{};
+uint g_worker_node_num[kThreadNum]{};  //每个线程unique的点数
+unordered_map<uint, uint>
+    g_worker_id_map[kThreadNum];  //每个线程的idmap  id-index
+uint g_worker_map_offset
+    [kThreadNum]{};  //用于拼接各个线程的unique的点，计算好偏移量后各个线程可以并行处理
+uint g_worker_edge_num[kThreadNum]{};  //每个线程的边数
 RawEdge g_worker_raw_edge[kThreadNum][kMaxE];
+
+uint g_part_worker_edge_num[kThreadNum][kThreadNum]{{}};
+RawEdge g_part_worker_raw_edge[kThreadNum][kThreadNum]
+                              [kMaxE];  // 4线程 每个线程存4组edge uid%4
 
 uint g_unordered_node_id[kMaxN];  //原始输入的点的id值，只用于排序
 Ids g_unordered_node_str[kMaxN];  // id的str和strlen
 Ids g_node_str[kMaxN];            //排序过后的str和strlen
 RawEdge g_raw_edge[kMaxE];        //原始输入的边
+/***********************findcycle*/
 pair<uint, uint> g_out_list[kMaxN]{};  //前向星存储
 BriefEdge g_brief_edge[kMaxE];         //不存u
 Vec<Edge> g_in_list[kMaxN];            //邻接表
 
-vector<Path> g_result;
+vector<Cycle> g_result;
 // uint g_answer_len[5][kMaxN];
 WorkerData g_worker_data[kThreadNum];  //每个线程的独立数据
 
-/********************************************third
- * party************************************************/
-/*void *memcpy_tiny(void *dst, const void *src, uint len) {
-    //register
-    unsigned char *dd = (unsigned char *) dst + len;
-    const unsigned char *ss = (const unsigned char *) src + len;
-    switch (len) {
-        case 12:
-            *((int *) (dd - 12)) = *((int *) (ss - 12));
-        case 8:
-            *((int *) (dd - 8)) = *((int *) (ss - 8));
-        case 4:
-            *((int *) (dd - 4)) = *((int *) (ss - 4));
-            break;
-        case 11:
-            *((int *) (dd - 11)) = *((int *) (ss - 11));
-        case 7:
-            *((int *) (dd - 7)) = *((int *) (ss - 7));
-            break;
-        case 3:
-            *((short *) (dd - 3)) = *((short *) (ss - 3));
-            dd[-1] = ss[-1];
-            break;
-        case 10:
-            *((int *) (dd - 10)) = *((int *) (ss - 10));
-        case 6:
-            *((int *) (dd - 6)) = *((int *) (ss - 6));
-        case 2:
-            *((short *) (dd - 2)) = *((short *) (ss - 2));
-            break;
-        case 9:
-            *((int *) (dd - 9)) = *((int *) (ss - 9));
-        case 5:
-            *((int *) (dd - 5)) = *((int *) (ss - 5));
-        case 1:
-            dd[-1] = ss[-1];
-            break;
-        case 0:
-        default:
-            break;
-    }
-    return dd;
-}*/
-
-/********************************************local********************************************************/
-
+vector<uint> g_start_idx_list;
+vector<uint> g_end_idx_list;  // TODO  换成数组
+// uint g_buffer_step;
+// char *g_result_num_char;
+char g_answer_buffer[kBufferNum][kMaxResult / kBufferNum * kMaxIdStrLen * 7];
+uint g_answer_len[kBufferNum];
+bool g_prepare_buffer_finish[kBufferNum];
+// std::atomic<uint> value(0);
+atomic_flag g_write_lock = ATOMIC_FLAG_INIT;
+uint g_prepared_buffer_num = 0;
+atomic_flag g_find_lock = ATOMIC_FLAG_INIT;
+uint g_processed_num = 0;
+// TODO 预处理出边1的点
+/******************************************functions*********************************************************************/
 /** 一个新的逻辑，如果一个点只出现在y中而不出现在x中，那它必然不构成任何环，因此我们只需要为rawedge中的u建立映射即可
  * 又由于边是排序过的，因此仅当遍历中发现不一样的u时才尝试插入到idmap
  *
@@ -345,13 +333,48 @@ inline void parseInteger(char *p, const char *q, T &x) {
   }
 }
 
-void addEdge(uint x, uint y, ulong w) {
-  uint pid = x % kThreadNum;
-  RawEdge &e = g_worker_raw_edge[pid][g_worker_edge_num[pid]];
+/*void addEdge(uint x, uint y, ulong w) {
+    uint pid = x % kThreadNum;
+    RawEdge &e = g_worker_raw_edge[pid][g_worker_edge_num[pid]];
+    e.u = x;
+    e.v = y;
+    e.w = w;
+    g_worker_edge_num[pid]++;
+}*/
+void addEdge(uint x, uint y, ulong w, uint pid) {
+  uint mod_pid = x % kThreadNum;
+  RawEdge &e = g_part_worker_raw_edge[pid][mod_pid]
+                                     [g_part_worker_edge_num[pid][mod_pid]];
   e.u = x;
   e.v = y;
   e.w = w;
-  g_worker_edge_num[pid]++;
+  g_part_worker_edge_num[pid][mod_pid]++;
+}
+
+void analyzeBuffer(char *buffer, uint max_buffer_size, uint pid) {
+  const char split = ',';
+  // const char split_line = '\n';//TODO 用<'0'判断
+  char *p = buffer;
+  char *q = buffer;
+  uint x, y, x_len, y_len;
+  ulong w;
+  const char *x_str, *y_str;
+  while (q - buffer < max_buffer_size) {
+    while (*q != split) q++;
+
+    parseInteger(p, q, x);
+    p = ++q;
+    while (*q != split) q++;
+
+    parseInteger(p, q, y);
+    p = ++q;
+
+    while (*q != '\r' && *q != '\n') q++;
+    parseInteger(p, q, w);
+    if (*q == '\r') ++q;
+    p = ++q;
+    addEdge(x, y, w, pid);
+  }
 }
 
 bool cmpEdge(const RawEdge &a, const RawEdge &b) {
@@ -361,12 +384,22 @@ bool cmpEdge(const RawEdge &a, const RawEdge &b) {
     return a.v < b.v;
 }
 
+// process pid=0   0-x   4-x  8-x
 void sortRawEdge(uint pid) {
+  RawEdge *p = g_worker_raw_edge[pid];
+  g_worker_edge_num[pid] = 0;
+  for (uint i = 0; i < kThreadNum; ++i) {
+    memcpy(p, g_part_worker_raw_edge[i][pid],
+           g_part_worker_edge_num[i][pid] * sizeof(RawEdge));
+    p += g_part_worker_edge_num[i][pid];
+    g_worker_edge_num[pid] += g_part_worker_edge_num[i][pid];
+  }
   sort(g_worker_raw_edge[pid], g_worker_raw_edge[pid] + g_worker_edge_num[pid],
        cmpEdge);
 }
 
-void buildIdMap(uint pid) {
+//只对u建立，不对v建立map
+void establishIdMap(uint pid) {
   uint last = -1;
 
   for (uint i = 0; i < g_worker_edge_num[pid]; ++i) {
@@ -397,7 +430,15 @@ void intToStr(uint x, Ids &str) {
   }
 }
 
-void buildUnorderdNodeArray(uint pid) {
+//对各个线程的id_map，将他们的value(index)给加上offset,offset是从前往后到它的id_map[i].size()的和
+//这样 所有id_map里的value都是unique的，并且是连续的
+// id_map[0] {0,0} {4,1}
+// id_map[1] {1,0} {5,1}
+//->  id_map[1]  {1,2}  {5,3}
+// key/id 存下来 未排序 g_unordered_node_id {0,4,1,5}
+// intToStr  int(id) -> char[12]
+// find(5)    id_map[5%4][5]=3  g_unordered_node_id[3]=5
+void mergeUniqueId(uint pid) {
   const uint offset = g_worker_map_offset[pid];
   for (auto &p : g_worker_id_map[pid]) {
     p.second += offset;
@@ -407,21 +448,30 @@ void buildUnorderdNodeArray(uint pid) {
   }
 }
 
+// unordered_id[ 25 18 23]   %4=1 2 3
+// argsort [1 2 0]
+// arg_reflect[2 0 1]
+// g_node_str 排序过后的 idstr   ["18","23","25"]
 uint *idArgSort() {
   uint *arg_list = new uint[g_node_num];
-  uint *arg_reflact = new uint[g_node_num];
+  uint *arg_reflect = new uint[g_node_num];
   for (uint i = 0; i < g_node_num; ++i) arg_list[i] = i;
 
   std::sort(arg_list, arg_list + g_node_num, [](int pos1, int pos2) {
     return (g_unordered_node_id[pos1] < g_unordered_node_id[pos2]);
   });
   for (uint i = 0; i < g_node_num; ++i) {
-    arg_reflact[arg_list[i]] = i;
+    arg_reflect[arg_list[i]] = i;
     g_node_str[i] = g_unordered_node_str[arg_list[i]];
   }
-  return arg_reflact;
+  return arg_reflect;
 }
 
+// pid=2  raw_edge [{18 21}  {18,23}  {18 25} ]
+// id_map[2]=[{18,1}]  id_map[1]=[{25,0}]  id_map[3]=[{23,2}]
+// id->unordered_id.index arg_reflect[2 0 1]
+// unordered_id.index->ordered_id.index 在node_str里的index   edge
+// [{0,-1},{0,1},{0,2}  ]
 void mapEdgeUV(const uint *arg_reflect, uint pid) {
   for (uint i = 0; i < g_worker_edge_num[pid]; ++i) {
     RawEdge &e = g_worker_raw_edge[pid][i];
@@ -430,7 +480,7 @@ void mapEdgeUV(const uint *arg_reflect, uint pid) {
     e.u = x_id;
 
     uint y_pid = e.v % kThreadNum;
-    uint y_id = kCannotReachFlg;
+    uint y_id = kUselessFlg;
     auto it = g_worker_id_map[y_pid].find(e.v);
     if (it != g_worker_id_map[y_pid].end()) {
       y_id = arg_reflect[it->second];
@@ -439,12 +489,14 @@ void mapEdgeUV(const uint *arg_reflect, uint pid) {
   }
 }
 
+// in_list邻接表  in_list[1]={0}  in_list[2]={0,1}
+// out_list前向星  E=[{0,1} {0,2} {0,3} {1,2} {1,5}]   out_list[0]={0,2}
+// out_list[1]={3,4}
 void buildGraph(uint pid) {
   for (uint i = 0; i < g_edge_num; ++i) {
     RawEdge &e = g_raw_edge[i];
     if (e.u % kThreadNum == pid) {
       uint x_id = e.u;
-
       if (g_out_list[x_id].second == 0) {
         g_out_list[x_id].first = i;
       }
@@ -461,6 +513,7 @@ void buildGraph(uint pid) {
 
 bool cmpAdjReverse(const Edge &a, const Edge &b) { return a.first > b.first; }
 
+//降序排序in_list  out_list升序的
 void sortAdjList(uint st, uint ed) {
   for (int i = st; i < ed; ++i) {
     if (g_in_list[i].size() > 1)
@@ -468,36 +521,32 @@ void sortAdjList(uint st, uint ed) {
   }
 }
 
-void analyzeBuff(char *buffer, uint max_buffer_size) {
+// TODO:多线程解析
+void loadPipeline(char *buffer, uint max_buffer_size) {
 #ifdef LOCAL
   struct timeval tim {};
   gettimeofday(&tim, nullptr);
   double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
 #endif
-  const char split = ',';
-  // const char split_line = '\n';//TODO 用<'0'判断
+  thread pool[kThreadNum - 1];
+  uint step = max_buffer_size / kThreadNum;
   char *p = buffer;
-  char *q = buffer;
-  uint x, y, x_len, y_len;
-  ulong w;
-  const char *x_str, *y_str;
-
-  while (q - buffer < max_buffer_size) {
-    while (*q != split) q++;
-
-    parseInteger(p, q, x);
+  char *q = buffer + step;
+  for (uint i = 0; i < kThreadNum - 1; ++i) {
+    if (q - buffer >= max_buffer_size) {
+      pool[i] = thread(analyzeBuffer, p, 0, i);
+      continue;
+    }
+    while ((*q) != '\n') {
+      q++;
+    }
+    pool[i] = thread(analyzeBuffer, p, q - p + 1, i);
     p = ++q;
-    while (*q != split) q++;
-
-    parseInteger(p, q, y);
-    p = ++q;
-
-    while (*q != '\r' && *q != '\n') q++;
-    parseInteger(p, q, w);
-    if (*q == '\r') ++q;
-    p = ++q;
-    addEdge(x, y, w);
+    q = p + max_buffer_size;
   }
+  analyzeBuffer(p, buffer + max_buffer_size - p, kThreadNum - 1);
+  for (auto &th : pool) th.join();
+
 #ifdef LOCAL
   gettimeofday(&tim, nullptr);
   double t2 = tim.tv_sec + (tim.tv_usec / 1000000.0);
@@ -505,7 +554,7 @@ void analyzeBuff(char *buffer, uint max_buffer_size) {
 #endif
 
   //所有worker边排序
-  thread pool[kThreadNum - 1];
+
   for (uint i = 0; i < kThreadNum - 1; ++i) {
     pool[i] = thread(sortRawEdge, i + 1);
   }
@@ -519,9 +568,9 @@ void analyzeBuff(char *buffer, uint max_buffer_size) {
 
   //所有worker建立各自的ID映射
   for (uint i = 0; i < kThreadNum - 1; ++i) {
-    pool[i] = thread(buildIdMap, i + 1);
+    pool[i] = thread(establishIdMap, i + 1);
   }
-  buildIdMap(0);
+  establishIdMap(0);
   for (auto &th : pool) th.join();
 #ifdef LOCAL
   gettimeofday(&tim, nullptr);
@@ -540,9 +589,9 @@ void analyzeBuff(char *buffer, uint max_buffer_size) {
 
   //建立unordered_node_id
   for (uint i = 0; i < kThreadNum - 1; ++i) {
-    pool[i] = thread(buildUnorderdNodeArray, i + 1);
+    pool[i] = thread(mergeUniqueId, i + 1);
   }
-  buildUnorderdNodeArray(0);
+  mergeUniqueId(0);
   for (auto &th : pool) th.join();
 #ifdef LOCAL
   gettimeofday(&tim, nullptr);
@@ -571,11 +620,13 @@ void analyzeBuff(char *buffer, uint max_buffer_size) {
 #endif
 
   //合并worker的边到g_raw_edge
+  //得到了处理完的所有的边 (u_index,v_index,w)  u相同的边是连续的,v有序
+  // u_index和u的序相同
   g_edge_num = 0;
   for (uint i = 0; i < kThreadNum; ++i) {
     for (uint j = 0; j < g_worker_edge_num[i]; ++j) {
       RawEdge *e_worker = &g_worker_raw_edge[i][j];
-      if (e_worker->v == kCannotReachFlg) {
+      if (e_worker->v == kUselessFlg) {
         continue;
       }
       RawEdge *e_master = &g_raw_edge[g_edge_num];
@@ -616,9 +667,16 @@ void analyzeBuff(char *buffer, uint max_buffer_size) {
 
 /**
  * 读数据的思路：
- * 1.扫一遍所有数据，建立id_index_map，把所有边和点的id存下来(unordered_node_id)，先不加到临街表里
- * 2.把所有点根据id再排一次序，得到一个映射，其能保证映射后点的index和id的顺序完全相同
- * 3.多线程把所有边根据映射后的index加入邻接表，后续可以将所有id的比较替换为直接对index比较
+ * 1.扫一遍所有数据，将原始边保存为互不冲突的T(线程数)组，(按edge.u%4分配)
+ * Edge=(u,v,w)
+ * 2.各个线程对各自分配到的边进行排序并建立id_map，为了避免冲突建立id_map时只需要对edge.u进行映射即可。
+ * 每个线程映射过后，没有被
+ *  任何线程映射的点就是没有出边的点，可以忽略
+ * 3.各个线程中id_map里的点是unique的，将它们合并，然后argsort得到一个映射，其能保证映射后点的index和id的顺序完全相同。
+ *  同时保存它们的str以便后续写答案时memcpy
+ * 4.将各个线程中有效的边重新映射，然后合并；保存其简化的副本即只有edge.v和edge.w，以优化找环的访存
+ * 5.多线程建图，入边按邻接表存，出边按前向星存(由于边已经被sort过了，这时前向星中可以只存边的开始和结束序号)
+ * 6.入边多线程sort一下
  * **/
 void loadTestData() {
   ifstream fin(g_test_file.c_str(), std::ios::binary);
@@ -631,7 +689,7 @@ void loadTestData() {
   char *file_buffer = new char[max_buffer_size];  // vector<char>(MAXS);
   fin.seekg(0, std::ios::beg).read(file_buffer, max_buffer_size);
   fin.close();
-  analyzeBuff(file_buffer, max_buffer_size);
+  loadPipeline(file_buffer, max_buffer_size);
 }
 
 /**
@@ -646,15 +704,11 @@ inline bool cmpWeight(const ulong &x, const ulong &y) {
          (x > MULT3_MAX || (x + (x << 1)) >= y);
 }
 
-inline bool judge(const BriefEdge *e1, const BriefEdge *e2) {
-  return (e2->w > MULT5_MAX || e1->w <= (e2->w + (e2->w << 2))) &&
-         (e1->w > MULT3_MAX || (e1->w + (e1->w << 1)) >= e2->w);
-}
-
 /**
- * 找环的思路：
+ * 找环的思路：3+7
  * 基本和初赛思路一样，先反向搜索inlist记录搜到的点的距离dist，同时保存这些点到changed_list,这里的距离改为用三位二进制表示了
  * 然后正向搜环
+ * 多线程节点按模4分配，图均匀的情况下性能较好，后续可以考虑改成automic动态分配
  */
 void findCycleAt(uint st, WorkerData &data) {
   // TODO w*3 w*5可能溢出  用longlong或者预先存的时候 判断>INTMAX/3 INTMAX/5
@@ -701,17 +755,17 @@ void findCycleAt(uint st, WorkerData &data) {
   for (const BriefEdge *e1 = &g_brief_edge[i1]; i1 < g_out_list[st].second;
        ++i1, ++e1) {
     // const BriefEdge &e1 = g_brief_edge[i1];
-    const uint &v1 = e1->v;
+    const uint v1 = e1->v;
     if (v1 < st) continue;
-    const ulong &w1 = e1->w;
+    const ulong w1 = e1->w;
     // const ushort sum_len1 = sum_len0 + g_node_str[v1].len;
 
     uint i2 = g_out_list[v1].first;
     for (const BriefEdge *e2 = &g_brief_edge[i2]; i2 < g_out_list[v1].second;
          ++i2, ++e2) {
       // const BriefEdge &e2 = g_brief_edge[i2];
-      const uint &v2 = e2->v;
-      const ulong &w2 = e2->w;
+      const uint v2 = e2->v;
+      const ulong w2 = e2->w;
       if (v2 <= st || !cmpWeight(w1, w2)) continue;
       // const ushort sum_len2 = sum_len1 + g_node_str[v2].len;
 
@@ -719,8 +773,8 @@ void findCycleAt(uint st, WorkerData &data) {
       for (const BriefEdge *e3 = &g_brief_edge[i3]; i3 < g_out_list[v2].second;
            ++i3, ++e3) {
         // const BriefEdge &e3 = g_brief_edge[i3];
-        const uint &v3 = e3->v;
-        const ulong &w3 = e3->w;
+        const uint v3 = e3->v;
+        const ulong w3 = e3->w;
         if (v3 < st || v3 == v1 || !cmpWeight(w2, w3)) continue;
         if (v3 == st) {
           if (cmpWeight(w3, w1)) {
@@ -736,9 +790,9 @@ void findCycleAt(uint st, WorkerData &data) {
         for (const BriefEdge *e4 = &g_brief_edge[i4];
              i4 < g_out_list[v3].second; ++i4, ++e4) {
           // const BriefEdge &e4 = g_brief_edge[i4];
-          const uint &v4 = e4->v;
+          const uint v4 = e4->v;
           if (!(data.dist[v4] & 1)) continue;
-          const ulong &w4 = e4->w;
+          const ulong w4 = e4->w;
           if (!cmpWeight(w3, w4))
             continue;
           else if (v4 == st) {
@@ -759,13 +813,14 @@ void findCycleAt(uint st, WorkerData &data) {
           for (const BriefEdge *e5 = &g_brief_edge[i5];
                i5 < g_out_list[v4].second; ++i5, ++e5) {
             // const BriefEdge &e5 = g_brief_edge[i5];
-            const uint &v5 = e5->v;
+            const uint v5 = e5->v;
             if (!(data.dist[v5] & 2)) continue;
-            const ulong &w5 = e5->w;
+            const ulong w5 = e5->w;
             if (!cmpWeight(w4, w5))
               continue;
             else if (v5 == st) {
-              if (cmpWeight(w5, w1)) {  // TODO 这里好像不用判断了
+              if (cmpWeight(w5, w1)) {  // TODO  前向搜的时候 有weight判断
+                                        // 有没有办法通过前面的让这里不用判断
 
                 // g_result[2][st].emplace_back(st, v1, v2, v3, v4);
                 // g_result[2][st].insert(g_result[2][st].end(), {st, v1, v2,
@@ -803,9 +858,6 @@ void findCycleAt(uint st, WorkerData &data) {
                 continue;
               const ulong w7 = data.end_weight[v6];
               if (cmpWeight(w6, w7) && cmpWeight(w7, w1)) {
-                // g_result[4][st].emplace_back(st, v1, v2, v3, v4, v5, v6);
-                // g_result[4][st].insert(g_result[4][st].end(), {st, v1, v2,
-                // v3, v4, v5, v6});
                 st_result[4].insert(st_result[4].end(),
                                     {st, v1, v2, v3, v4, v5, v6});
                 // st_result[4].push_list(st, v1, v2, v3,v4,v5,v6);
@@ -818,89 +870,6 @@ void findCycleAt(uint st, WorkerData &data) {
       }
     }
   }
-
-  /*   uint sz0 = 0, sz1 = 0, sz2 = 0, sz3 = 0, sz4 = 0;
-     const uint &len0 = g_node_str[st].len;
-     auto &ret = g_result[st];
-     const auto &cdr1 = g_out_list[st];
-     const BriefEdge *e1 = &g_brief_edge[cdr1.first];
-     for (uint it1 = cdr1.first; it1 != cdr1.second; ++it1, ++e1) {
-         if (e1->v < st) continue;
-         const uint &len1 = g_node_str[e1->v].len + len0;
-         const auto &cdr2 = g_out_list[e1->v];
-         const BriefEdge *e2 = &g_brief_edge[cdr2.first];
-         for (uint it2 = cdr2.first; it2 != cdr2.second; ++it2, ++e2) {
-             if (e2->v <= st || !judge(e1, e2)) continue;
-             const uint &len = g_node_str[e2->v].len + len1;
-             const auto &cdr3 = g_out_list[e2->v];
-             const BriefEdge *e3 = &g_brief_edge[cdr3.first];
-             for (uint it3 = cdr3.first; it3 != cdr3.second; ++it3, ++e3) {
-                 if (e3->v < st || e3->v == e1->v || !judge(e2, e3)) {
-                     continue;
-                 } else if (e3->v == st) {
-                     if (!judge(e3, e1)) continue;
-                     ret.path[0].insert(ret.path[0].end(), {st, e1->v, e2->v});
-                     sz0 += len;
-                     continue;
-                 }
-                 const uint &len3 = g_node_str[e3->v].len;
-                 const auto &cdr4 = g_out_list[e3->v];
-                 const BriefEdge *e4 = &g_brief_edge[cdr4.first];
-                 for (uint it4 = cdr4.first; it4 != cdr4.second; ++it4, ++e4) {
-                     if (!(data.dist[e4->v] & 1) || e1->v == e4->v || e2->v ==
-     e4->v) { continue; } else if (!judge(e3, e4)) { continue; } else if (e4->v
-     == st) { if (!judge(e4, e1)) continue;
-                         ret.path[1].insert(ret.path[1].end(), {st, e1->v,
-     e2->v, e3->v}); sz1 += len + len3; continue;
-                     }
-                     const uint &len4 = g_node_str[e4->v].len;
-                     const auto &cdr5 = g_out_list[e4->v];
-                     const BriefEdge *e5 = &g_brief_edge[cdr5.first];
-                     for (uint it5 = cdr5.first; it5 != cdr5.second; ++it5,
-     ++e5) { if (!(data.dist[e5->v] & 2) || e1->v == e5->v || e2->v == e5->v ||
-                             e3->v == e5->v) {
-                             continue;
-                         } else if (!judge(e4, e5)) {
-                             continue;
-                         } else if (e5->v == st) {
-                             if (!judge(e5, e1)) continue;
-                             ret.path[2].insert(ret.path[2].end(),
-                                               {st, e1->v, e2->v, e3->v,
-     e4->v}); sz2 += len + len3 + len4; continue;
-                         }
-                         const uint &len5 = g_node_str[e5->v].len;
-                         const auto &cdr6 = g_out_list[e5->v];
-                         const BriefEdge *e6 = &g_brief_edge[cdr6.first];
-                         for (uint it6 = cdr6.first; it6 != cdr6.second; ++it6,
-     ++e6) { if (!(data.dist[e6->v] & 4) || e1->v == e6->v || e2->v == e6->v ||
-     e3->v == e6->v || e4->v == e6->v) { continue; } else if (!judge(e5, e6)) {
-                                 continue;
-                             } else if (e6->v == st) {
-                                 if (!judge(e6, e1)) continue;
-                                 ret.path[3].insert(ret.path[3].end(),
-                                                   {st, e1->v, e2->v, e3->v,
-     e4->v, e5->v}); sz3 += len + len3 + len4 + len5; continue;
-                             }
-                             const uint &w7 = data.end_weight[e6->v];
-                             if (!cmpWeight(e6->w, w7) || !cmpWeight(w7, e1->w))
-     { continue;
-                             }
-                             const uint &len6 = g_node_str[e6->v].len;
-                             ret.path[4].insert(ret.path[4].end(),
-                                               {st, e1->v, e2->v, e3->v, e4->v,
-     e5->v, e6->v}); sz4 += len + len3 + len4 + len5 + len6;
-                         }
-                     }
-                 }
-             }
-         }
-     }
-
-     ret.len[0] = sz0;
-     ret.len[1] = sz1;
-     ret.len[2] = sz2;
-     ret.len[3] = sz3;
-     ret.len[4] = sz4;*/
 }
 
 void findCycleSkip(uint pid) {
@@ -911,48 +880,76 @@ void findCycleSkip(uint pid) {
   }
 }
 
-vector<uint> g_start_idx_list;
-vector<uint> g_end_idx_list;
-uint g_buffer_step;
+void findCycleBalance(uint pid) {
+  uint next_node;
+  while (true) {
+    while (g_find_lock.test_and_set()) {
+    }
+    next_node = g_processed_num < g_node_num ? g_processed_num++ : g_node_num;
+    g_find_lock.clear();
+    if (next_node >= g_node_num) break;
+    findCycleAt(next_node, g_worker_data[pid]);
+  }
+}
 
-void setProcessWriteNodeNum(uint all_answer_len) {
-  g_start_idx_list = {0};
-  g_end_idx_list = {};
+void findCycleThreading(uint pid) {
+#ifdef LOCAL
+  struct timeval tim {};
+  gettimeofday(&tim, nullptr);
+  double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+#endif
+  // findCycleSkip(pid);
+  findCycleBalance(pid);
+#ifdef LOCAL
+  gettimeofday(&tim, nullptr);
+  double t2 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+  printf("process %d find cycle time %fs\n", pid, t2 - t1);
+#endif
+}
 
-  uint step = all_answer_len / kThreadNum + 1;
-  // g_buffer_step = step * kMaxIdStrLen;
-  uint next_bar = step;
+/**
+ * 写入数据的思路：
+ * 计算所有答案的总节点数量，平均分给各个线程。各个线程根据result准备好要写入文件的char
+ * buffer
+ * 由于可能存在分界点在一个节点内部的情况，用一个visit变量记录内层for的次数，用它的值作为分界线
+ *
+ * */
+
+void assignWriteNode(uint all_answer_len) {
+  g_start_idx_list = vector<uint>(kBufferNum, 0);
+  g_end_idx_list = vector<uint>(kBufferNum, 0);
+  uint seted_buffer = 0;
   uint cnt = 0;
   uint visit_times = 0;
 
+  uint step = all_answer_len / kBufferNum + 1;
+  // g_buffer_step = step * kMaxIdStrLen;
+  uint next_bar = step;
   for (uint i = 0; i < 5; ++i) {
     for (uint j = 0; j < g_node_num; ++j) {
       cnt += g_result[j].path[i].size();
       visit_times++;
       if (cnt > next_bar) {
-        g_start_idx_list.push_back(visit_times);
-        g_end_idx_list.push_back(visit_times);
-        cout << i << " " << next_bar << " " << cnt << endl;
+        g_start_idx_list[seted_buffer + 1] = visit_times;
+        g_end_idx_list[seted_buffer] = visit_times;
+
+        // cout << visit_times << " " << next_bar << " " << cnt << endl;
+
         next_bar += step;
+        seted_buffer++;
       }
     }
   }
+  g_end_idx_list[seted_buffer] = visit_times;
 
-  /*    while (g_start_idx_list.size() < kThreadNum) {
-          g_start_idx_list.push_back(g_node_num);
-          g_end_idx_list.push_back(g_node_num);
-      }*/
-  g_end_idx_list.push_back(visit_times);
 #ifdef LOCAL
-  for (int i = 0; i < kThreadNum; i++) printf("%d ", g_start_idx_list[i]);
-  printf("%d  total:%d\n", g_end_idx_list[kThreadNum - 1], visit_times);
+  // for (int i = 0; i < kBufferNum; i++)
+  // printf("%d ", g_start_idx_list[i]);
+  // printf("%d  total:%d\n", g_end_idx_list[kThreadNum - 1], visit_times);
 #endif
 }
 
-char *g_result_num_char;
-char *g_worker_answer_buffer[kThreadNum];
-uint g_worker_answer_len[kThreadNum];
-void writePrePare() {
+char *writePrePare() {
   uint R = 0;
   uint R2 = 0;
   for (uint t = 0; t < 5; t++) {
@@ -966,126 +963,167 @@ void writePrePare() {
 
   // int *x;
   char *temp_c = new char[20];
-
-  setProcessWriteNodeNum(R2);
-
+  assignWriteNode(R2);
   sprintf(temp_c, "%d\n", R);
-  g_result_num_char = temp_c;
 
 #ifdef LOCAL
   printf("%d cycles, \n", R);
 #endif
-
-  // memset(answer_mmap, '\0', all_answer_len);
+  return temp_c;
 }
 
 // TODO： 分块写入
-void writeResult(int pid) {
-  g_worker_answer_buffer[pid] = new char[g_buffer_step];
-  char *p = g_worker_answer_buffer[pid];
-  int mod_res = 0;
-  uint st = g_start_idx_list[pid];
-  uint ed = g_end_idx_list[pid];
-  uint visit_times = 0;
-  for (uint i = 0; i < 5; ++i) {
-    for (uint j = 0; j < g_node_num; ++j) {
-      if (visit_times >= st) {
-        for (auto &x : g_result[j].path[i]) {
-          const auto &str = g_node_str[x];
-          memcpy(p, str.val, str.len);
-          p += str.len;
-          ++mod_res;
-          if (mod_res == i + 3) {
-            mod_res = 0;
-            *(p - 1) = '\n';
-          }
-        }
-      }
-      visit_times++;
-      if (visit_times >= ed) break;
-    }
+char *memcpy_tiny(char *dst, const char *src, uint len) {
+  char *dd = (char *)dst + len;
+  const char *ss = (const char *)src + len;
+  switch (len) {
+    case 12:
+      *((int *)(dd - 12)) = *((int *)(ss - 12));
+    case 8:
+      *((int *)(dd - 8)) = *((int *)(ss - 8));
+    case 4:
+      *((int *)(dd - 4)) = *((int *)(ss - 4));
+      break;
+
+    case 11:
+      *((int *)(dd - 11)) = *((int *)(ss - 11));
+    case 7:
+      *((int *)(dd - 7)) = *((int *)(ss - 7));
+      *((int *)(dd - 4)) = *((int *)(ss - 4));
+      break;
+    case 3:
+      *((short *)(dd - 3)) = *((short *)(ss - 3));
+      dd[-1] = ss[-1];
+      break;
+
+    case 10:
+      *((int *)(dd - 10)) = *((int *)(ss - 10));
+    case 6:
+      *((int *)(dd - 6)) = *((int *)(ss - 6));
+    case 2:
+      *((short *)(dd - 2)) = *((short *)(ss - 2));
+      break;
+
+    case 9:
+      *((int *)(dd - 9)) = *((int *)(ss - 9));
+    case 5:
+      *((int *)(dd - 5)) = *((int *)(ss - 5));
+    case 1:
+      dd[-1] = ss[-1];
+      break;
+    case 0:
+    default:
+      break;
   }
-  g_worker_answer_len[pid] = p - g_worker_answer_buffer[pid];
+  return dd;
 }
 
-/*void writeResult(int pid) {
-    char *p = g_path_mmap_begin;
-    int mod_res = 0;
-    for (uint i = 0; i < 5; ++i) {
-        for (uint j = 0; j < g_node_num; ++j) {
-            if (j % kThreadNum == pid) {
-                for (auto &x:g_result[j].path[i]) {
-                    const auto &str = g_node_str[x];
-                    memcpy(p, str.val, str.len);
-                    p += str.len;
-                    ++mod_res;
-                    if (mod_res == i + 3) {
-                        mod_res = 0;
-                        *(p - 1) = '\n';
-                    }
-                }
-            } else {
-                p += g_result[j].len[i];
-            }
-        }
-    }
-
-}*/
-
-void findCycleThreading(uint pid) {
+// TODO 按点存str-> 按边存  7->4
+void prepareBuffer(int pid) {
 #ifdef LOCAL
   struct timeval tim {};
-  gettimeofday(&tim, nullptr);
-  double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-#endif
-
-  findCycleSkip(pid);
-#ifdef LOCAL
-  gettimeofday(&tim, nullptr);
-  double t2 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-  printf("process %d find cycle time %fs\n", pid, t2 - t1);
-#endif
-  if (pid == 0) {
-    while (true) {
-      bool flg = true;
-      for (uint i = 1; i < kThreadNum; i++) {
-        flg = flg && g_worker_data[i].is_finish;
-      }
-      if (flg) break;
-      usleep(10);
-    }
-#ifdef LOCAL
-    gettimeofday(&tim, nullptr);
-    t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-#endif
-    writePrePare();
-#ifdef LOCAL
-    gettimeofday(&tim, nullptr);
-    t2 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-    printf("process %d write prepare time %fs\n", pid, t2 - t1);
-#endif
-  }
-  g_worker_data[pid].is_finish = true;
-
-  while (true) {
-    bool flg = true;
-    for (auto &i : g_worker_data) {
-      flg = flg && i.is_finish;
-    }
-    if (flg) break;
-    usleep(10);
-  }
-#ifdef LOCAL
   gettimeofday(&tim, nullptr);
   double t3 = tim.tv_sec + (tim.tv_usec / 1000000.0);
 #endif
 
-  writeResult(pid);
+  // g_worker_answer_buffer[pid] = new char[g_buffer_step];
+  uint job;
+  while (true) {
+    while (g_write_lock.test_and_set()) {
+    }
+    job = g_prepared_buffer_num < kBufferNum ? g_prepared_buffer_num++
+                                             : kBufferNum;
+    g_write_lock.clear();
+    if (job >= kBufferNum) break;
+    char *p = g_answer_buffer[job];
+    int mod_res = 0;
+    uint st = g_start_idx_list[job];
+    uint ed = g_end_idx_list[job];
+    uint st_i = st / g_node_num;
+    uint st_j = st % g_node_num;
+    //        if (job!=0&&job!=1&&job!=2){
+    //            g_worker_answer_len[job] = p - g_worker_answer_buffer[job];
+    //            return;
+    //        }
+
+    // printf("process %d\tjob %d\tst %d\ted %d\tsti %d\tstj %d\tN
+    // %d\n",pid,job,st,ed,st_i,st_j,g_node_num); uint ed_i=ed/g_node_num; uint
+    // ed_j=ed%g_node_num;
+    uint visit_times = st;
+    for (uint i = st_i; i < 5; ++i) {
+      if (visit_times >= ed) break;
+      uint mod_val = i + 3;
+      for (uint j = st_j; j < g_node_num; ++j) {
+        if (visit_times >= ed) break;
+        for (auto &x : g_result[j].path[i]) {
+          const auto &str = g_node_str[x];
+          p = memcpy_tiny(p, str.val, str.len);
+          // p += str.len;
+          ++mod_res;
+          if (mod_res == mod_val) {
+            mod_res = 0;
+            *(p - 1) = '\n';
+          }
+        }
+        visit_times++;
+      }
+      st_j = 0;
+    }
+    g_answer_len[job] = p - g_answer_buffer[job];
+    g_prepare_buffer_finish[job] = true;
+  }
+#ifdef LOCAL
+  gettimeofday(&tim, nullptr);
+  double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+  printf("process %d prepare buffer time %fs   \n", pid, t4 - t3);
+#endif
+}
+
+void writeBuffer(char *result_num_str) {
+#ifdef LOCAL
+  struct timeval tim {};
+  gettimeofday(&tim, nullptr);
+  double t3 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+#endif
+
+  FILE *fd = fopen(g_predict_file.c_str(), "w");
+  // fallocate(fd, 0, 0, all_answer_len);
+  fwrite(result_num_str, strlen(result_num_str), 1, fd);
+  for (uint i = 0; i < kBufferNum; ++i) {
+    fwrite(g_answer_buffer[i], g_answer_len[i], 1, fd);
+  }
+  fclose(fd);
 
 #ifdef LOCAL
   gettimeofday(&tim, nullptr);
   double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-  printf("process %d write data time %fs   wait%fs\n", pid, t4 - t3, t3 - t2);
+  printf("write data time %fs   \n", t4 - t3);
+#endif
+}
+void writeAsynchronous(char *result_num_str) {
+#ifdef LOCAL
+  struct timeval tim {};
+  gettimeofday(&tim, nullptr);
+  double t3 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+#endif
+
+  FILE *fd = fopen(g_predict_file.c_str(), "w");
+  // fallocate(fd, 0, 0, all_answer_len);
+  fwrite(result_num_str, strlen(result_num_str), 1, fd);
+  uint next_buffer = 0;
+  while (next_buffer < kBufferNum) {
+    while (g_prepare_buffer_finish[next_buffer] == false) {
+      usleep(10);
+    }
+    fwrite(g_answer_buffer[next_buffer], g_answer_len[next_buffer], 1, fd);
+    next_buffer++;
+  }
+  fclose(fd);
+
+#ifdef LOCAL
+  gettimeofday(&tim, nullptr);
+  double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+  printf("write data time %fs   \n", t4 - t3);
 #endif
 }
 
@@ -1105,7 +1143,7 @@ void solve() {
   // setProcessNodeNum();
   //    for (auto &i : g_result)
   //        i = vector<vector<Path>>(g_node_num);
-  g_result = vector<Path>(g_node_num);
+  g_result = vector<Cycle>(g_node_num);
   // g_result.reserve(g_node_num);
 
   thread pool[kThreadNum - 1];
@@ -1115,13 +1153,35 @@ void solve() {
   findCycleThreading(kThreadNum - 1);
   for (auto &th : pool) th.join();
 
-  FILE *fd = fopen(g_predict_file.c_str(), "w+");
-  // fallocate(fd, 0, 0, all_answer_len);
-  fwrite(g_result_num_char, strlen(g_result_num_char), 1, fd);
-  for (uint i = 0; i < kThreadNum; ++i) {
-    fwrite(g_worker_answer_buffer[i], g_worker_answer_len[i], 1, fd);
-  }
+#ifdef LOCAL
+  gettimeofday(&tim, nullptr);
+  t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+#endif
+  char *result_sum_str = writePrePare();
+#ifdef LOCAL
+  gettimeofday(&tim, nullptr);
+  double t2 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+  printf("write prepare time %fs\n", t2 - t1);
+#endif
 
+#ifdef LOCAL
+  gettimeofday(&tim, nullptr);
+  t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+#endif
+  for (uint i = 0; i < kThreadNum - 1; ++i) {
+    pool[i] = thread(prepareBuffer, i + 1);
+  }
+  // prepareBuffer(0);
+
+  writeAsynchronous(result_sum_str);
+  for (auto &th : pool) th.join();
+#ifdef LOCAL
+  gettimeofday(&tim, nullptr);
+  t2 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+  printf("prepare buffer time %fs\n", t2 - t1);
+#endif
+
+  // writeBuffer(result_sum_str);
   exit(0);
 }
 
@@ -1129,11 +1189,11 @@ int main() {
   g_test_file = "/data/test_data.txt";
   g_predict_file = "/projects/student/result.txt";
 #ifdef LOCAL
-  g_test_file = "testdata/standard.txt";
-  g_test_file = "testdata/test_data_massive.txt";
+  g_test_file = "../data/19630345/test_data.txt";
+  // g_test_file = "testdata/test_data_massive.txt";
   // g_test_file = "testdata/1004812/test_data.txt";
-  g_predict_file = "data/result.txt";
-  g_predict_file = "/tmp/result.txt";
+  // g_predict_file = "data/result.txt";
+  g_predict_file = "/dev/shm/result.txt";
 #endif
   solve();
 }
