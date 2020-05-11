@@ -32,7 +32,7 @@
 
 #ifdef LOCAL
 #define TRAIN "../data/19630345/test_data.txt"
-#define RESULT "../data/19630345/result.txt"
+#define RESULT "/dev/shm/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -46,6 +46,7 @@ const uint MAXEDGE = 2000000 + 7;  // 最多边数目
 const uint MAXN = MAXEDGE << 1;    // 最多点数目
 const uint NTHREAD = 4;            // 线程个数
 const uint NUMLENGTH = 12;         // ID最大长度
+const uint BUFFERBLOCK = 64;
 
 struct DFSEdge {
   uint v, w;
@@ -58,12 +59,9 @@ struct PreBuffer {
   char str[NUMLENGTH];
 };
 struct Answer {
-  uint bufsize[5];
   std::vector<uint> cycle[5];
 };
 struct ThData {
-  uint answers = 0;       // 环数目
-  uint bufsize = 0;       // bufsize
   uint ReachCount = 0;    // 反向可达点数目
   char Reach[MAXN];       // 标记反向可达
   uint ReachPoint[MAXN];  // 可达点集合
@@ -83,7 +81,7 @@ std::atomic_flag _OFFSET_LOCK_ = ATOMIC_FLAG_INIT;  // offset lock
 char FirstBuf[NUMLENGTH];                           // 环个数buf
 uint ThEdgesCount[NTHREAD];                         // thread: 正向边cnt
 uint ThBackEdgesCount[NTHREAD];                     // thread: 反向边cnt
-std::vector<std::array<uint, 5>> OffSet;  // 分块输出，每一块位置
+std::vector<std::array<uint, 4>> OffSet;  // 分块输出，每一块位置
 uint Jobs[MAXN];                          // 有效点
 PreBuffer MapID[MAXN];                    // 解析int
 DFSEdge *Children[MAXN][2];               // 子结点
@@ -98,6 +96,10 @@ Edge BackEdges[MAXEDGE];                  // 读入反向边集合
 Edge ThEdges[NTHREAD][MAXEDGE];           // thread: 正向边集合
 Edge ThBackEdges[NTHREAD][MAXEDGE];       // thread: 反向边集合
 ThData ThreadData[NTHREAD];               // 线程找环
+
+char AnswerBuffer[BUFFERBLOCK][22000000 / BUFFERBLOCK * 7 * NUMLENGTH];
+uint AnswerBufferLen[BUFFERBLOCK];
+bool Done[BUFFERBLOCK];
 
 struct HashTable {
   static const int MOD1 = 6893911;
@@ -417,22 +419,17 @@ void BackSearch(ThData &Data, const uint &st) {
 }
 
 void ForwardSearch(ThData &Data, const uint &st) {
-  uint sz0 = 0, sz1 = 0, sz2 = 0, sz3 = 0, sz4 = 0;
-
-  auto &ret = Cycles[st];
+  std::vector<uint>(&ret)[5] = Cycles[st].cycle;
   const auto &c1 = Children[st];
-  const uint &len0 = MapID[st].len;
 
   for (const auto *e1 = c1[0]; e1 < c1[1]; ++e1) {
     if (e1->v < st) continue;
 
-    const uint &len1 = MapID[e1->v].len + len0;
     const auto &c2 = Children[e1->v];
 
     for (const auto *e2 = c2[0]; e2 < c2[1]; ++e2) {
       if (e2->v <= st || !judge(e1, e2)) continue;
 
-      const uint &len = MapID[e2->v].len + len1;
       const auto &c3 = Children[e2->v];
 
       for (const auto *e3 = c3[0]; e3 < c3[1]; ++e3) {
@@ -440,13 +437,11 @@ void ForwardSearch(ThData &Data, const uint &st) {
           continue;
         } else if (e3->v == st) {
           if (judge(e3, e1)) {
-            ret.cycle[0].insert(ret.cycle[0].end(), {st, e1->v, e2->v});
-            sz0 += len;
+            ret[0].insert(ret[0].end(), {st, e1->v, e2->v});
           }
           continue;
         }
 
-        const uint &len3 = MapID[e3->v].len;
         const auto &c4 = Children[e3->v];
 
         for (const auto *e4 = c4[0]; e4 < c4[1]; ++e4) {
@@ -456,14 +451,11 @@ void ForwardSearch(ThData &Data, const uint &st) {
             continue;
           } else if (e4->v == st) {
             if (judge(e4, e1)) {
-              ret.cycle[1].insert(ret.cycle[1].end(),
-                                  {st, e1->v, e2->v, e3->v});
-              sz1 += len + len3;
+              ret[1].insert(ret[1].end(), {st, e1->v, e2->v, e3->v});
             }
             continue;
           }
 
-          const uint &len4 = MapID[e4->v].len;
           const auto &c5 = Children[e4->v];
 
           for (const auto *e5 = c5[0]; e5 < c5[1]; ++e5) {
@@ -474,14 +466,11 @@ void ForwardSearch(ThData &Data, const uint &st) {
               continue;
             } else if (e5->v == st) {
               if (judge(e5, e1)) {
-                ret.cycle[2].insert(ret.cycle[2].end(),
-                                    {st, e1->v, e2->v, e3->v, e4->v});
-                sz2 += len + len3 + len4;
+                ret[2].insert(ret[2].end(), {st, e1->v, e2->v, e3->v, e4->v});
               }
               continue;
             }
 
-            const uint &len5 = MapID[e5->v].len;
             const auto &c6 = Children[e5->v];
 
             for (const auto *e6 = c6[0]; e6 < c6[1]; ++e6) {
@@ -492,9 +481,8 @@ void ForwardSearch(ThData &Data, const uint &st) {
                 continue;
               } else if (e6->v == st) {
                 if (judge(e6, e1)) {
-                  ret.cycle[3].insert(ret.cycle[3].end(),
-                                      {st, e1->v, e2->v, e3->v, e4->v, e5->v});
-                  sz3 += len + len3 + len4 + len5;
+                  ret[3].insert(ret[3].end(),
+                                {st, e1->v, e2->v, e3->v, e4->v, e5->v});
                 }
                 continue;
               }
@@ -503,32 +491,14 @@ void ForwardSearch(ThData &Data, const uint &st) {
                 continue;
               }
 
-              const uint &len6 = MapID[e6->v].len;
-              ret.cycle[4].insert(ret.cycle[4].end(), {st, e1->v, e2->v, e3->v,
-                                                       e4->v, e5->v, e6->v});
-              sz4 += len + len3 + len4 + len5 + len6;
+              ret[4].insert(ret[4].end(),
+                            {st, e1->v, e2->v, e3->v, e4->v, e5->v, e6->v});
             }
           }
         }
       }
     }
   }
-  for (int i = 0; i < 5; ++i) {
-    Data.answers += ret.cycle[i].size() / (i + 3);
-  }
-  Data.bufsize += sz0 + sz1 + sz2 + sz3 + sz4;
-  ret.bufsize[0] = sz0;
-  ret.bufsize[1] = sz1;
-  ret.bufsize[2] = sz2;
-  ret.bufsize[3] = sz3;
-  ret.bufsize[4] = sz4;
-}
-
-inline void GetNextJob(uint &job) {
-  while (_JOB_LOCK_.test_and_set())
-    ;
-  job = JobCur < JobsCount ? Jobs[JobCur++] : -1;
-  _JOB_LOCK_.clear();
 }
 
 void HandleFindCycle(uint pid) {
@@ -538,11 +508,13 @@ void HandleFindCycle(uint pid) {
   double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
 #endif
 
-  uint job = 0;
   auto &Data = ThreadData[pid];
 
   while (true) {
-    GetNextJob(job);
+    while (_JOB_LOCK_.test_and_set())
+      ;
+    uint job = JobCur < JobsCount ? Jobs[JobCur++] : -1;
+    _JOB_LOCK_.clear();
     if (job == -1) break;
     BackSearch(Data, job);
     ForwardSearch(Data, job);
@@ -551,7 +523,7 @@ void HandleFindCycle(uint pid) {
 #ifdef TESTSPEED
   gettimeofday(&tim, nullptr);
   double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-  printf("@ thread %d: [find: %d] [cost: %.4fs]\n", pid, Data.answers, t4 - t1);
+  printf("@ thread %d: [find cycle] [cost: %.4fs]\n", pid, t4 - t1);
 #endif
 }
 
@@ -562,10 +534,6 @@ void FindCircle() {
   for (uint i = 1; i < NTHREAD; ++i) Th[i] = std::thread(HandleFindCycle, i);
   HandleFindCycle(0);
   for (uint i = 1; i < NTHREAD; ++i) Th[i].join();
-  for (auto &it : ThreadData) {
-    Answers += it.answers;
-    TotalBufferSize += it.bufsize;
-  }
 }
 
 void CalOffset() {
@@ -574,21 +542,30 @@ void CalOffset() {
   gettimeofday(&tim, nullptr);
   double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
 #endif
-  uint block = std::sqrt(TotalBufferSize);
-  uint strow = 0, endrow = 0, stcol = 0, edcol = 0, times = 0, offsz = 0;
+  uint tolSize = 0;
+  for (uint i = 0; i < JobsCount; ++i) {
+    const auto &ret = Cycles[Jobs[i]];
+    for (int j = 0; j < 5; ++j) {
+      uint sz = ret.cycle[j].size();
+      Answers += sz / (j + 3);
+      tolSize += sz;
+    }
+  }
+
+  uint block = tolSize / BUFFERBLOCK + 1;
+  uint strow = 0, endrow = 0, stcol = 0, edcol = 0, times = 0;
   for (uint i = 0; i < 5; ++i) {
     for (uint j = 0; j < JobsCount; ++j) {
       const uint &job = Jobs[j];
       if (times >= block && !(i == 4 && j == JobsCount - 1)) {
-        OffSet.emplace_back(std::array<uint, 5>{strow, i, stcol, j, offsz});
-        offsz += times;
+        OffSet.emplace_back(std::array<uint, 4>{strow, i, stcol, j});
         times = 0;
         strow = i, stcol = j;
       }
-      times += Cycles[job].bufsize[i];
+      times += Cycles[job].cycle[i].size();
     }
   }
-  OffSet.emplace_back(std::array<uint, 5>{strow, 4, stcol, JobsCount, offsz});
+  OffSet.emplace_back(std::array<uint, 4>{strow, 4, stcol, JobsCount});
 #ifdef TESTSPEED
   gettimeofday(&tim, nullptr);
   double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
@@ -596,7 +573,7 @@ void CalOffset() {
 #endif
 }
 
-void WriteAnswer(char *&result, const uint &p, const std::vector<uint> &cycle) {
+void MemCopy(char *&result, const uint &p, const std::vector<uint> &cycle) {
   uint idx = 0;
   for (const auto &v : cycle) {
     const auto &mpid = MapID[v];
@@ -609,69 +586,91 @@ void WriteAnswer(char *&result, const uint &p, const std::vector<uint> &cycle) {
   }
 };
 
-void GetNextOffSet(uint &ret) {
-  while (_OFFSET_LOCK_.test_and_set())
-    ;
-  ret = OffSetCur < OffSet.size() ? OffSetCur++ : -1;
-  _OFFSET_LOCK_.clear();
-}
-void HandleSaveAnswer(uint pid, char *result) {
+void HandleSaveAnswer(uint pid) {
 #ifdef TESTSPEED
   struct timeval tim {};
   gettimeofday(&tim, nullptr);
   double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
 #endif
 
-  uint offcur = 0;
-  char *ptr = result;
   while (true) {
-    GetNextOffSet(offcur);
-    if (offcur == -1) break;
-    const auto &offset = OffSet[offcur];
+    while (_OFFSET_LOCK_.test_and_set())
+      ;
+    uint cur = OffSetCur < OffSet.size() ? OffSetCur++ : -1;
+    _OFFSET_LOCK_.clear();
+    if (cur == -1) break;
+    const auto &offset = OffSet[cur];
     uint stl = offset[0], edl = offset[1];
     uint stidx = offset[2], edidx = offset[3];
-    uint offsz = FirstBufLen + offset[4];
-    result = ptr + offsz;
+    char *result = AnswerBuffer[cur];
     for (uint i = stl; i <= edl; ++i) {
       uint low = (i == stl ? stidx : 0);
       uint high = (i == edl ? edidx : JobsCount);
       for (uint j = low; j < high; ++j) {
-        WriteAnswer(result, i, Cycles[Jobs[j]].cycle[i]);
+        uint idx = 0;
+        const auto &cycle = Cycles[Jobs[j]].cycle[i];
+        for (const auto &v : cycle) {
+          const auto &mpid = MapID[v];
+          memcpy(result, mpid.str, mpid.len);
+          if (++idx == i + 3) {
+            idx = 0;
+            *(result + mpid.len - 1) = '\n';
+          }
+          result += mpid.len;
+        }
       }
     }
+    AnswerBufferLen[cur] = result - AnswerBuffer[cur];
+    Done[cur] = true;
   }
 
 #ifdef TESTSPEED
   gettimeofday(&tim, nullptr);
   double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-  printf("@ thread %d: [save: %.4fs]\n", pid, t4 - t1);
+  printf("@ thread %d: [memcpy] [cost: %.4fs]\n", pid, t4 - t1);
+#endif
+}
+
+void WriteAnswer(int pid) {
+#ifdef TESTSPEED
+  struct timeval tim {};
+  gettimeofday(&tim, nullptr);
+  double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+#endif
+
+  sprintf(FirstBuf, "%d\n", Answers);
+  FirstBufLen = strlen(FirstBuf);
+  FILE *fp = fopen(RESULT, "w");
+  fwrite(FirstBuf, 1, FirstBufLen, fp);
+
+  uint idx = 0;
+  while (idx < OffSet.size()) {
+    while (!Done[idx]) usleep(1);
+    fwrite(AnswerBuffer[idx], AnswerBufferLen[idx], 1, fp);
+    ++idx;
+  }
+  fclose(fp);
+
+#ifdef TESTSPEED
+  gettimeofday(&tim, nullptr);
+  double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+  printf("@ thread %d: [fwrite] [cost: %.4fs]\n", pid, t4 - t1);
 #endif
 }
 
 void SaveAnswer() {
-  CalOffset();
-
-  sprintf(FirstBuf, "%d\n", Answers);
-  FirstBufLen = strlen(FirstBuf);
-  TotalBufferSize += FirstBufLen;
-  uint fd = open(RESULT, O_RDWR | O_CREAT, 0666);
-  char *result = (char *)mmap(NULL, TotalBufferSize, PROT_READ | PROT_WRITE,
-                              MAP_SHARED, fd, 0);
-  ftruncate(fd, TotalBufferSize);
-  close(fd);
-  memcpy(result, FirstBuf, FirstBufLen);
-
   std::thread Th[NTHREAD];
   for (uint i = 1; i < NTHREAD; ++i) {
-    Th[i] = std::thread(HandleSaveAnswer, i, result);
+    Th[i] = std::thread(HandleSaveAnswer, i);
   }
-  HandleSaveAnswer(0, result);
+  WriteAnswer(0);
   for (uint i = 1; i < NTHREAD; ++i) Th[i].join();
 }
 
 int main() {
   LoadData();
   FindCircle();
+  CalOffset();
   SaveAnswer();
   sleep(1);
 #ifdef LOCAL

@@ -42,14 +42,14 @@ typedef std::pair<uint, uint> Pair;
 /*
  * 常量定义
  */
-const uint MAXEDGE = 2000000 + 7;  // 最多边数目
+const uint MAXEDGE = 3000000 + 7;  // 最多边数目
 const uint MAXN = MAXEDGE << 1;    // 最多点数目
 const uint NTHREAD = 4;            // 线程个数
 const uint NUMLENGTH = 12;         // ID最大长度
 const uint BUFFERBLOCK = 64;
 
 struct DFSEdge {
-  uint idx, w;
+  uint v, w;
 };
 struct Edge {
   uint u, v, w;
@@ -76,23 +76,36 @@ uint TotalBufferSize = 0;                           // 总buffer大小
 uint FirstBufLen = 0;                               // 换个数bufsize
 uint JobCur = 0;                                    // Job光标
 uint OffSetCur = 0;                                 // OffSet光标
-bool Done[BUFFERBLOCK];                             // 构造buffer
-uint AnswerBufferLen[BUFFERBLOCK];                  // bufferlen
-uint Head[MAXN], HeadLen[MAXN];                     // 前向图
-uint Back[MAXN], BackLen[MAXN];                     // 后向图
-DFSEdge G[MAXN];                                    // 前向图
-DFSEdge GBack[MAXN];                                // 后向图
 std::atomic_flag _JOB_LOCK_ = ATOMIC_FLAG_INIT;     // job lock
 std::atomic_flag _OFFSET_LOCK_ = ATOMIC_FLAG_INIT;  // offset lock
+std::vector<uint> MaxWeight, BackMaxWeight;         // MaxWeight
+std::vector<uint> MinWeight, BackMinWeight;         // MinWeight
+std::vector<uint> ThMaxWeight[NTHREAD];             // thread:
+std::vector<uint> ThBackMaxWeight[NTHREAD];         // MaxWeight
+std::vector<uint> ThMinWeight[NTHREAD];             // thread:
+std::vector<uint> ThBackMinWeight[NTHREAD];         // MinWeight
 char FirstBuf[NUMLENGTH];                           // 环个数buf
+uint ThEdgesCount[NTHREAD];                         // thread: 正向边cnt
+uint ThBackEdgesCount[NTHREAD];                     // thread: 反向边cnt
 std::vector<std::array<uint, 4>> OffSet;  // 分块输出，每一块位置
 uint Jobs[MAXN];                          // 有效点
 PreBuffer MapID[MAXN];                    // 解析int
+DFSEdge *Children[MAXN][2];               // 子结点
+DFSEdge *Parents[MAXN][2];                // 父亲结点
+std::vector<Pair> ThChildren[NTHREAD];    // thread: 子结点
+std::vector<Pair> ThParents[NTHREAD];     // thread: 父结点
 std::vector<Answer> Cycles;               // 所有答案
+DFSEdge DFSEdges[MAXEDGE];                // 搜索正向边集合
+DFSEdge BackDFSEdges[MAXEDGE];            // 搜索反向边集合
 Edge Edges[MAXEDGE];                      // 读入正向边集合
+Edge BackEdges[MAXEDGE];                  // 读入反向边集合
+Edge ThEdges[NTHREAD][MAXEDGE];           // thread: 正向边集合
+Edge ThBackEdges[NTHREAD][MAXEDGE];       // thread: 反向边集合
 ThData ThreadData[NTHREAD];               // 线程找环
 
 char AnswerBuffer[BUFFERBLOCK][22000000 / BUFFERBLOCK * 7 * NUMLENGTH];
+uint AnswerBufferLen[BUFFERBLOCK];
+bool Done[BUFFERBLOCK];
 
 struct HashTable {
   static const int MOD1 = 6893911;
@@ -144,13 +157,91 @@ struct HashTable {
     }
   }
 };
-HashTable HashMap;
+HashTable HashID;
 
-inline void addEdge(const uint &u, const uint &v, const uint &w) {
-  auto &e = Edges[EdgesCount++];
-  e.u = u;
-  e.v = v;
-  e.w = w;
+void HandleSortEdge(int pid) {
+  std::sort(ThEdges[pid], ThEdges[pid] + ThEdgesCount[pid],
+            [&](const Edge &e1, const Edge &e2) {
+              if (e1.u == e2.u) return e1.v < e2.v;
+              return e1.u < e2.u;
+            });
+  std::sort(ThBackEdges[pid], ThBackEdges[pid] + ThBackEdgesCount[pid],
+            [&](const Edge &e1, const Edge &e2) {
+              if (e1.v == e2.v) return e1.u > e2.u;
+              return e1.v < e2.v;
+            });
+}
+
+void SortEdge() {
+#ifdef LOCAL
+  struct timeval tim {};
+  gettimeofday(&tim, nullptr);
+  double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+#endif
+
+  std::thread Th[NTHREAD];
+  for (int i = 0; i < NTHREAD; ++i) Th[i] = std::thread(HandleSortEdge, i);
+  for (int i = 0; i < NTHREAD; ++i) Th[i].join();
+  Edge *ptr = Edges, *ptr1 = BackEdges;
+  for (int i = 0; i < NTHREAD; ++i) {
+    const uint &cnt = ThEdgesCount[i];
+    memcpy(ptr, ThEdges[i], cnt * sizeof(Edge));
+    ptr += cnt;
+    EdgesCount += cnt;
+
+    const uint &cnt1 = ThBackEdgesCount[i];
+    memcpy(ptr1, ThBackEdges[i], cnt1 * sizeof(Edge));
+    ptr1 += cnt1;
+  }
+
+#ifdef LOCAL
+  gettimeofday(&tim, nullptr);
+  double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+  printf("@ SortEdge:\t[cost: %.4fs]\n", t4 - t1);
+#endif
+}
+
+inline bool deleteForword(const Edge &e) {
+  const uint &maxx = MaxWeight[e.v];
+  const uint &minx = MinWeight[e.v];
+  return (maxx <= W5_MAX && e.w > P5(maxx)) ||
+         (e.w <= W3_MAX && P3(e.w) < minx);
+}
+inline bool deleteBack(const Edge &e) {
+  const uint &maxx = BackMaxWeight[e.u];
+  const uint &minx = BackMinWeight[e.u];
+  return (e.w <= W5_MAX && minx > P5(e.w)) ||
+         (maxx <= W3_MAX && P3(maxx) < e.w);
+}
+
+void HandleHashEdge(int pid) {
+  const uint inf = std::numeric_limits<uint>::max();
+  auto &maxWeight = ThMaxWeight[pid];
+  auto &minWeight = ThMinWeight[pid];
+  auto &backMaxWeight = ThBackMaxWeight[pid];
+  auto &backMinWeight = ThBackMinWeight[pid];
+  maxWeight = backMaxWeight = std::vector<uint>(MaxID, 0);
+  minWeight = backMinWeight = std::vector<uint>(MaxID, inf);
+  const uint &cnt = ThEdgesCount[pid];
+  auto &edges = ThEdges[pid];
+  for (int i = 0; i < cnt; ++i) {
+    Edge &e = edges[i];
+    e.u = HashID.Query(e.u);
+    e.v = HashID.Query(e.v);
+    maxWeight[e.u] = std::max(maxWeight[e.u], e.w);
+    minWeight[e.u] = std::min(minWeight[e.u], e.w);
+    backMaxWeight[e.v] = std::max(backMaxWeight[e.v], e.w);
+    backMinWeight[e.v] = std::min(backMinWeight[e.v], e.w);
+  }
+}
+void HandleDelete(int pid) {
+  const uint &cnt = ThEdgesCount[pid];
+  auto &edges = ThEdges[pid];
+  const uint inf = std::numeric_limits<uint>::max();
+  for (int i = 0; i < cnt; ++i) {
+    Edge &e = edges[i];
+    if (deleteForword(e) && deleteBack(e)) e.v = inf;
+  }
 }
 
 void CreateHashTable() {
@@ -160,94 +251,138 @@ void CreateHashTable() {
   double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
 #endif
 
-  uint pre = 0;
-  for (uint i = 0; i < EdgesCount; ++i) {
-    const auto &e = Edges[i];
-    HashMap.Insert(e.u);
+  for (uint i = 0; i < NTHREAD; ++i) {
+    const uint &cnt = ThEdgesCount[i];
+    for (int j = 0; j < cnt; ++j) {
+      const Edge &e = ThEdges[i][j];
+      HashID.Insert(e.u);
+      HashID.Insert(e.v);
+    }
   }
-  HashMap.Sort();
+  HashID.Sort();
+
+  std::thread Th[NTHREAD];
+  for (int i = 0; i < NTHREAD; ++i) Th[i] = std::thread(HandleHashEdge, i);
+  for (int i = 0; i < NTHREAD; ++i) Th[i].join();
+
+  const uint inf = std::numeric_limits<uint>::max();
+  MaxWeight = BackMaxWeight = std::vector<uint>(MaxID, 0);
+  MinWeight = BackMinWeight = std::vector<uint>(MaxID, inf);
+
+  for (int i = 0; i < NTHREAD; ++i) {
+    for (int j = 0; j < MaxID; ++j) {
+      MaxWeight[j] = std::max(MaxWeight[j], ThMaxWeight[i][j]);
+      MinWeight[j] = std::min(MinWeight[j], ThMinWeight[i][j]);
+      BackMaxWeight[j] = std::max(BackMaxWeight[j], ThBackMaxWeight[i][j]);
+      BackMinWeight[j] = std::min(BackMinWeight[j], ThBackMinWeight[i][j]);
+    }
+  }
+
+  for (int i = 0; i < NTHREAD; ++i) Th[i] = std::thread(HandleDelete, i);
+  for (int i = 0; i < NTHREAD; ++i) Th[i].join();
 
 #ifdef LOCAL
   gettimeofday(&tim, nullptr);
   double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-  printf("@ HashMap:\t[cost: %.4fs]\n", t4 - t1);
+  printf("@ HashID:\t[cost: %.4fs]\n", t4 - t1);
 #endif
 }
-void CreateForwardGraph() {
+
+void HandleCreateSubGraph(int pid) {
+  auto &children = ThChildren[pid];
+  auto &parents = ThParents[pid];
+  parents.reserve(MaxID);
+  children.reserve(MaxID);
+  const uint inf = std::numeric_limits<uint>::max();
+  for (int i = pid; i < EdgesCount; i += NTHREAD) {
+    const auto &e = Edges[i];
+    if (e.v != inf) {
+      if (children[e.u].second == 0) {
+        children[e.u].first = i;
+      }
+      ++children[e.u].second;
+      DFSEdges[i].v = e.v;
+      DFSEdges[i].w = e.w;
+    }
+
+    const auto &e1 = BackEdges[i];
+    const uint &p1 = HashID.Query(e1.u);
+    const uint &p2 = HashID.Query(e1.v);
+    BackDFSEdges[i].v = p1;
+    BackDFSEdges[i].w = e1.w;
+    if (parents[p2].second == 0) {
+      parents[p2].first = i;
+    }
+    ++parents[p2].second;
+  }
+}
+void CreateSubGraph() {
 #ifdef LOCAL
   struct timeval tim {};
   gettimeofday(&tim, nullptr);
   double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
 #endif
-
-  for (uint i = 0; i < EdgesCount; ++i) {
-    const auto &e = Edges[i];
-    uint v = HashMap.Query(e.v);
-    if (v != -1) {
-      uint u = HashMap.Query(e.u);
-      ++HeadLen[u];
-    }
+  std::thread Th[NTHREAD];
+  for (int i = 0; i < NTHREAD; ++i) {
+    Th[i] = std::thread(HandleCreateSubGraph, i);
   }
-  Head[0] = 0;
-  for (uint i = 1; i <= MaxID; ++i) Head[i] = Head[i - 1] + HeadLen[i - 1];
-  std::vector<uint> cnt(MaxID, 0);
-  for (uint i = 0; i < EdgesCount; ++i) {
-    const auto &e = Edges[i];
-    uint v = HashMap.Query(e.v);
-    if (v != -1) {
-      uint u = HashMap.Query(e.u);
-      G[Head[u] + cnt[u]].idx = v;
-      G[Head[u] + cnt[u]++].w = e.w;
-    }
-  }
+  for (int i = 0; i < NTHREAD; ++i) Th[i].join();
 #ifdef LOCAL
   gettimeofday(&tim, nullptr);
   double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-  printf("@ GHead:\t[cost: %.4fs]\n", t4 - t1);
+  printf("@ SubGraph:\t[cost: %.4fs]\n", t4 - t1);
 #endif
 }
-void CreateBackGraph() {
+void HandleCreateGraph(int pid) {
+  for (int i = pid; i < MaxID; i += NTHREAD) {
+    uint minx = EdgesCount, len = 0;
+    uint minx1 = EdgesCount, len1 = 0;
+    for (uint j = 0; j < NTHREAD; ++j) {
+      const auto &cdr = ThChildren[j][i];
+      if (cdr.second > 0) {
+        minx = std::min(minx, cdr.first);
+        len += cdr.second;
+      }
+      const auto &pat = ThParents[j][i];
+      if (pat.second > 0) {
+        minx1 = std::min(minx1, pat.first);
+        len1 += pat.second;
+      }
+    }
+    Children[i][0] = &DFSEdges[minx];
+    Children[i][1] = &DFSEdges[minx + len];
+    Parents[i][0] = &BackDFSEdges[minx1];
+    Parents[i][1] = &BackDFSEdges[minx1 + len1];
+  }
+}
+void CreateGraph() {
 #ifdef LOCAL
   struct timeval tim {};
   gettimeofday(&tim, nullptr);
   double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
 #endif
-  for (uint i = 0; i < EdgesCount; ++i) {
-    const auto &e = Edges[i];
-    uint v = HashMap.Query(e.v);
-    if (v != -1) {
-      ++BackLen[v];
-    }
-  }
-  Back[0] = 0;
-  for (uint i = 1; i <= MaxID; ++i) Back[i] = Back[i - 1] + BackLen[i - 1];
-  std::vector<uint> cnt(MaxID, 0);
-  for (uint i = 0; i < EdgesCount; ++i) {
-    const auto &e = Edges[i];
-    uint v = HashMap.Query(e.v);
-    if (v != -1) {
-      uint u = HashMap.Query(e.u);
-      GBack[Back[v] + cnt[v]].idx = u;
-      GBack[Back[v] + cnt[v]++].w = e.w;
-    }
-  }
+  std::thread Th[NTHREAD];
+  for (int i = 0; i < NTHREAD; ++i) Th[i] = std::thread(HandleCreateGraph, i);
+  for (int i = 0; i < NTHREAD; ++i) Th[i].join();
 #ifdef LOCAL
   gettimeofday(&tim, nullptr);
   double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-  printf("@ GBack:\t[cost: %.4fs]\n", t4 - t1);
+  printf("@ Graph:\t[cost: %.4fs]\n", t4 - t1);
 #endif
 }
-void SortEdge(uint pid) {
-  for (uint i = pid; i < MaxID; i += NTHREAD) {
-    std::sort(
-        G + Head[i], G + Head[i] + HeadLen[i],
-        [&](const DFSEdge &e1, const DFSEdge &e2) { return e1.idx < e2.idx; });
-    std::sort(
-        GBack + Back[i], GBack + Back[i] + BackLen[i],
-        [&](const DFSEdge &e1, const DFSEdge &e2) { return e1.idx > e2.idx; });
-  }
-}
 
+void addEdge(const uint &u, const uint &v, const uint &w) {
+  uint pid = u % NTHREAD;
+  auto &e = ThEdges[pid][ThEdgesCount[pid]++];
+  e.u = u;
+  e.v = v;
+  e.w = w;
+  pid = v % NTHREAD;
+  auto &e1 = ThBackEdges[pid][ThBackEdgesCount[pid]++];
+  e1.u = u;
+  e1.v = v;
+  e1.w = w;
+}
 void LoadData() {
 #ifdef LOCAL
   struct timeval tim {};
@@ -291,16 +426,13 @@ void LoadData() {
 #endif
 
   CreateHashTable();
-  std::thread Th[4];
-  Th[0] = std::thread(CreateForwardGraph);
-  Th[1] = std::thread(CreateBackGraph);
-  Th[0].join();
-  Th[1].join();
-  for (uint i = 0; i < NTHREAD; ++i) Th[i] = std::thread(SortEdge, i);
-  for (uint i = 0; i < NTHREAD; ++i) Th[i].join();
+  SortEdge();
+  CreateSubGraph();
+  CreateGraph();
 
   for (uint i = 0; i < MaxID; ++i) {
-    if (HeadLen[i] > 0 && BackLen[i] > 0) {
+    if (Children[i][1] - Children[i][0] > 0 &&
+        Parents[i][1] - Parents[i][0] > 0) {
       Jobs[JobsCount++] = i;
     }
   }
@@ -317,6 +449,11 @@ inline bool judge(const uint &w1, const uint &w2) {
   return (w2 > W5_MAX || w1 <= P5(w2)) && (w1 > W3_MAX || P3(w1) >= w2);
 }
 
+inline bool judge(const DFSEdge *e1, const DFSEdge *e2) {
+  return (e2->w > W5_MAX || e1->w <= P5(e2->w)) &&
+         (e1->w > W3_MAX || P3(e1->w) >= e2->w);
+}
+
 void BackSearch(ThData &Data, const uint &st) {
   for (uint i = 0; i < Data.ReachCount; ++i) {
     const uint &v = Data.ReachPoint[i];
@@ -325,33 +462,25 @@ void BackSearch(ThData &Data, const uint &st) {
   Data.ReachCount = 0;
   Data.ReachPoint[Data.ReachCount++] = st;
   Data.Reach[st] = 7;
-
-  const DFSEdge *e1 = &GBack[Back[st]];
-  for (uint it1 = Back[st]; it1 < Back[st + 1]; ++it1, ++e1) {
-    const uint &v1 = e1->idx;
+  const auto &f1 = Parents[st];
+  for (const auto *e1 = f1[0]; e1 < f1[1]; ++e1) {
+    const uint &v1 = e1->v;
     if (v1 <= st) break;
-    const uint &w1 = e1->w;
-    Data.LastWeight[v1] = w1;
+    Data.LastWeight[v1] = e1->w;
     Data.Reach[v1] = 7;
     Data.ReachPoint[Data.ReachCount++] = v1;
-
-    const DFSEdge *e2 = &GBack[Back[v1]];
-    for (uint it2 = Back[v1]; it2 < Back[v1 + 1]; ++it2, ++e2) {
-      const uint &v2 = e2->idx;
+    const auto &f2 = Parents[v1];
+    for (const auto *e2 = f2[0]; e2 < f2[1]; ++e2) {
+      const uint &v2 = e2->v;
       if (v2 <= st) break;
-      const uint &w2 = e2->w;
-
-      if (!judge(w2, w1)) continue;
+      if (!judge(e2, e1)) continue;
       Data.Reach[v2] |= 6;
       Data.ReachPoint[Data.ReachCount++] = v2;
-
-      const DFSEdge *e3 = &GBack[Back[v2]];
-      for (uint it3 = Back[v2]; it3 < Back[v2 + 1]; ++it3, ++e3) {
-        const uint &v3 = e3->idx;
+      const auto &f3 = Parents[v2];
+      for (const auto *e3 = f3[0]; e3 < f3[1]; ++e3) {
+        const uint &v3 = e3->v;
         if (v3 <= st) break;
-        if (v3 == v1) continue;
-        const uint &w3 = e3->w;
-        if (!judge(w3, w2)) continue;
+        if (v3 == v1 || !judge(e3, e2)) continue;
         Data.Reach[v3] |= 4;
         Data.ReachPoint[Data.ReachCount++] = v3;
       }
@@ -362,92 +491,92 @@ void BackSearch(ThData &Data, const uint &st) {
 void ForwardSearch(ThData &Data, const uint &st) {
   std::vector<uint>(&ret)[5] = Cycles[st].cycle;
 
-  const DFSEdge *e1 = &G[Head[st]];
-  for (uint it1 = Head[st]; it1 < Head[st + 1]; ++it1, ++e1) {
-    const uint &v1 = e1->idx, &w1 = e1->w;
-    if (v1 < st) continue;
+  const auto &c1 = Children[st];
 
-    const DFSEdge *e2 = &G[Head[v1]];
+  for (const auto *e1 = c1[0]; e1 < c1[1]; ++e1) {
+    if (e1->v < st) continue;
 
-    for (uint it2 = Head[v1]; it2 < Head[v1 + 1]; ++it2, ++e2) {
-      const uint &v2 = e2->idx, &w2 = e2->w;
-      if (v2 <= st || !judge(w1, w2)) continue;
+    const auto &c2 = Children[e1->v];
 
-      const DFSEdge *e3 = &G[Head[v2]];
+    for (const auto *e2 = c2[0]; e2 < c2[1]; ++e2) {
+      if (e2->v <= st || !judge(e1, e2)) continue;
 
-      for (uint it3 = Head[v2]; it3 < Head[v2 + 1]; ++it3, ++e3) {
-        const uint &v3 = e3->idx, &w3 = e3->w;
+      const auto &c3 = Children[e2->v];
 
-        if (v3 < st || v3 == v1 || !judge(w2, w3)) {
+      for (const auto *e3 = c3[0]; e3 < c3[1]; ++e3) {
+        if (e3->v < st || e3->v == e1->v || !judge(e2, e3)) {
           continue;
-        } else if (v3 == st) {
-          if (judge(w3, w1)) {
-            ret[0].insert(ret[0].end(), {st, v1, v2});
+        } else if (e3->v == st) {
+          if (judge(e3, e1)) {
+            ret[0].insert(ret[0].end(), {st, e1->v, e2->v});
           }
           continue;
         }
 
-        const DFSEdge *e4 = &G[Head[v3]];
+        const auto &c4 = Children[e3->v];
 
-        for (uint it4 = Head[v3]; it4 < Head[v3 + 1]; ++it4, ++e4) {
-          const uint &v4 = e4->idx, &w4 = e4->w;
-
-          if (!(Data.Reach[v4] & 4) || v1 == v4 || v2 == v4) {
+        for (const auto *e4 = c4[0]; e4 < c4[1]; ++e4) {
+          if (!(Data.Reach[e4->v] & 4) || e1->v == e4->v || e2->v == e4->v) {
             continue;
-          } else if (!judge(w3, w4)) {
+          } else if (!judge(e3, e4)) {
             continue;
-          } else if (v4 == st) {
-            if (judge(w4, w1)) {
-              ret[1].insert(ret[1].end(), {st, v1, v2, v3});
+          } else if (e4->v == st) {
+            if (judge(e4, e1)) {
+              ret[1].insert(ret[1].end(), {st, e1->v, e2->v, e3->v});
             }
             continue;
           }
 
-          const DFSEdge *e5 = &G[Head[v4]];
+          const auto &c5 = Children[e4->v];
 
-          for (uint it5 = Head[v4]; it5 < Head[v4 + 1]; ++it5, ++e5) {
-            const uint &v5 = e5->idx, &w5 = e5->w;
-
-            if (!(Data.Reach[v5] & 2) || v1 == v5 || v2 == v5 || v3 == v5) {
+          for (const auto *e5 = c5[0]; e5 < c5[1]; ++e5) {
+            if (!(Data.Reach[e5->v] & 2) || e1->v == e5->v || e2->v == e5->v ||
+                e3->v == e5->v) {
               continue;
-            } else if (!judge(w4, w5)) {
+            } else if (!judge(e4, e5)) {
               continue;
-            } else if (v5 == st) {
-              if (judge(w5, w1)) {
-                ret[2].insert(ret[2].end(), {st, v1, v2, v3, v4});
+            } else if (e5->v == st) {
+              if (judge(e5, e1)) {
+                ret[2].insert(ret[2].end(), {st, e1->v, e2->v, e3->v, e4->v});
               }
               continue;
             }
 
-            const DFSEdge *e6 = &G[Head[v5]];
+            const auto &c6 = Children[e5->v];
 
-            for (uint it6 = Head[v5]; it6 < Head[v5 + 1]; ++it6, ++e6) {
-              const uint &v6 = e6->idx, &w6 = e6->w;
-
-              if (!(Data.Reach[v6] & 1) || v1 == v6 || v2 == v6 || v3 == v6 ||
-                  v4 == v6) {
+            for (const auto *e6 = c6[0]; e6 < c6[1]; ++e6) {
+              if (!(Data.Reach[e6->v] & 1) || e1->v == e6->v ||
+                  e2->v == e6->v || e3->v == e6->v || e4->v == e6->v) {
                 continue;
-              } else if (!judge(w5, w6)) {
+              } else if (!judge(e5, e6)) {
                 continue;
-              } else if (v6 == st) {
-                if (judge(w6, w1)) {
-                  ret[3].insert(ret[3].end(), {st, v1, v2, v3, v4, v5});
+              } else if (e6->v == st) {
+                if (judge(e6, e1)) {
+                  ret[3].insert(ret[3].end(),
+                                {st, e1->v, e2->v, e3->v, e4->v, e5->v});
                 }
                 continue;
               }
-              const uint &w7 = Data.LastWeight[v6];
-
-              if (!judge(w6, w7) || !judge(w7, w1)) {
+              const uint &w7 = Data.LastWeight[e6->v];
+              if (!judge(e6->w, w7) || !judge(w7, e1->w)) {
                 continue;
               }
 
-              ret[4].insert(ret[4].end(), {st, v1, v2, v3, v4, v5, v6});
+              ret[4].insert(ret[4].end(),
+                            {st, e1->v, e2->v, e3->v, e4->v, e5->v, e6->v});
             }
           }
         }
       }
     }
   }
+}
+
+inline void GetNextJob(uint &job) {
+  while (_JOB_LOCK_.test_and_set())
+    ;
+  job = JobCur < JobsCount ? Jobs[JobCur++] : -1;
+  _JOB_LOCK_.clear();
 }
 
 void HandleFindCycle(uint pid) {
@@ -457,13 +586,11 @@ void HandleFindCycle(uint pid) {
   double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
 #endif
 
+  uint job = 0;
   auto &Data = ThreadData[pid];
 
   while (true) {
-    while (_JOB_LOCK_.test_and_set())
-      ;
-    uint job = JobCur < JobsCount ? Jobs[JobCur++] : -1;
-    _JOB_LOCK_.clear();
+    GetNextJob(job);
     if (job == -1) break;
     BackSearch(Data, job);
     ForwardSearch(Data, job);
@@ -472,7 +599,7 @@ void HandleFindCycle(uint pid) {
 #ifdef TESTSPEED
   gettimeofday(&tim, nullptr);
   double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-  printf("@ thread %d: [find cycle] [cost: %.4fs]\n", pid, t4 - t1);
+  printf("@ thread %d: [cost: %.4fs]\n", pid, t4 - t1);
 #endif
 }
 
@@ -621,9 +748,17 @@ int main() {
   FindCircle();
   CalOffset();
   SaveAnswer();
-  sleep(1);
+  // sleep(1);
 #ifdef LOCAL
-  std::cerr << "@ Answers: " << Answers << "\n";
+  std::cerr << "@ Answers: " << Answers << "";
+  std::cerr << ", Bufsize: " << TotalBufferSize << "\n";
+  int cnt = 0;
+  const uint inf = std::numeric_limits<uint>::max();
+  for (int i = 0; i < EdgesCount; ++i) {
+    auto &e = Edges[i];
+    if (e.v == inf) ++cnt;
+  }
+  std::cerr << "@ delete: " << cnt << "\n";
 #endif
   return 0;
 }
