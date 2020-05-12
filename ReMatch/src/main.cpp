@@ -73,8 +73,8 @@ struct ThData2 {
   bool vis[MAXN];
   uint ReachPoint[MAXN];  // 可达点集合
   uint LastWeight[MAXN];  // 最后一步权重
-  std::vector<std::array<uint, 2>> Path2[MAXN];
-  std::vector<std::array<uint, 3>> Path3[MAXN];
+  std::vector<std::vector<std::array<uint, 2>>> Path2;
+  std::vector<std::vector<std::array<uint, 3>>> Path3;
 };
 
 uint MaxID = 0;                                     // 最大点
@@ -117,7 +117,7 @@ struct HashTable {
   Data Map[MOD1];
   uint HashIdx[MOD1];
 
-  uint size() { return count; }
+  uint Size() { return count; }
   uint hash(const uint &k, const int &i) {
     return (k % MOD1 + i * (MOD2 - k % MOD2)) % MOD1;
   }
@@ -126,7 +126,7 @@ struct HashTable {
       const uint &val = this->hash(key, i);
       if (Map[val].val == -1) {
         Map[val].key = key;
-        Map[val].val = MaxID++;
+        Map[val].val = count++;
         HashIdx[count++] = val;
         break;
       }
@@ -176,6 +176,7 @@ void CreateHashTable() {
     HashMap.Insert(e.u);
   }
   HashMap.Sort();
+  MaxID = HashMap.Size();
 
 #ifdef LOCAL
   gettimeofday(&tim, nullptr);
@@ -602,7 +603,10 @@ void ForwardSearch2(ThData2 &Data, const uint &st) {
 }
 
 // 1: 6+3(剪枝); 2: 4+3(保存路径)
-uint ChooseStragety(const uint &job) { return random() % 2; }
+uint ChooseStragety(const uint &job) {
+  return 2;
+  return random() % 2;
+}
 
 void HandleFindCycle(uint pid) {
 #ifdef TESTSPEED
@@ -613,6 +617,8 @@ void HandleFindCycle(uint pid) {
 
   auto &Data1 = ThreadData1[pid];
   auto &Data2 = ThreadData2[pid];
+  Data2.Path2.reserve(MaxID);
+  Data2.Path3.reserve(MaxID);
 
   while (true) {
     while (_JOB_LOCK_.test_and_set())
