@@ -31,7 +31,7 @@
 #define P10(x) ((x << 3) + (x << 1))
 
 #ifdef LOCAL
-#define TRAIN "../data/18908526/test_data.txt"
+#define TRAIN "../data/19630345/test_data.txt"
 #define RESULT "/dev/shm/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
@@ -42,7 +42,7 @@ typedef std::pair<uint, uint> Pair;
 /*
  * 常量定义
  */
-const uint MAXEDGE = 3000000 + 7;  // 最多边数目
+const uint MAXEDGE = 2000000 + 7;  // 最多边数目
 const uint MAXN = MAXEDGE << 1;    // 最多点数目
 const uint NTHREAD = 4;            // 线程个数
 const uint NUMLENGTH = 12;         // ID最大长度
@@ -61,18 +61,12 @@ struct PreBuffer {
 struct Answer {
   std::vector<uint> cycle[5];
 };
-struct ThData1 {
+struct ThData {
   uint ReachCount = 0;    // 反向可达点数目
   char Reach[MAXN];       // 标记反向可达
   uint ReachPoint[MAXN];  // 可达点集合
   uint LastWeight[MAXN];  // 最后一步权重
-};
-struct ThData2 {
-  uint ReachCount = 0;  // 反向可达点数目
-  char Reach[MAXN];     // 标记反向可达
   bool vis[MAXN];
-  uint ReachPoint[MAXN];  // 可达点集合
-  uint LastWeight[MAXN];  // 最后一步权重
   std::vector<std::array<uint, 2>> Path2[MAXN];
   std::vector<std::array<uint, 3>> Path3[MAXN];
 };
@@ -99,8 +93,7 @@ uint Jobs[MAXN];                          // 有效点
 PreBuffer MapID[MAXN];                    // 解析int
 std::vector<Answer> Cycles;               // 所有答案
 Edge Edges[MAXEDGE];                      // 读入正向边集合
-ThData1 ThreadData1[NTHREAD];             // 线程找环
-ThData2 ThreadData2[NTHREAD];             // 线程找环
+ThData ThreadData[NTHREAD];               // 线程找环
 
 char *AnswerBuffer[BUFFERBLOCK];
 
@@ -183,7 +176,6 @@ void CreateHashTable() {
   printf("@ HashMap:\t[cost: %.4fs]\n", t4 - t1);
 #endif
 }
-
 void CreateForwardGraph() {
 #ifdef LOCAL
   struct timeval tim {};
@@ -328,139 +320,7 @@ inline bool judge(const uint &w1, const uint &w2) {
   return (w2 > W5_MAX || w1 <= P5(w2)) && (w1 > W3_MAX || P3(w1) >= w2);
 }
 
-void BackSearch1(ThData1 &Data, const uint &st) {
-  for (uint i = 0; i < Data.ReachCount; ++i) {
-    const uint &v = Data.ReachPoint[i];
-    Data.Reach[v] = 0;
-  }
-  Data.ReachCount = 0;
-  Data.ReachPoint[Data.ReachCount++] = st;
-  Data.Reach[st] = 7;
-
-  const DFSEdge *e1 = &GBack[Back[st]];
-  for (uint it1 = Back[st]; it1 < Back[st + 1]; ++it1, ++e1) {
-    const uint &v1 = e1->idx;
-    if (v1 <= st) break;
-    const uint &w1 = e1->w;
-    Data.LastWeight[v1] = w1;
-    Data.Reach[v1] = 7;
-    Data.ReachPoint[Data.ReachCount++] = v1;
-
-    const DFSEdge *e2 = &GBack[Back[v1]];
-    for (uint it2 = Back[v1]; it2 < Back[v1 + 1]; ++it2, ++e2) {
-      const uint &v2 = e2->idx;
-      if (v2 <= st) break;
-      const uint &w2 = e2->w;
-
-      if (!judge(w2, w1)) continue;
-      Data.Reach[v2] |= 6;
-      Data.ReachPoint[Data.ReachCount++] = v2;
-
-      const DFSEdge *e3 = &GBack[Back[v2]];
-      for (uint it3 = Back[v2]; it3 < Back[v2 + 1]; ++it3, ++e3) {
-        const uint &v3 = e3->idx;
-        if (v3 <= st) break;
-        if (v3 == v1) continue;
-        const uint &w3 = e3->w;
-        if (!judge(w3, w2)) continue;
-        Data.Reach[v3] |= 4;
-        Data.ReachPoint[Data.ReachCount++] = v3;
-      }
-    }
-  }
-}
-void ForwardSearch1(ThData1 &Data, const uint &st) {
-  std::vector<uint>(&ret)[5] = Cycles[st].cycle;
-
-  const DFSEdge *e1 = &G[Head[st]];
-  for (uint it1 = Head[st]; it1 < Head[st + 1]; ++it1, ++e1) {
-    const uint &v1 = e1->idx, &w1 = e1->w;
-    if (v1 < st) continue;
-
-    const DFSEdge *e2 = &G[Head[v1]];
-
-    for (uint it2 = Head[v1]; it2 < Head[v1 + 1]; ++it2, ++e2) {
-      const uint &v2 = e2->idx, &w2 = e2->w;
-      if (v2 <= st || !judge(w1, w2)) continue;
-
-      const DFSEdge *e3 = &G[Head[v2]];
-
-      for (uint it3 = Head[v2]; it3 < Head[v2 + 1]; ++it3, ++e3) {
-        const uint &v3 = e3->idx, &w3 = e3->w;
-
-        if (v3 < st || v3 == v1 || !judge(w2, w3)) {
-          continue;
-        } else if (v3 == st) {
-          if (judge(w3, w1)) {
-            ret[0].insert(ret[0].end(), {st, v1, v2});
-          }
-          continue;
-        }
-
-        const DFSEdge *e4 = &G[Head[v3]];
-
-        for (uint it4 = Head[v3]; it4 < Head[v3 + 1]; ++it4, ++e4) {
-          const uint &v4 = e4->idx, &w4 = e4->w;
-
-          if (!(Data.Reach[v4] & 4) || v1 == v4 || v2 == v4) {
-            continue;
-          } else if (!judge(w3, w4)) {
-            continue;
-          } else if (v4 == st) {
-            if (judge(w4, w1)) {
-              ret[1].insert(ret[1].end(), {st, v1, v2, v3});
-            }
-            continue;
-          }
-
-          const DFSEdge *e5 = &G[Head[v4]];
-
-          for (uint it5 = Head[v4]; it5 < Head[v4 + 1]; ++it5, ++e5) {
-            const uint &v5 = e5->idx, &w5 = e5->w;
-
-            if (!(Data.Reach[v5] & 2) || v1 == v5 || v2 == v5 || v3 == v5) {
-              continue;
-            } else if (!judge(w4, w5)) {
-              continue;
-            } else if (v5 == st) {
-              if (judge(w5, w1)) {
-                ret[2].insert(ret[2].end(), {st, v1, v2, v3, v4});
-              }
-              continue;
-            }
-
-            const DFSEdge *e6 = &G[Head[v5]];
-
-            for (uint it6 = Head[v5]; it6 < Head[v5 + 1]; ++it6, ++e6) {
-              const uint &v6 = e6->idx, &w6 = e6->w;
-
-              if (!(Data.Reach[v6] & 1) || v1 == v6 || v2 == v6 || v3 == v6 ||
-                  v4 == v6) {
-                continue;
-              } else if (!judge(w5, w6)) {
-                continue;
-              } else if (v6 == st) {
-                if (judge(w6, w1)) {
-                  ret[3].insert(ret[3].end(), {st, v1, v2, v3, v4, v5});
-                }
-                continue;
-              }
-              const uint &w7 = Data.LastWeight[v6];
-
-              if (!judge(w6, w7) || !judge(w7, w1)) {
-                continue;
-              }
-
-              ret[4].insert(ret[4].end(), {st, v1, v2, v3, v4, v5, v6});
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
-void BackSearch2(ThData2 &Data, const uint &st) {
+void BackSearch(ThData &Data, const uint &st) {
   for (uint i = 0; i < Data.ReachCount; ++i) {
     const uint &v = Data.ReachPoint[i];
     Data.Reach[v] = 0;
@@ -507,7 +367,7 @@ void BackSearch2(ThData2 &Data, const uint &st) {
   }
 }
 
-void ForwardSearch2(ThData2 &Data, const uint &st) {
+void ForwardSearch(ThData &Data, const uint &st) {
   std::vector<uint>(&ret)[5] = Cycles[st].cycle;
 
   const DFSEdge *e1 = &G[Head[st]];
@@ -595,14 +455,57 @@ void ForwardSearch2(ThData2 &Data, const uint &st) {
               ret[4].insert(ret[4].end(), {st, v1, v2, v3, v4, v5, v6});
             }
           }
+
+          // CreateCycle(Data, e4, w1, v1, v2, v3);
+          // continue;
+          /*
+          const DFSEdge *e5 = &G[Head[v4]];
+
+          for (uint it5 = Head[v4]; it5 < Head[v4 + 1]; ++it5, ++e5) {
+            const uint &v5 = e5->idx, &w5 = e5->w;
+
+            if (!(Data.Reach[v5] & 2) || v1 == v5 || v2 == v5 || v3 == v5) {
+              continue;
+            } else if (!judge(w4, w5)) {
+              continue;
+            } else if (v5 == st) {
+              if (judge(w5, w1)) {
+                ret[2].insert(ret[2].end(), {st, v1, v2, v3, v4});
+              }
+              continue;
+            }
+
+            const DFSEdge *e6 = &G[Head[v5]];
+
+            for (uint it6 = Head[v5]; it6 < Head[v5 + 1]; ++it6, ++e6) {
+              const uint &v6 = e6->idx, &w6 = e6->w;
+
+              if (!(Data.Reach[v6] & 1) || v1 == v6 || v2 == v6 || v3 == v6 ||
+                  v4 == v6) {
+                continue;
+              } else if (!judge(w5, w6)) {
+                continue;
+              } else if (v6 == st) {
+                if (judge(w6, w1)) {
+                  ret[3].insert(ret[3].end(), {st, v1, v2, v3, v4, v5});
+                }
+                continue;
+              }
+              const uint &w7 = Data.LastWeight[v6];
+
+              if (!judge(w6, w7) || !judge(w7, w1)) {
+                continue;
+              }
+
+              ret[4].insert(ret[4].end(), {st, v1, v2, v3, v4, v5, v6});
+            }
+          }
+          */
         }
       }
     }
   }
 }
-
-// 1: 6+3(剪枝); 2: 4+3(保存路径)
-uint ChooseStragety(const uint &job) { return random() % 2; }
 
 void HandleFindCycle(uint pid) {
 #ifdef TESTSPEED
@@ -611,8 +514,7 @@ void HandleFindCycle(uint pid) {
   double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
 #endif
 
-  auto &Data1 = ThreadData1[pid];
-  auto &Data2 = ThreadData2[pid];
+  auto &Data = ThreadData[pid];
 
   while (true) {
     while (_JOB_LOCK_.test_and_set())
@@ -620,16 +522,8 @@ void HandleFindCycle(uint pid) {
     uint job = JobCur < JobsCount ? Jobs[JobCur++] : -1;
     _JOB_LOCK_.clear();
     if (job == -1) break;
-
-    uint choice = ChooseStragety(job);
-
-    if (choice == 1) {
-      BackSearch1(Data1, job);
-      ForwardSearch1(Data1, job);
-    } else {
-      BackSearch2(Data2, job);
-      ForwardSearch2(Data2, job);
-    }
+    BackSearch(Data, job);
+    ForwardSearch(Data, job);
   }
 
 #ifdef TESTSPEED
@@ -795,6 +689,17 @@ int main() {
   // sleep(1);
 #ifdef LOCAL
   std::cerr << "@ Answers: " << Answers << "\n";
+  uint cnt[5] = {0};
+  for (uint i = 0; i < JobsCount; ++i) {
+    auto &ret = Cycles[Jobs[i]];
+    for (uint j = 0; j < 5; ++j) {
+      cnt[j] += ret.cycle[j].size() / (j + 3);
+    }
+  }
+  std::cerr << "@ std: 1919 16032 151763 1577627 17883004\n";
+  std::cerr << "@ ans: ";
+  for (uint i = 0; i < 5; ++i) std::cerr << cnt[i] << " ";
+  std::cerr << "\n";
 #endif
   return 0;
 }
