@@ -180,22 +180,23 @@ const uint kMaxResult = 22000128;     //最大结果数
 const uint kMaxE = 3000024;           //最大边数
 const uint kMaxN = 6000024;           //最大点数
 const uint kThreadNum = 4;            //进程/线程数量
-const uint kMaxIdStrLen = 12;         //整数表示的ID有多长
+const uint kMaxIdStrLen = 11;         //整数表示的ID有多长
 const uint kUselessFlg = 2147123456;  //标记没有出边的点
 
-const uint kBufferNum = 64;
+const uint kBufferNum = 128;
 
 string g_test_file;     //输入文件
 string g_predict_file;  //输出文件
 
 typedef pair<uint, ulong>
     Edge;  // in_list邻接表的边的数据结构  u-v-w  in_list[v]=[{u1,w1},{u2,w2}]
-typedef struct BriefEdge {
-  uint v;
-  ulong w;
+/*typedef struct BriefEdge {
+    uint first;
+    ulong second;
 
-  BriefEdge() = default;
-} BriefEdge;
+    BriefEdge() = default;
+} BriefEdge;*/
+typedef pair<uint, ulong> BriefEdge;
 typedef struct RawEdge {
   uint u;
   uint v;
@@ -208,9 +209,7 @@ typedef struct RawEdge {
 typedef struct NodeIdstr {
   ushort len;
   char val[kMaxIdStrLen];
-
   NodeIdstr() = default;
-
   // NodeIdstr(const char *p, uint l) : val(p), len(l) {};
 } Ids;  //存储节点id的数据结构
 
@@ -297,9 +296,16 @@ Ids g_unordered_node_str[kMaxN];  // id的str和strlen
 Ids g_node_str[kMaxN];            //排序过后的str和strlen
 RawEdge g_raw_edge[kMaxE];        //原始输入的边
 /***********************findcycle*/
-pair<uint, uint> g_out_list[kMaxN]{};  //前向星存储
-BriefEdge g_brief_edge[kMaxE];         //不存u
-Vec<Edge> g_in_list[kMaxN];            //邻接表
+// pair<uint, uint> g_out_list[kMaxN]{};//前向星存储
+uint g_in_list[kMaxN]{};
+uint g_out_list[kMaxN]{};
+
+BriefEdge g_brief_edge[kMaxE];   //不存u
+Vec<Edge> g_in_list_old[kMaxN];  //邻接表
+
+BriefEdge g_brief_reverse_edge[kMaxE];
+
+// pair<uint,uint>g_in_list[kMaxN]{};
 
 vector<Cycle> g_result;
 // uint g_answer_len[5][kMaxN];
@@ -318,6 +324,7 @@ uint g_prepared_buffer_num = 0;
 atomic_flag g_find_lock = ATOMIC_FLAG_INIT;
 uint g_processed_num = 0;
 // TODO 预处理出边1的点
+// TODO 强连通分量
 /******************************************functions*********************************************************************/
 /** 一个新的逻辑，如果一个点只出现在y中而不出现在x中，那它必然不构成任何环，因此我们只需要为rawedge中的u建立映射即可
  * 又由于边是排序过的，因此仅当遍历中发现不一样的u时才尝试插入到idmap
@@ -489,35 +496,151 @@ void mapEdgeUV(const uint *arg_reflect, uint pid) {
   }
 }
 
-// in_list邻接表  in_list[1]={0}  in_list[2]={0,1}
-// out_list前向星  E=[{0,1} {0,2} {0,3} {1,2} {1,5}]   out_list[0]={0,2}
-// out_list[1]={3,4}
-void buildGraph(uint pid) {
-  for (uint i = 0; i < g_edge_num; ++i) {
-    RawEdge &e = g_raw_edge[i];
-    if (e.u % kThreadNum == pid) {
-      uint x_id = e.u;
-      if (g_out_list[x_id].second == 0) {
-        g_out_list[x_id].first = i;
-      }
-      g_out_list[x_id].second = i + 1;
-    }
-    if (e.v % kThreadNum == pid) {
-      g_in_list[e.v].emplace_back(e.u, e.w);
-      BriefEdge &b = g_brief_edge[i];
-      b.v = e.v;
-      b.w = e.w;
+// TODO 优先队列
+uint getNext(uint (&head)[kThreadNum]) {
+  uint min_val = 2147483647;
+  uint min_idx = kThreadNum;
+  for (uint i = 0; i < kThreadNum; ++i) {
+    if (g_worker_raw_edge[i][head[i]].u < min_val &&
+        head[i] < g_worker_edge_num[i]) {
+      min_val = g_worker_raw_edge[i][head[i]].u;
+      min_idx = i;
     }
   }
+  return min_idx;
 }
+
+void mergeRawEdge() {
+  /*
+      g_edge_num = 0;
+      for (uint i = 0; i < kThreadNum; ++i) {
+          for (uint j = 0; j < g_worker_edge_num[i]; ++j) {
+              RawEdge *e_worker = &g_worker_raw_edge[i][j];
+              if (e_worker->v == kUselessFlg) {
+                  continue;
+              }
+              RawEdge *e_master = &g_raw_edge[g_edge_num];
+              memcpy(e_master, e_worker, sizeof(RawEdge));
+              g_edge_num++;
+          }
+      }
+  */
+
+  g_edge_num = 0;
+  uint head[kThreadNum] = {0};
+  uint next = getNext(head);
+  uint last_u;
+  RawEdge *e_master = g_raw_edge;
+  while (next < kThreadNum) {
+    RawEdge *e_worker = &g_worker_raw_edge[next][head[next]];
+    last_u = e_worker->u;
+    while (last_u == e_worker->u) {
+      if (e_worker->v != kUselessFlg) {
+        memcpy(e_master, e_worker, sizeof(RawEdge));
+        ++e_master;
+      }
+      ++e_worker;
+    }
+    head[next] = e_worker - g_worker_raw_edge[next];
+    next = getNext(head);
+  }
+  g_edge_num = e_master - g_raw_edge;
+}
+
+// in_list_old邻接表  in_list[1]={0}  in_list[2]={0,1}
+// out_list前向星  E=[{0,1} {0,2} {0,3} {1,2} {1,5}]   out_list[0]={0,2}
+// out_list[1]={3,4}
+// TODO 分成连续的块做  可能会更快
+/**HINT!!!!!!!!!!!
+ * 要避免出现out_list[u]=0的情况，还要考虑最后几个node全部为0的情况  不然有bug*/
+void buildGraph(uint pid) {
+  uint u_last = 0;
+  RawEdge *e = g_raw_edge;
+  for (uint i = 0; i < g_edge_num; ++i) {
+    if (e->u % kThreadNum == pid) {
+      if (e->u != u_last) {
+        g_out_list[e->u] = i;
+      }
+      u_last = e->u;
+    }
+    if (e->v % kThreadNum == pid) {
+      g_in_list_old[e->v].emplace_back(e->u, e->w);
+      BriefEdge &b = g_brief_edge[i];
+      b.first = e->v;
+      b.second = e->w;
+    }
+    ++e;
+  }
+  g_out_list[g_node_num] = g_edge_num;  //必须加 否则最后一项不对
+}
+/**HINT!!!!!!!! */
+void buildGraphFixTail() {
+  g_out_list[g_node_num] = g_edge_num;
+  uint tail = g_node_num - 1;
+  uint first_unzero = g_raw_edge[0].u;
+
+  for (uint i = tail; i > first_unzero; --i) {
+    if (g_out_list[i] == 0) g_out_list[i] = g_out_list[i + 1];
+  }
+}
+
+/*void buildGraph(uint pid) {
+    uint u_last=2147483647;
+    RawEdge *e=g_raw_edge;
+    for (uint i = 0; i < g_edge_num; ++i) {
+        if (e->u!=u_last) {
+            if (e->u % kThreadNum == pid) {
+                g_out_list[e->u] = i;
+            }
+        }
+        if (e->v % kThreadNum == pid) {
+            g_in_list_old[e->v].emplace_back(e->u, e->w);
+            BriefEdge &b = g_brief_edge[i];
+            b.first = e->v;
+            b.second = e->w;
+        }
+        ++e;
+    }
+}*/
 
 bool cmpAdjReverse(const Edge &a, const Edge &b) { return a.first > b.first; }
 
 //降序排序in_list  out_list升序的
 void sortAdjList(uint st, uint ed) {
   for (int i = st; i < ed; ++i) {
-    if (g_in_list[i].size() > 1)
-      sort(g_in_list[i].begin(), g_in_list[i].end(), cmpAdjReverse);
+    if (g_in_list_old[i].size() > 1)
+      sort(g_in_list_old[i].begin(), g_in_list_old[i].end(), cmpAdjReverse);
+  }
+}
+
+void buildReverseEdge(uint st, uint ed, uint offset) {
+  uint idx = offset;
+  for (int i = st; i < ed; ++i) {
+    g_in_list[i] = idx;
+    for (auto &e : g_in_list_old[i]) {
+      g_brief_reverse_edge[idx] = move(e);
+      ++idx;
+    }
+    // g_in_list[i].second=idx;
+  }
+  g_in_list[ed] = idx;
+}
+
+void prepareBuildReverseEdge(vector<uint> &st_list, vector<uint> &ed_list,
+                             vector<uint> &offset_list) {
+  for (uint i = 0; i < kThreadNum; ++i) {
+    st_list[i] = i * (g_node_num / kThreadNum);
+    ed_list[i] = (i + 1) * (g_node_num / kThreadNum);
+  }
+  ed_list[kThreadNum - 1] = g_node_num;
+  uint offset = 0;
+  offset_list[0] = 0;
+  for (uint i = 0; i < kThreadNum; ++i) {
+    offset_list[i] = offset;
+    if (i == kThreadNum - 1) break;
+    for (uint j = st_list[i]; j < ed_list[i]; ++j) {
+      offset += g_in_list_old[j].size();
+    }
   }
 }
 
@@ -622,18 +745,8 @@ void loadPipeline(char *buffer, uint max_buffer_size) {
   //合并worker的边到g_raw_edge
   //得到了处理完的所有的边 (u_index,v_index,w)  u相同的边是连续的,v有序
   // u_index和u的序相同
-  g_edge_num = 0;
-  for (uint i = 0; i < kThreadNum; ++i) {
-    for (uint j = 0; j < g_worker_edge_num[i]; ++j) {
-      RawEdge *e_worker = &g_worker_raw_edge[i][j];
-      if (e_worker->v == kUselessFlg) {
-        continue;
-      }
-      RawEdge *e_master = &g_raw_edge[g_edge_num];
-      memcpy(e_master, e_worker, sizeof(RawEdge));
-      g_edge_num++;
-    }
-  }
+
+  mergeRawEdge();
 
 #ifdef LOCAL
   gettimeofday(&tim, nullptr);
@@ -646,6 +759,7 @@ void loadPipeline(char *buffer, uint max_buffer_size) {
   }
   buildGraph(0);
   for (auto &th : pool) th.join();
+  buildGraphFixTail();
 #ifdef LOCAL
   gettimeofday(&tim, nullptr);
   double t9 = tim.tv_sec + (tim.tv_usec / 1000000.0);
@@ -663,6 +777,30 @@ void loadPipeline(char *buffer, uint max_buffer_size) {
   double t10 = tim.tv_sec + (tim.tv_usec / 1000000.0);
   printf("load data time stage9 %fs\n", t10 - t9);
 #endif
+
+  vector<uint> st_list(kThreadNum, 0);
+  vector<uint> ed_list(kThreadNum, 0);
+  vector<uint> offset_list(kThreadNum, 0);
+  prepareBuildReverseEdge(st_list, ed_list, offset_list);
+
+  for (uint i = 0; i < kThreadNum - 1; ++i) {
+    pool[i] = thread(buildReverseEdge, st_list[i], ed_list[i], offset_list[i]);
+  }
+  buildReverseEdge(st_list[kThreadNum - 1], ed_list[kThreadNum - 1],
+                   offset_list[kThreadNum - 1]);
+  for (auto &th : pool) th.join();
+#ifdef LOCAL
+  gettimeofday(&tim, nullptr);
+  double t11 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+  printf("load data time stage10 %fs\n", t11 - t10);
+#endif
+
+  /*    ofstream fout;
+      fout.open("data/new.txt");
+      for(uint i=0;i<g_node_num;++i){
+          fout<<g_out_list[i]<<endl;
+      }
+      fout.close();*/
 }
 
 /**
@@ -721,24 +859,31 @@ void findCycleAt(uint st, WorkerData &data) {
   data.changed_num = 1;
   data.dist[st] = 7;
 
-  for (auto &e1 : g_in_list[st]) {
-    const uint &v1 = e1.first;
+  uint i1 = g_in_list[st];
+  for (const BriefEdge *e1 = &g_brief_reverse_edge[i1]; i1 < g_in_list[st + 1];
+       ++i1, ++e1) {
+    const uint v1 = e1->first;
     if (v1 < st) break;
-    const ulong &w1 = e1.second;
+    const ulong w1 = e1->second;
     data.dist[v1] = 7;  // 111
     data.end_weight[v1] = w1;
     data.changed_list[data.changed_num++] = v1;
-    for (auto &e2 : g_in_list[v1]) {
-      const uint &v2 = e2.first;
+    uint i2 = g_in_list[v1];
+    for (const BriefEdge *e2 = &g_brief_reverse_edge[i2];
+         i2 < g_in_list[v1 + 1]; ++i2, ++e2) {
+      const uint v2 = e2->first;
       if (v2 <= st) break;
-      const ulong &w2 = e2.second;
+      const ulong w2 = e2->second;
       if (!cmpWeight(w2, w1)) continue;
       data.dist[v2] |= 3;  // 011
       data.changed_list[data.changed_num++] = v2;
-      for (auto &e3 : g_in_list[v2]) {
-        const uint &v3 = e3.first;
+      uint i3 = g_in_list[v2];
+      for (const BriefEdge *e3 = &g_brief_reverse_edge[i3];
+           i3 < g_in_list[v2 + 1]; ++i3, ++e3) {
+        // const BriefEdge &e3 = g_brief_edge[i3];
+        const uint v3 = e3->first;
         if (v3 <= st) break;
-        const ulong &w3 = e3.second;
+        const ulong w3 = e3->second;
         if (!cmpWeight(w3, w2)) continue;
         data.dist[v3] |= 1;  // 001
         data.changed_list[data.changed_num++] = v3;
@@ -751,30 +896,30 @@ void findCycleAt(uint st, WorkerData &data) {
   // const ushort sum_len0 = g_node_str[st].len;
   vector<uint>(&st_result)[5] = g_result[st].path;
   // uint(&st_resut_len)[5] = g_result[st].len;
-  uint i1 = g_out_list[st].first;
-  for (const BriefEdge *e1 = &g_brief_edge[i1]; i1 < g_out_list[st].second;
+  i1 = g_out_list[st];
+  for (const BriefEdge *e1 = &g_brief_edge[i1]; i1 < g_out_list[st + 1];
        ++i1, ++e1) {
     // const BriefEdge &e1 = g_brief_edge[i1];
-    const uint v1 = e1->v;
+    const uint v1 = e1->first;
     if (v1 < st) continue;
-    const ulong w1 = e1->w;
+    const ulong w1 = e1->second;
     // const ushort sum_len1 = sum_len0 + g_node_str[v1].len;
 
-    uint i2 = g_out_list[v1].first;
-    for (const BriefEdge *e2 = &g_brief_edge[i2]; i2 < g_out_list[v1].second;
+    uint i2 = g_out_list[v1];
+    for (const BriefEdge *e2 = &g_brief_edge[i2]; i2 < g_out_list[v1 + 1];
          ++i2, ++e2) {
       // const BriefEdge &e2 = g_brief_edge[i2];
-      const uint v2 = e2->v;
-      const ulong w2 = e2->w;
+      const uint v2 = e2->first;
+      const ulong w2 = e2->second;
       if (v2 <= st || !cmpWeight(w1, w2)) continue;
       // const ushort sum_len2 = sum_len1 + g_node_str[v2].len;
 
-      uint i3 = g_out_list[v2].first;
-      for (const BriefEdge *e3 = &g_brief_edge[i3]; i3 < g_out_list[v2].second;
+      uint i3 = g_out_list[v2];
+      for (const BriefEdge *e3 = &g_brief_edge[i3]; i3 < g_out_list[v2 + 1];
            ++i3, ++e3) {
         // const BriefEdge &e3 = g_brief_edge[i3];
-        const uint v3 = e3->v;
-        const ulong w3 = e3->w;
+        const uint v3 = e3->first;
+        const ulong w3 = e3->second;
         if (v3 < st || v3 == v1 || !cmpWeight(w2, w3)) continue;
         if (v3 == st) {
           if (cmpWeight(w3, w1)) {
@@ -786,13 +931,13 @@ void findCycleAt(uint st, WorkerData &data) {
         };
         // const ushort sum_len3 = sum_len2 + g_node_str[v3].len;
 
-        uint i4 = g_out_list[v3].first;
-        for (const BriefEdge *e4 = &g_brief_edge[i4];
-             i4 < g_out_list[v3].second; ++i4, ++e4) {
+        uint i4 = g_out_list[v3];
+        for (const BriefEdge *e4 = &g_brief_edge[i4]; i4 < g_out_list[v3 + 1];
+             ++i4, ++e4) {
           // const BriefEdge &e4 = g_brief_edge[i4];
-          const uint v4 = e4->v;
+          const uint v4 = e4->first;
           if (!(data.dist[v4] & 1)) continue;
-          const ulong w4 = e4->w;
+          const ulong w4 = e4->second;
           if (!cmpWeight(w3, w4))
             continue;
           else if (v4 == st) {
@@ -809,13 +954,13 @@ void findCycleAt(uint st, WorkerData &data) {
             continue;
           // const ushort len4 = g_node_str[v4].len;
 
-          uint i5 = g_out_list[v4].first;
-          for (const BriefEdge *e5 = &g_brief_edge[i5];
-               i5 < g_out_list[v4].second; ++i5, ++e5) {
+          uint i5 = g_out_list[v4];
+          for (const BriefEdge *e5 = &g_brief_edge[i5]; i5 < g_out_list[v4 + 1];
+               ++i5, ++e5) {
             // const BriefEdge &e5 = g_brief_edge[i5];
-            const uint v5 = e5->v;
+            const uint v5 = e5->first;
             if (!(data.dist[v5] & 2)) continue;
-            const ulong w5 = e5->w;
+            const ulong w5 = e5->second;
             if (!cmpWeight(w4, w5))
               continue;
             else if (v5 == st) {
@@ -834,12 +979,12 @@ void findCycleAt(uint st, WorkerData &data) {
               continue;
             // const ushort len5 = g_node_str[v5].len;
 
-            uint i6 = g_out_list[v5].first;
+            uint i6 = g_out_list[v5];
             for (const BriefEdge *e6 = &g_brief_edge[i6];
-                 i6 < g_out_list[v5].second; ++i6, ++e6) {
+                 i6 < g_out_list[v5 + 1]; ++i6, ++e6) {
               // const BriefEdge &e6 = g_brief_edge[i6];
-              const uint v6 = e6->v;
-              const ulong w6 = e6->w;
+              const uint v6 = e6->first;
+              const ulong w6 = e6->second;
               if (!(data.dist[v6] & 4)) continue;
               if (!cmpWeight(w5, w6))
                 continue;
@@ -874,7 +1019,7 @@ void findCycleAt(uint st, WorkerData &data) {
 
 void findCycleSkip(uint pid) {
   for (uint i = pid; i < g_node_num; i += kThreadNum) {
-    if (g_in_list[i].empty()) continue;
+    if (g_in_list_old[i].empty()) continue;
     // printf("find%d\n",i);
     findCycleAt(i, g_worker_data[pid]);
   }
@@ -1041,14 +1186,6 @@ void prepareBuffer(int pid) {
     uint ed = g_end_idx_list[job];
     uint st_i = st / g_node_num;
     uint st_j = st % g_node_num;
-    //        if (job!=0&&job!=1&&job!=2){
-    //            g_worker_answer_len[job] = p - g_worker_answer_buffer[job];
-    //            return;
-    //        }
-
-    // printf("process %d\tjob %d\tst %d\ted %d\tsti %d\tstj %d\tN
-    // %d\n",pid,job,st,ed,st_i,st_j,g_node_num); uint ed_i=ed/g_node_num; uint
-    // ed_j=ed%g_node_num;
     uint visit_times = st;
     for (uint i = st_i; i < 5; ++i) {
       if (visit_times >= ed) break;
@@ -1079,28 +1216,8 @@ void prepareBuffer(int pid) {
 #endif
 }
 
-void writeBuffer(char *result_num_str) {
-#ifdef LOCAL
-  struct timeval tim {};
-  gettimeofday(&tim, nullptr);
-  double t3 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-#endif
-
-  FILE *fd = fopen(g_predict_file.c_str(), "w");
-  // fallocate(fd, 0, 0, all_answer_len);
-  fwrite(result_num_str, strlen(result_num_str), 1, fd);
-  for (uint i = 0; i < kBufferNum; ++i) {
-    fwrite(g_answer_buffer[i], g_answer_len[i], 1, fd);
-  }
-  fclose(fd);
-
-#ifdef LOCAL
-  gettimeofday(&tim, nullptr);
-  double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-  printf("write data time %fs   \n", t4 - t3);
-#endif
-}
-void writeAsynchronous(char *result_num_str) {
+//异步写入
+void writeAsyn(char *result_num_str) {
 #ifdef LOCAL
   struct timeval tim {};
   gettimeofday(&tim, nullptr);
@@ -1173,7 +1290,7 @@ void solve() {
   }
   // prepareBuffer(0);
 
-  writeAsynchronous(result_sum_str);
+  writeAsyn(result_sum_str);
   for (auto &th : pool) th.join();
 #ifdef LOCAL
   gettimeofday(&tim, nullptr);
@@ -1189,7 +1306,7 @@ int main() {
   g_test_file = "/data/test_data.txt";
   g_predict_file = "/projects/student/result.txt";
 #ifdef LOCAL
-  g_test_file = "../data/19630345/test_data.txt";
+  g_test_file = "../data/gen/test_data.txt";
   // g_test_file = "testdata/test_data_massive.txt";
   // g_test_file = "testdata/1004812/test_data.txt";
   // g_predict_file = "data/result.txt";
