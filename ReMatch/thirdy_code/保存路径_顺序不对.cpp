@@ -31,7 +31,7 @@
 #define P10(x) ((x << 3) + (x << 1))
 
 #ifdef LOCAL
-#define TRAIN "../data/18908526/test_data.txt"
+#define TRAIN "../data/19630345/test_data.txt"
 #define RESULT "/dev/shm/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
@@ -46,7 +46,7 @@ const uint MAXEDGE = 2000000 + 7;  // 最多边数目
 const uint MAXN = MAXEDGE << 1;    // 最多点数目
 const uint NTHREAD = 4;            // 线程个数
 const uint NUMLENGTH = 12;         // ID最大长度
-const uint BUFFERBLOCK = 128;
+const uint BUFFERBLOCK = 64;
 
 struct DFSEdge {
   uint idx, w;
@@ -66,6 +66,12 @@ struct ThData {
   char Reach[MAXN];       // 标记反向可达
   uint ReachPoint[MAXN];  // 可达点集合
   uint LastWeight[MAXN];  // 最后一步权重
+  std::vector<std::array<uint, 2>> Path2[MAXN];
+  std::vector<std::array<uint, 3>> Path3[MAXN];
+  // std::array<uint, 2> Path2[MAXN][100];
+  // std::array<uint, 3> Path3[MAXN][100];
+  // uint Path2Count[MAXN];
+  // uint Path3Count[MAXN];
 };
 
 uint MaxID = 0;                                     // 最大点
@@ -92,7 +98,7 @@ std::vector<Answer> Cycles;               // 所有答案
 Edge Edges[MAXEDGE];                      // 读入正向边集合
 ThData ThreadData[NTHREAD];               // 线程找环
 
-char *AnswerBuffer[BUFFERBLOCK];
+char AnswerBuffer[BUFFERBLOCK][22000000 / BUFFERBLOCK * 7 * NUMLENGTH];
 
 struct HashTable {
   static const int MOD1 = 6893911;
@@ -173,7 +179,6 @@ void CreateHashTable() {
   printf("@ HashMap:\t[cost: %.4fs]\n", t4 - t1);
 #endif
 }
-
 void CreateForwardGraph() {
 #ifdef LOCAL
   struct timeval tim {};
@@ -322,6 +327,9 @@ void BackSearch(ThData &Data, const uint &st) {
   for (uint i = 0; i < Data.ReachCount; ++i) {
     const uint &v = Data.ReachPoint[i];
     Data.Reach[v] = 0;
+    Data.Path2[v].clear();
+    Data.Path3[v].clear();
+    // Data.Path2Count[v] = Data.Path3Count[v] = 0;
   }
   Data.ReachCount = 0;
   Data.ReachPoint[Data.ReachCount++] = st;
@@ -345,6 +353,8 @@ void BackSearch(ThData &Data, const uint &st) {
       if (!judge(w2, w1)) continue;
       Data.Reach[v2] |= 6;
       Data.ReachPoint[Data.ReachCount++] = v2;
+      Data.Path2[v2].emplace_back(std::array<uint, 2>{v1, w2});
+      // Data.Path2[v2][Data.Path2Count[v2]++] = std::array<uint, 2>{v1, w2};
 
       const DFSEdge *e3 = &GBack[Back[v2]];
       for (uint it3 = Back[v2]; it3 < Back[v2 + 1]; ++it3, ++e3) {
@@ -355,6 +365,9 @@ void BackSearch(ThData &Data, const uint &st) {
         if (!judge(w3, w2)) continue;
         Data.Reach[v3] |= 4;
         Data.ReachPoint[Data.ReachCount++] = v3;
+        Data.Path3[v3].emplace_back(std::array<uint, 3>{v2, v1, w3});
+        // Data.Path3[v3][Data.Path3Count[v3]++] = std::array<uint, 3>{v2, v1,
+        // w3};
       }
     }
   }
@@ -404,6 +417,44 @@ void ForwardSearch(ThData &Data, const uint &st) {
             continue;
           }
 
+          /*
+           * 保存长度为567的环
+           * st,v1,v2,v3,v4,v5,v6
+           * Path2[v5] = (v6,W_56)
+           * Path3[v4] = (v5,v6,W_45)
+           * v4, w4 = W_34
+           */
+          const uint &lastw = Data.LastWeight[v4];
+          if ((Data.Reach[v4] & 1) && judge(w4, lastw) && judge(lastw, w1)) {
+            ret[2].insert(ret[2].end(), {st, v1, v2, v3, v4});
+          }
+
+          for (const auto &it : Data.Path2[v4]) {
+            // for (uint i = 0; i < Data.Path2Count[v4]; ++i) {
+            // const auto &it = Data.Path2[v4][i];
+            const uint &v5 = it[0], &w5 = it[1];
+            const uint &last = Data.LastWeight[v5];
+            if (v5 == v1 || v5 == v2 || v5 == v3) continue;
+            if (judge(w4, w5) && judge(last, w1)) {
+              ret[3].insert(ret[3].end(), {st, v1, v2, v3, v4, v5});
+            }
+          }
+
+          for (const auto &it : Data.Path3[v4]) {
+            // for (uint i = 0; i < Data.Path3Count[v4]; ++i) {
+            // const auto &it = Data.Path3[v4][i];
+            const uint &v5 = it[0], &v6 = it[1], &w6 = it[2];
+            const uint &last = Data.LastWeight[v6];
+            if (v5 == v1 || v5 == v2 || v5 == v3) continue;
+            if (v6 == v1 || v6 == v2 || v6 == v3 || v6 == v4) continue;
+            if (judge(w4, w6) && judge(last, w1)) {
+              ret[4].insert(ret[4].end(), {st, v1, v2, v3, v4, v5, v6});
+            }
+          }
+
+          // CreateCycle(Data, e4, w1, v1, v2, v3);
+          // continue;
+          /*
           const DFSEdge *e5 = &G[Head[v4]];
 
           for (uint it5 = Head[v4]; it5 < Head[v4 + 1]; ++it5, ++e5) {
@@ -445,6 +496,7 @@ void ForwardSearch(ThData &Data, const uint &st) {
               ret[4].insert(ret[4].end(), {st, v1, v2, v3, v4, v5, v6});
             }
           }
+          */
         }
       }
     }
@@ -506,28 +558,20 @@ void CalOffset() {
   uint strow = 0, endrow = 0, stcol = 0, edcol = 0, times = 0;
   for (uint i = 0; i < 5; ++i) {
     for (uint j = 0; j < JobsCount; ++j) {
-      if (i == 4 && j == JobsCount - 1) {
-        times += Cycles[Jobs[j]].cycle[i].size();
-        break;
-      }
-
-      if (times >= block) {
-        AnswerBuffer[OffSet.size()] = new char[times * 7 * NUMLENGTH];
+      const uint &job = Jobs[j];
+      if (times >= block && !(i == 4 && j == JobsCount - 1)) {
         OffSet.emplace_back(std::array<uint, 4>{strow, i, stcol, j});
         times = 0;
         strow = i, stcol = j;
       }
-
-      times += Cycles[Jobs[j]].cycle[i].size();
+      times += Cycles[job].cycle[i].size();
     }
   }
-
-  AnswerBuffer[OffSet.size()] = new char[times * 7 * NUMLENGTH];
   OffSet.emplace_back(std::array<uint, 4>{strow, 4, stcol, JobsCount});
 #ifdef TESTSPEED
   gettimeofday(&tim, nullptr);
   double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-  printf("@ CalOffSet: [offset: %lu] [cost: %.4fs]\n", OffSet.size(), t4 - t1);
+  printf("@ CalOffSet: [offset: %d] [cost: %.4fs]\n", OffSet.size(), t4 - t1);
 #endif
 }
 
@@ -630,9 +674,20 @@ int main() {
   FindCircle();
   CalOffset();
   SaveAnswer();
-  sleep(1);
+  // sleep(1);
 #ifdef LOCAL
   std::cerr << "@ Answers: " << Answers << "\n";
+  uint cnt[5] = {0};
+  for (uint i = 0; i < JobsCount; ++i) {
+    auto &ret = Cycles[Jobs[i]];
+    for (uint j = 0; j < 5; ++j) {
+      cnt[j] += ret.cycle[j].size() / (j + 3);
+    }
+  }
+  std::cerr << "@ std: 1919 16032 151763 1577627 17883004\n";
+  std::cerr << "@ ans: ";
+  for (uint i = 0; i < 5; ++i) std::cerr << cnt[i] << " ";
+  std::cerr << "\n";
 #endif
   return 0;
 }
