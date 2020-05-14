@@ -26,7 +26,6 @@
 #define uint uint32_t
 #define W3_MAX 715827882
 #define W5_MAX 429496729
-#define INF 4294967295
 #define P3(x) ((x << 1) + x)
 #define P5(x) ((x << 2) + x)
 #define P10(x) ((x << 3) + (x << 1))
@@ -43,7 +42,7 @@ typedef std::pair<uint, uint> Pair;
 /*
  * 常量定义
  */
-const uint MAXEDGE = 3000000 + 7;  // 最多边数目
+const uint MAXEDGE = 2000000 + 7;  // 最多边数目
 const uint MAXN = MAXEDGE;         // 最多点数目
 const uint NTHREAD = 4;            // 线程个数
 const uint NUMLENGTH = 12;         // ID最大长度
@@ -59,49 +58,51 @@ struct PreBuffer {
   uint len;
   char str[NUMLENGTH];
 };
-// struct Answer {
-//   std::vector<uint> cycle[5];
-// };
-// struct ThData1 {
-//   uint ReachCount = 0;    // 反向可达点数目
-//   char Reach[MAXN];       // 标记反向可达
-//   uint ReachPoint[MAXN];  // 可达点集合
-//   uint LastWeight[MAXN];  // 最后一步权重
-// };
-// struct ThData2 {
-//   uint ReachCount = 0;  // 反向可达点数目
-//   char Reach[MAXN];     // 标记反向可达
-//   bool vis[MAXN];
-//   uint ReachPoint[MAXN];  // 可达点集合
-//   uint LastWeight[MAXN];  // 最后一步权重
-//   std::vector<std::vector<std::array<uint, 2>>> Path2;
-//   std::vector<std::vector<std::array<uint, 3>>> Path3;
-// };
+struct Answer {
+  std::vector<uint> cycle[5];
+};
+struct ThData1 {
+  uint ReachCount = 0;    // 反向可达点数目
+  char Reach[MAXN];       // 标记反向可达
+  uint ReachPoint[MAXN];  // 可达点集合
+  uint LastWeight[MAXN];  // 最后一步权重
+};
+struct ThData2 {
+  uint ReachCount = 0;  // 反向可达点数目
+  char Reach[MAXN];     // 标记反向可达
+  bool vis[MAXN];
+  uint ReachPoint[MAXN];  // 可达点集合
+  uint LastWeight[MAXN];  // 最后一步权重
+  std::vector<std::vector<std::array<uint, 2>>> Path2;
+  std::vector<std::vector<std::array<uint, 3>>> Path3;
+};
 
-uint MaxID = 0;  // 最大点
-// uint Answers = 0;                                   // 环个数
-uint EdgesCount = 0;  // 边数目
-// uint JobsCount = 0;                                 // 有效点数目
-// uint TotalBufferSize = 0;                           // 总buffer大小
-// uint FirstBufLen = 0;                               // 换个数bufsize
-// uint JobCur = 0;                                    // Job光标
-// uint OffSetCur = 0;                                 // OffSet光标
-// bool Done[BUFFERBLOCK];                             // 构造buffer
-// uint AnswerBufferLen[BUFFERBLOCK];                  // bufferlen
-// uint Head[MAXN], HeadLen[MAXN];                     // 前向图
-// uint Back[MAXN], BackLen[MAXN];                     // 后向图
-// DFSEdge G[MAXN];                                    // 前向图
-// DFSEdge GBack[MAXN];                                // 后向图
-// std::atomic_flag _JOB_LOCK_ = ATOMIC_FLAG_INIT;     // job lock
-// std::atomic_flag _OFFSET_LOCK_ = ATOMIC_FLAG_INIT;  // offset lock
-// char FirstBuf[NUMLENGTH];                           // 环个数buf
-// std::vector<std::array<uint, 4>> OffSet;  // 分块输出，每一块位置
-// uint Jobs[MAXN];                          // 有效点
-PreBuffer MapID[MAXN];  // 解析int
-// std::vector<Answer> Cycles;               // 所有答案
-// Edge Edges[MAXEDGE];                      // 读入正向边集合
-// ThData1 ThreadData1[NTHREAD];             // 线程找环
-// ThData2 ThreadData2[NTHREAD];             // 线程找环
+uint MaxID = 0;                                     // 最大点
+uint Answers = 0;                                   // 环个数
+uint EdgesCount = 0;                                // 边数目
+uint JobsCount = 0;                                 // 有效点数目
+uint TotalBufferSize = 0;                           // 总buffer大小
+uint FirstBufLen = 0;                               // 换个数bufsize
+uint JobCur = 0;                                    // Job光标
+uint OffSetCur = 0;                                 // OffSet光标
+bool Done[BUFFERBLOCK];                             // 构造buffer
+uint AnswerBufferLen[BUFFERBLOCK];                  // bufferlen
+uint Head[MAXN], HeadLen[MAXN];                     // 前向图
+uint Back[MAXN], BackLen[MAXN];                     // 后向图
+DFSEdge G[MAXN];                                    // 前向图
+DFSEdge GBack[MAXN];                                // 后向图
+std::atomic_flag _JOB_LOCK_ = ATOMIC_FLAG_INIT;     // job lock
+std::atomic_flag _OFFSET_LOCK_ = ATOMIC_FLAG_INIT;  // offset lock
+char FirstBuf[NUMLENGTH];                           // 环个数buf
+std::vector<std::array<uint, 4>> OffSet;  // 分块输出，每一块位置
+uint Jobs[MAXN];                          // 有效点
+PreBuffer MapID[MAXN];                    // 解析int
+std::vector<Answer> Cycles;               // 所有答案
+Edge Edges[MAXEDGE];                      // 读入正向边集合
+ThData1 ThreadData1[NTHREAD];             // 线程找环
+ThData2 ThreadData2[NTHREAD];             // 线程找环
+
+char *AnswerBuffer[BUFFERBLOCK];
 
 struct HashTable {
   static const int MOD1 = 6893911;
@@ -154,235 +155,6 @@ struct HashTable {
   }
 };
 HashTable HashMap;
-
-struct LoadInfo {
-  uint edgeCount = 0;
-  Edge edges[MAXEDGE];
-  uint thedgesCnt[NTHREAD];
-  Edge thedges[NTHREAD][MAXEDGE / NTHREAD];
-  uint offsz = 0;
-  HashTable hashmap;
-};
-LoadInfo LoadInfos[NTHREAD];
-
-void addEdge(const uint &u, const uint &v, const uint &w, LoadInfo &data) {
-  uint mod = u % NTHREAD;
-  auto &e = data.thedges[mod][data.thedgesCnt[mod]];
-  e.u = u;
-  e.v = v;
-  e.w = w;
-  ++data.thedgesCnt[mod];
-}
-void HandleReadBuffer(const char *buffer, uint st, uint ed, uint pid) {
-  const char *ptr = buffer + st, *end = buffer + ed;
-  uint u = 0, v = 0, w = 0;
-  auto &loadinfo = LoadInfos[pid];
-  while (ptr < end) {
-    while (*ptr != ',') {
-      u = P10(u) + *ptr - '0';
-      ++ptr;
-    }
-    ++ptr;
-    while (*ptr != ',') {
-      v = P10(v) + *ptr - '0';
-      ++ptr;
-    }
-    ++ptr;
-    while (*ptr != '\r' && *ptr != '\n') {
-      w = P10(w) + *ptr - '0';
-      ++ptr;
-    }
-    if (*ptr == '\r') ++ptr;
-    ++ptr;
-    addEdge(u, v, w, loadinfo);
-    u = v = w = 0;
-  }
-}
-void ReadBuffer() {
-  uint fd = open(TRAIN, O_RDONLY);
-  uint bufsize = lseek(fd, 0, SEEK_END);
-  char *buffer = (char *)mmap(NULL, bufsize, PROT_READ, MAP_PRIVATE, fd, 0);
-  close(fd);
-
-  std::thread Th[NTHREAD];
-  uint st = 0, block = bufsize / NTHREAD;
-  for (uint i = 0; i < NTHREAD; ++i) {
-    if (i == NTHREAD - 1) {
-      Th[i] = std::thread(HandleReadBuffer, buffer, st, bufsize, i);
-      break;
-    }
-    uint ed = st + block;
-    while (buffer[ed] != '\n') ++ed;
-    ++ed;
-    Th[i] = std::thread(HandleReadBuffer, buffer, st, ed, i);
-    st = ed;
-  }
-  for (auto &it : Th) it.join();
-
-  uint x = 0;
-  for (uint i = 0; i < NTHREAD; ++i) {
-    for (uint j = 0; j < NTHREAD; ++j) {
-      x += LoadInfos[i].thedgesCnt[j];
-    }
-  }
-}
-/*
- * LoadInfos[pid]: edges只存%4的边,，所以需要memcpy
- */
-void SortEdge(uint pid) {
-  auto &data = LoadInfos[pid];
-  Edge *ptr = data.edges;
-  for (uint i = 0; i < NTHREAD; ++i) {
-    const auto &info = LoadInfos[i];
-    memcpy(ptr, info.thedges[pid], info.thedgesCnt[pid] * sizeof(Edge));
-    ptr += info.thedgesCnt[pid];
-    data.edgeCount += info.thedgesCnt[pid];
-  }
-  std::sort(data.edges, data.edges + data.edgeCount,
-            [&](const Edge &e1, const Edge &e2) {
-              if (e1.u == e2.u) return e1.v < e2.v;
-              return e1.u < e2.u;
-            });
-}
-void HashEdge(uint pid) {
-  auto &data = LoadInfos[pid];
-  for (uint i = 0; i < data.edgeCount; ++i) {
-    const auto &e = data.edges[i];
-    data.hashmap.Insert(e.u);
-  }
-}
-std::vector<uint> IDDom;
-void CalMapOffSet() {
-  for (uint i = 1; i < NTHREAD; ++i) {
-    const uint &sz = LoadInfos[i - 1].hashmap.Size();
-    LoadInfos[i].offsz = LoadInfos[i - 1].offsz + sz;
-  }
-  MaxID = LoadInfos[NTHREAD - 1].offsz + LoadInfos[NTHREAD - 1].hashmap.Size();
-  IDDom.reserve(MaxID);
-}
-void MergeHashTable(uint pid) {
-  auto &data = LoadInfos[pid];
-  uint offsz = LoadInfos[pid].offsz;
-  for (uint i = 0; i < data.hashmap.Size(); ++i) {
-    auto &p = data.hashmap.Map[data.hashmap.HashIdx[i]];
-    p.val += offsz;
-    IDDom[p.val] = p.key;
-  }
-}
-std::vector<uint> Rank;
-void RankHashTable() {
-  std::vector<uint> vec(MaxID);
-  Rank.reserve(MaxID);
-  for (uint i = 0; i < MaxID; ++i) vec[i] = i;
-  std::sort(vec.begin(), vec.end(),
-            [&](const uint &x, const uint &y) { return IDDom[x] < IDDom[y]; });
-  for (uint i = 0; i < MaxID; ++i) {
-    const uint &x = vec[i];
-    Rank[x] = i;
-  }
-}
-void ReHashTable(uint pid) {
-  auto &hashmap = LoadInfos[pid].hashmap;
-  for (uint i = 0; i < hashmap.Size(); ++i) {
-    auto &p = hashmap.Map[hashmap.HashIdx[i]];
-    p.val = Rank[p.val];
-    auto &mpid = MapID[p.val];
-    sprintf(mpid.str, "%d,", p.key);
-    mpid.len = strlen(mpid.str);
-  }
-}
-void RankEdge(uint pid) {
-  auto &data = LoadInfos[pid];
-  for (uint i = 0; i < data.edgeCount; ++i) {
-    auto &e = data.edges[i];
-    e.u = data.hashmap.Query(e.u);
-    int p = LoadInfos[e.v % NTHREAD].hashmap.Query(e.v);
-    e.v = (p == -1 ? INF : p);
-  }
-}
-
-Edge Edges[MAXEDGE];
-void MergeEdge() {
-  uint left[NTHREAD] = {0};
-  Edge *ptr = Edges;
-  while (true) {
-    uint minx = MaxID + 7, minidx = -1;
-    for (uint i = 0; i < NTHREAD; ++i) {
-      const auto &data = LoadInfos[i];
-      if (left[i] < data.edgeCount && data.edges[left[i]].u < minx) {
-        minx = data.edges[left[i]].u;
-        minidx = i;
-      }
-    }
-    if (minidx == -1) break;
-    const auto &data = LoadInfos[minidx];
-    uint &l = left[minidx];
-    while (data.edges[l].u == minx) {
-      if (data.edges[l].v != INF) {
-        memcpy(ptr, &data.edges[left[minidx]], sizeof(Edge));
-        ++ptr;
-      }
-      ++l;
-    }
-  }
-  EdgesCount = ptr - Edges;
-
-  std::cerr << "MaxID: " << MaxID << ", E: " << EdgesCount << "\n";
-}
-void BuildGraph(uint pid) {}
-
-void LoadData() {
-#ifdef LOCAL
-  struct timeval tim {};
-  gettimeofday(&tim, nullptr);
-  double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-#endif
-  ReadBuffer();
-
-  std::thread Th[NTHREAD];
-
-  std::cerr << "debug1\n";
-  for (uint i = 0; i < NTHREAD; ++i) Th[i] = std::thread(SortEdge, i);
-  for (auto &it : Th) it.join();
-
-  std::cerr << "debug2\n";
-  for (uint i = 0; i < NTHREAD; ++i) Th[i] = std::thread(HashEdge, i);
-  for (auto &it : Th) it.join();
-
-  std::cerr << "debug3\n";
-  CalMapOffSet();
-
-  std::cerr << "debug4\n";
-  for (uint i = 0; i < NTHREAD; ++i) Th[i] = std::thread(MergeHashTable, i);
-  for (auto &it : Th) it.join();
-
-  std::cerr << "debug5\n";
-  RankHashTable();
-
-  std::cerr << "debug6\n";
-  for (uint i = 0; i < NTHREAD; ++i) Th[i] = std::thread(ReHashTable, i);
-  for (auto &it : Th) it.join();
-
-  std::cerr << "debug7\n";
-  for (uint i = 0; i < NTHREAD; ++i) Th[i] = std::thread(RankEdge, i);
-  for (auto &it : Th) it.join();
-
-  MergeEdge();
-
-  for (uint i = 0; i < 30; ++i) {
-    auto &e = Edges[i];
-    std::cerr << e.u << ", " << e.v << ", " << e.w << "\n";
-  }
-
-#ifdef LOCAL
-  gettimeofday(&tim, nullptr);
-  double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-  printf("@ LoadData:\t[cost: %.4fs]\n", t4 - t1);
-#endif
-}
-
-/*
-char *AnswerBuffer[BUFFERBLOCK];
 
 inline void addEdge(const uint &u, const uint &v, const uint &w) {
   auto &e = Edges[EdgesCount++];
@@ -780,13 +552,13 @@ void ForwardSearch2(ThData2 &Data, const uint &st) {
             continue;
           }
 
-
-          //  * 保存长度为567的环
-          //  * st,v1,v2,v3,v4,v5,v6
-          //  * Path2[v5] = (v6,W_56)
-          //  * Path3[v4] = (v5,v6,W_45)
-          //  * v4, w4 = W_34
-
+          /*
+           * 保存长度为567的环
+           * st,v1,v2,v3,v4,v5,v6
+           * Path2[v5] = (v6,W_56)
+           * Path3[v4] = (v5,v6,W_45)
+           * v4, w4 = W_34
+           */
           const uint &lastw = Data.LastWeight[v4];
           if ((Data.Reach[v4] & 1) && judge(w4, lastw) && judge(lastw, w1)) {
             ret[2].insert(ret[2].end(), {v1, v2, v3, v4});
@@ -1013,16 +785,15 @@ void SaveAnswer() {
   WriteAnswer(0);
   for (uint i = 1; i < NTHREAD; ++i) Th[i].join();
 }
-*/
 
 int main() {
   LoadData();
-  // FindCircle();
-  // CalOffset();
-  // SaveAnswer();
+  FindCircle();
+  CalOffset();
+  SaveAnswer();
   // sleep(1);
-  // #ifdef LOCAL
-  //   std::cerr << "@ Answers: " << Answers << "\n";
-  // #endif
+#ifdef LOCAL
+  std::cerr << "@ Answers: " << Answers << "\n";
+#endif
   return 0;
 }
