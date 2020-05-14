@@ -17,7 +17,7 @@
 using namespace std;
 #ifdef LOCAL
 #include <sys/time.h>
-#define TESTFILE "testdata/online.txt"
+#define TESTFILE "../data/18908526/test_data.txt"
 //#define TESTFILE "testdata/test_data_massive.txt"
 #define RESULT "/tmp/result.txt"
 #else
