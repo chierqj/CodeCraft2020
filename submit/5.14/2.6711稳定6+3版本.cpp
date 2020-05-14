@@ -27,12 +27,12 @@
 #define W3_MAX 715827882
 #define W5_MAX 429496729
 #define INF 4294967295
-#define P3(x) (x + (x << 1))
-#define P5(x) (x + (x << 2))
-#define P10(x) ((x << 1) + (x << 3))
+#define P3(x) ((x << 1) + x)
+#define P5(x) ((x << 2) + x)
+#define P10(x) ((x << 3) + (x << 1))
 
 #ifdef LOCAL
-#define TRAIN "../data/19630345/test_data.txt"
+#define TRAIN "../data/18908526/test_data.txt"
 #define RESULT "/dev/shm/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
@@ -43,11 +43,11 @@ typedef std::pair<uint, uint> Pair;
 /*
  * 常量定义
  */
-const uint MAXEDGE = 3000000 + 7;  // 最多边数目
+const uint MAXEDGE = 2000000 + 7;  // 最多边数目
 const uint MAXN = MAXEDGE;         // 最多点数目
 const uint NTHREAD = 4;            // 线程个数
 const uint NUMLENGTH = 12;         // ID最大长度
-const uint BUFFERBLOCK = 128;
+const uint BUFFERBLOCK = 64;
 
 struct DFSEdge {
   uint idx, w;
@@ -68,6 +68,9 @@ struct ThData1 {
   uint ReachPoint[MAXN];  // 可达点集合
   uint LastWeight[MAXN];  // 最后一步权重
 };
+// struct P {
+//   uint u, v, wu, wv;
+// };
 struct ThData2 {
   uint ReachCount = 0;    // 反向可达点数目
   char Reach[MAXN];       // 标记反向可达
@@ -93,7 +96,7 @@ DFSEdge GBack[MAXN];                                // 后向图
 std::atomic_flag _JOB_LOCK_ = ATOMIC_FLAG_INIT;     // job lock
 std::atomic_flag _OFFSET_LOCK_ = ATOMIC_FLAG_INIT;  // offset lock
 std::vector<std::array<uint, 4>> OffSet;            // 分块输出
-std::array<uint, 3> Jobs[MAXN];                     // 有效点
+uint Jobs[MAXN];                                    // 有效点
 PreBuffer MapID[MAXN];                              // 解析int
 std::vector<Answer> Cycles;                         // 所有答案
 ThData1 ThreadData1[NTHREAD];                       // 线程找环
@@ -150,6 +153,7 @@ struct HashTable {
     }
   }
 };
+HashTable HashMap;
 
 struct LoadInfo {
   uint edgeCount = 0;
@@ -391,49 +395,24 @@ void LoadData() {
   for (uint i = 0; i < NTHREAD; ++i) Th[i] = std::thread(BuildGraph, i);
   for (auto &it : Th) it.join();
 
-  uint out = 0;
   for (uint i = 1; i <= MaxID; ++i) {
     Head[i] = Head[i - 1] + HeadLen[i - 1];
     Back[i] = Back[i - 1] + BackLen[i - 1];
-    out += HeadLen[i - 1];
-    // in += BackLen[i - 1];
   }
 
   for (uint i = 0; i < NTHREAD; ++i) Th[i] = std::thread(BuildBackGraph, i);
   for (auto &it : Th) it.join();
 
-  uint avgout = out / MaxID;
-  // uint avgout = MaxID;
-  std::vector<uint> vec;
-  std::vector<uint> head(MaxID);
   for (uint i = 0; i < MaxID; ++i) {
     if (HeadLen[i] > 0 && BackLen[i] > 0) {
-      if (HeadLen[i] <= avgout) {
-        Jobs[JobsCount++] = std::array<uint, 3>{i, i, 0};
-      } else {
-        vec.emplace_back(i);
-        head[i] = Head[i];
-      }
+      Jobs[JobsCount++] = i;
     }
-  }
-  while (true) {
-    bool ok = false;
-    for (auto &v : vec) {
-      if (head[v] < Head[v + 1]) {
-        ok = true;
-        const auto &e = G[head[v]++];
-        Jobs[JobsCount++] = std::array<uint, 3>{v, e.idx, e.w};
-        std::cout << v << ", " << e.idx << "\n";
-      }
-    }
-    if (!ok) break;
   }
 
 #ifdef LOCAL
   gettimeofday(&tim, nullptr);
   double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-  std::cerr << "MaxID: " << MaxID << ", E: " << EdgesCount
-            << ", Job: " << JobsCount << "\n";
+  std::cerr << "MaxID: " << MaxID << ", E: " << EdgesCount << "\n";
   printf("@ LoadData:\t[cost: %.4fs]\n", t4 - t1);
 #endif
 }
@@ -442,8 +421,7 @@ inline bool judge(const uint &w1, const uint &w2) {
   return (w2 > W5_MAX || w1 <= P5(w2)) && (w1 > W3_MAX || P3(w1) >= w2);
 }
 
-void BackSearch1(ThData1 &Data, const uint &st, const uint &ed,
-                 const uint &wfuck) {
+void BackSearch1(ThData1 &Data, const uint &st) {
   for (uint i = 0; i < Data.ReachCount; ++i) {
     const uint &v = Data.ReachPoint[i];
     Data.Reach[v] = 0;
@@ -484,8 +462,7 @@ void BackSearch1(ThData1 &Data, const uint &st, const uint &ed,
     }
   }
 }
-void ForwardSearch1(ThData1 &Data, const uint &st, const uint &ed,
-                    const uint &wfuck) {
+void ForwardSearch1(ThData1 &Data, const uint &st) {
   std::vector<uint>(&ret)[5] = Cycles[st].cycle;
 
   const DFSEdge *e1 = &G[Head[st]];
@@ -576,8 +553,7 @@ void ForwardSearch1(ThData1 &Data, const uint &st, const uint &ed,
   }
 }
 
-void BackSearch2(ThData2 &Data, const uint &st, const uint &ed,
-                 const uint &wfuck) {
+void BackSearch2(ThData2 &Data, const uint &st) {
   for (uint i = 0; i < Data.ReachCount; ++i) {
     const uint &v = Data.ReachPoint[i];
     Data.Reach[v] = 0;
@@ -624,8 +600,7 @@ void BackSearch2(ThData2 &Data, const uint &st, const uint &ed,
   }
 }
 
-void ForwardSearch2(ThData2 &Data, const uint &st, const uint &ed,
-                    const uint &wfuck) {
+void ForwardSearch2(ThData2 &Data, const uint &st) {
   std::vector<uint>(&ret)[5] = Cycles[st].cycle;
 
   const DFSEdge *e1 = &G[Head[st]];
@@ -719,8 +694,9 @@ void ForwardSearch2(ThData2 &Data, const uint &st, const uint &ed,
 }
 
 // 1: 6+3(剪枝); 2: 4+3(保存路径)
-uint ChooseStragety(const uint &st, const uint &ed, const uint &wfuck) {
-  if (BackLen[st] * 1.5 > HeadLen[ed]) return 1;
+inline uint ChooseStragety(const uint &job) {
+  return 1;
+  if (BackLen[job] * 1.5 > HeadLen[job]) return 1;
   return 2;
 }
 
@@ -739,19 +715,18 @@ void HandleFindCycle(uint pid) {
   while (true) {
     while (_JOB_LOCK_.test_and_set())
       ;
-    uint idx = JobCur < JobsCount ? JobCur++ : -1;
+    uint job = JobCur < JobsCount ? Jobs[JobCur++] : -1;
     _JOB_LOCK_.clear();
-    if (idx == -1) break;
+    if (job == -1) break;
 
-    const auto &job = Jobs[idx];
-    uint choice = ChooseStragety(job[0], job[1], job[2]);
+    uint choice = ChooseStragety(job);
 
     if (choice == 1) {
-      BackSearch1(Data1, job[0], job[1], job[2]);
-      ForwardSearch1(Data1, job[0], job[1], job[2]);
+      BackSearch1(Data1, job);
+      ForwardSearch1(Data1, job);
     } else {
-      BackSearch2(Data2, job[0], job[1], job[2]);
-      ForwardSearch2(Data2, job[0], job[1], job[2]);
+      BackSearch2(Data2, job);
+      ForwardSearch2(Data2, job);
     }
   }
 
@@ -779,7 +754,7 @@ void CalOffset() {
 #endif
   uint tolSize = 0;
   for (uint i = 0; i < JobsCount; ++i) {
-    const auto &ret = Cycles[Jobs[i][0]];
+    const auto &ret = Cycles[Jobs[i]];
     for (int j = 0; j < 5; ++j) {
       uint sz = ret.cycle[j].size();
       Answers += sz / (j + 2);
@@ -792,7 +767,7 @@ void CalOffset() {
   for (uint i = 0; i < 5; ++i) {
     for (uint j = 0; j < JobsCount; ++j) {
       if (i == 4 && j == JobsCount - 1) {
-        times += Cycles[Jobs[j][0]].cycle[i].size();
+        times += Cycles[Jobs[j]].cycle[i].size();
         break;
       }
 
@@ -803,7 +778,7 @@ void CalOffset() {
         strow = i, stcol = j;
       }
 
-      times += Cycles[Jobs[j][0]].cycle[i].size();
+      times += Cycles[Jobs[j]].cycle[i].size();
     }
   }
 
@@ -838,8 +813,8 @@ void HandleSaveAnswer(uint pid) {
       uint high = (i == edl ? edidx : JobsCount);
       for (uint j = low; j < high; ++j) {
         uint idx = 0;
-        const auto &cycle = Cycles[Jobs[j][0]].cycle[i];
-        const auto &st = MapID[Jobs[j][0]];
+        const auto &cycle = Cycles[Jobs[j]].cycle[i];
+        const auto &st = MapID[Jobs[j]];
         for (const auto &v : cycle) {
           if (idx == 0) {
             memcpy(result, st.str, st.len);
