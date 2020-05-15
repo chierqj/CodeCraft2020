@@ -43,7 +43,7 @@ typedef std::pair<uint, uint> Pair;
 /*
  * 常量定义
  */
-const uint MAXEDGE = 3000000 + 7;  // 最多边数目
+const uint MAXEDGE = 2000000 + 7;  // 最多边数目
 const uint MAXN = MAXEDGE;         // 最多点数目
 const uint NTHREAD = 4;            // 线程个数
 const uint NUMLENGTH = 12;         // ID最大长度
