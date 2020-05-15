@@ -47,7 +47,7 @@ const uint MAXEDGE = 2000000 + 7;  // 最多边数目
 const uint MAXN = MAXEDGE;         // 最多点数目
 const uint NTHREAD = 4;            // 线程个数
 const uint NUMLENGTH = 12;         // ID最大长度
-const uint BUFFERBLOCK = 128;      // 输出
+const uint BUFFERBLOCK = 64;       // 输出
 
 struct DFSEdge {
   uint idx, w;
