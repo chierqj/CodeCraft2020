@@ -53,7 +53,7 @@
 #undef KASHI
 
 // parameters
-#ifdef LOCAL
+#ifdef LOCAL_TEST
 const bool submit = false;
 #else
 const bool submit = true;
@@ -72,9 +72,9 @@ const int basket_size = 4096;  // input basket
 const int factor_A = 3;
 const int factor_B = 5;
 const char *input_file_name =
-    (submit ? "/data/test_data.txt" : "../data/std/test_data.txt");
+    (submit ? "/data/test_data.txt" : "test_data.txt");
 const char *output_file_name =
-    (submit ? "/projects/student/result.txt" : "../data/std/result.txt");
+    (submit ? "/projects/student/result.txt" : "output.txt");
 const size_t block_size = ((size_t)1) << (30);
 const size_t total_size = block_size << (2 + 3);  // tid:2 len:3
 const int pre_sleep_time = 0;
