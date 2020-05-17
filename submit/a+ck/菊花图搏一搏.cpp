@@ -32,7 +32,7 @@
 #define P10(x) ((x << 3) + (x << 1))
 
 #ifdef LOCAL
-#define TRAIN "../data/18908526/test_data.txt"
+#define TRAIN "../data/18875018/test_data.txt"
 #define RESULT "/dev/shm/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
@@ -43,11 +43,11 @@ typedef std::pair<uint, uint> Pair;
 /*
  * 常量定义
  */
-const uint MAXEDGE = 2000000 + 7;  // 最多边数目
+const uint MAXEDGE = 3000000 + 7;  // 最多边数目
 const uint MAXN = MAXEDGE;         // 最多点数目
 const uint NTHREAD = 4;            // 线程个数
 const uint NUMLENGTH = 12;         // ID最大长度
-const uint BUFFERBLOCK = 64;       // 输出块数
+const uint BUFFERBLOCK = 64;       // 输出
 
 struct DFSEdge {
   uint idx, w;
@@ -68,24 +68,25 @@ struct ThData1 {
   uint ReachPoint[MAXN];  // 可达点集合
   uint LastWeight[MAXN];  // 最后一步权重
 };
-struct ThData2 {
-  uint ReachCount = 0;    // 反向可达点数目
-  char Reach[MAXN];       // 标记反向可达
-  bool vis[MAXN];         // 是否sort
-  uint ReachPoint[MAXN];  // 可达点集合
-  uint LastWeight[MAXN];  // 最后一步权重
-  std::vector<std::vector<std::array<uint, 2>>> Path2;
-  std::vector<std::vector<std::array<uint, 3>>> Path3;
+struct KeyPointData {
+  uint ReachCount = 0;         // 反向可达点数目
+  char Reach[MAXN];            // 标记反向可达
+  uint ReachPoint[MAXN];       // 可达点集合
+  uint LastWeight[MAXN];       // 最后一步权重
+  std::vector<uint> cycle[5];  // cycle
 };
 
 uint MaxID = 0;                                     // 最大点
 uint Answers = 0;                                   // 环个数
 uint EdgesCount = 0;                                // 边数目
 uint JobsCount = 0;                                 // 有效点数目
+uint StartCount = 0;                                // 起点数目
 uint JobCur = 0;                                    // Job光标
 uint OffSetCur = 0;                                 // OffSet光标
 bool Done[BUFFERBLOCK];                             // 构造buffer
 uint AnswerBufferLen[BUFFERBLOCK];                  // bufferlen
+uint Start[MAXN];                                   // 所有起点
+uint Jobs[MAXN];                                    // 有效点
 uint Head[MAXN], HeadLen[MAXN];                     // 前向图
 uint Back[MAXN], BackLen[MAXN];                     // 后向图
 DFSEdge G[MAXN];                                    // 前向图
@@ -93,12 +94,11 @@ DFSEdge GBack[MAXN];                                // 后向图
 std::atomic_flag _JOB_LOCK_ = ATOMIC_FLAG_INIT;     // job lock
 std::atomic_flag _OFFSET_LOCK_ = ATOMIC_FLAG_INIT;  // offset lock
 std::vector<std::array<uint, 4>> OffSet;            // 分块输出
-uint Jobs[MAXN];                                    // 有效点
 PreBuffer MapID[MAXN];                              // 解析int
 std::vector<Answer> Cycles;                         // 所有答案
 ThData1 ThreadData1[NTHREAD];                       // 线程找环
-ThData2 ThreadData2[NTHREAD];                       // 线程找环
-char *AnswerBuffer[BUFFERBLOCK];
+KeyPointData ThreadKeyData[NTHREAD];                // 线程找环
+char *AnswerBuffer[BUFFERBLOCK];                    // answer
 
 struct HashTable {
   static const int MOD1 = 6893911;
@@ -348,6 +348,7 @@ void BuildBackGraph(uint pid) {
   }
 }
 
+std::vector<uint> KeyPoint;
 void LoadData() {
 #ifdef LOCAL
   struct timeval tim {};
@@ -385,24 +386,57 @@ void LoadData() {
   for (uint i = 0; i < NTHREAD; ++i) Th[i] = std::thread(BuildGraph, i);
   for (auto &it : Th) it.join();
 
+  uint avg = 0;
   for (uint i = 1; i <= MaxID; ++i) {
     Head[i] = Head[i - 1] + HeadLen[i - 1];
     Back[i] = Back[i - 1] + BackLen[i - 1];
+    avg += HeadLen[i - 1];
   }
 
   for (uint i = 0; i < NTHREAD; ++i) Th[i] = std::thread(BuildBackGraph, i);
   for (auto &it : Th) it.join();
 
+  avg = avg / (MaxID + 1) * 3 / 2;
+
+  struct Node {
+    uint idx, len;
+    bool operator<(const Node &r) const { return len > r.len; }
+  };
+  std::priority_queue<Node> pq;
   for (uint i = 0; i < MaxID; ++i) {
-    if (HeadLen[i] > 0 && BackLen[i] > 0) {
+    if (HeadLen[i] <= 0 || BackLen[i] <= 0) continue;
+
+    Start[StartCount++] = i;
+
+    if (HeadLen[i] <= avg) {
       Jobs[JobsCount++] = i;
+    } else {
+      // 菊花点
+      if (pq.size() < 20) {
+        pq.push(Node{i, HeadLen[i]});
+      } else {
+        if (HeadLen[i] > pq.top().len) {
+          Jobs[JobsCount++] = pq.top().idx;
+          pq.pop();
+          pq.push(Node{i, HeadLen[i]});
+        } else {
+          Jobs[JobsCount++] = i;
+        }
+      }
     }
+  }
+
+  while (!pq.empty()) {
+    KeyPoint.emplace_back(pq.top().idx);
+    pq.pop();
   }
 
 #ifdef LOCAL
   gettimeofday(&tim, nullptr);
   double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
   std::cerr << "MaxID: " << MaxID << ", E: " << EdgesCount << "\n";
+  std::cerr << "Total:" << StartCount << ", Job: " << JobsCount
+            << ", KeyPoint: " << KeyPoint.size() << "\n";
   printf("@ LoadData:\t[cost: %.4fs]\n", t4 - t1);
 #endif
 }
@@ -543,20 +577,64 @@ void ForwardSearch1(ThData1 &Data, const uint &st) {
   }
 }
 
-void BackSearch2(ThData2 &Data, const uint &st) {
+void HandleFindCycle(uint pid) {
+#ifdef TESTSPEED
+  struct timeval tim {};
+  gettimeofday(&tim, nullptr);
+  double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+#endif
+
+  auto &Data1 = ThreadData1[pid];
+
+  while (true) {
+    while (_JOB_LOCK_.test_and_set())
+      ;
+    uint job = JobCur < JobsCount ? Jobs[JobCur++] : -1;
+    _JOB_LOCK_.clear();
+    if (job == -1) break;
+
+    BackSearch1(Data1, job);
+    if (Data1.ReachCount < 2) continue;
+
+    ForwardSearch1(Data1, job);
+  }
+
+#ifdef TESTSPEED
+  gettimeofday(&tim, nullptr);
+  double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
+  printf("@ thread %d: [find cycle] [cost: %.4fs]\n", pid, t4 - t1);
+#endif
+}
+
+void FindCircle() {
+  Cycles.reserve(MaxID);
+  JobCur = 0;
+  std::thread Th[NTHREAD];
+  for (uint i = 1; i < NTHREAD; ++i) Th[i] = std::thread(HandleFindCycle, i);
+  HandleFindCycle(0);
+  for (uint i = 1; i < NTHREAD; ++i) Th[i].join();
+}
+
+void KeyPointBack(uint pid, uint st, uint l, uint r) {
+  auto &Data = ThreadKeyData[pid];
+
   for (uint i = 0; i < Data.ReachCount; ++i) {
     const uint &v = Data.ReachPoint[i];
     Data.Reach[v] = 0;
-    Data.Path2[v].resize(0);
-    Data.Path3[v].resize(0);
-    Data.vis[v] = false;
+    Data.LastWeight[v] = 0;
   }
+  Data.cycle[0].resize(0);
+  Data.cycle[1].resize(0);
+  Data.cycle[2].resize(0);
+  Data.cycle[3].resize(0);
+  Data.cycle[4].resize(0);
+
   Data.ReachCount = 0;
   Data.ReachPoint[Data.ReachCount++] = st;
   Data.Reach[st] = 7;
 
-  const DFSEdge *e1 = &GBack[Back[st]];
-  for (uint it1 = Back[st]; it1 < Back[st + 1]; ++it1, ++e1) {
+  const DFSEdge *e1 = &GBack[l];
+  for (uint it1 = l; it1 < r; ++it1, ++e1) {
     const uint &v1 = e1->idx;
     if (v1 <= st) break;
     const uint &w1 = e1->w;
@@ -573,7 +651,6 @@ void BackSearch2(ThData2 &Data, const uint &st) {
       if (!judge(w2, w1)) continue;
       Data.Reach[v2] |= 6;
       Data.ReachPoint[Data.ReachCount++] = v2;
-      Data.Path2[v2].emplace_back(std::array<uint, 2>{v1, w2});
 
       const DFSEdge *e3 = &GBack[Back[v2]];
       for (uint it3 = Back[v2]; it3 < Back[v2 + 1]; ++it3, ++e3) {
@@ -584,17 +661,17 @@ void BackSearch2(ThData2 &Data, const uint &st) {
         if (!judge(w3, w2)) continue;
         Data.Reach[v3] |= 4;
         Data.ReachPoint[Data.ReachCount++] = v3;
-        Data.Path3[v3].emplace_back(std::array<uint, 3>{v2, v1, w3});
       }
     }
   }
 }
+void KeyPointForward(uint pid, uint st, uint l, uint r,
+                     const KeyPointData &Base) {
+  auto &Data = ThreadKeyData[pid];
+  std::vector<uint>(&ret)[5] = Data.cycle;
 
-void ForwardSearch2(ThData2 &Data, const uint &st) {
-  std::vector<uint>(&ret)[5] = Cycles[st].cycle;
-
-  const DFSEdge *e1 = &G[Head[st]];
-  for (uint it1 = Head[st]; it1 < Head[st + 1]; ++it1, ++e1) {
+  const DFSEdge *e1 = &G[l];
+  for (uint it1 = l; it1 < r; ++it1, ++e1) {
     const uint &v1 = e1->idx, &w1 = e1->w;
     if (v1 < st) continue;
 
@@ -623,7 +700,7 @@ void ForwardSearch2(ThData2 &Data, const uint &st) {
         for (uint it4 = Head[v3]; it4 < Head[v3 + 1]; ++it4, ++e4) {
           const uint &v4 = e4->idx, &w4 = e4->w;
 
-          if (!(Data.Reach[v4] & 4) || v1 == v4 || v2 == v4) {
+          if (!(Base.Reach[v4] & 4) || v1 == v4 || v2 == v4) {
             continue;
           } else if (!judge(w3, w4)) {
             continue;
@@ -634,46 +711,45 @@ void ForwardSearch2(ThData2 &Data, const uint &st) {
             continue;
           }
 
-          //  * 保存长度为567的环
-          //  * st,v1,v2,v3,v4,v5,v6
-          //  * Path2[v5] = (v6,W_56)
-          //  * Path3[v4] = (v5,v6,W_45)
-          //  * v4, w4 = W_34
+          const DFSEdge *e5 = &G[Head[v4]];
 
-          const uint &lastw = Data.LastWeight[v4];
-          if ((Data.Reach[v4] & 1) && judge(w4, lastw) && judge(lastw, w1)) {
-            ret[2].insert(ret[2].end(), {v1, v2, v3, v4});
-          }
+          for (uint it5 = Head[v4]; it5 < Head[v4 + 1]; ++it5, ++e5) {
+            const uint &v5 = e5->idx, &w5 = e5->w;
 
-          if (!Data.vis[v4]) {
-            Data.vis[v4] = true;
-            std::sort(
-                Data.Path2[v4].begin(), Data.Path2[v4].end(),
-                [&](const std::array<uint, 2> &p1,
-                    const std::array<uint, 2> &p2) { return p1[0] < p2[0]; });
-            std::sort(Data.Path3[v4].begin(), Data.Path3[v4].end(),
-                      [&](const std::array<uint, 3> &p1,
-                          const std::array<uint, 3> &p2) {
-                        if (p1[0] == p2[0]) return p1[1] < p2[1];
-                        return p1[0] < p2[0];
-                      });
-          }
-
-          for (const auto &it : Data.Path2[v4]) {
-            const uint &v5 = it[0], &w5 = it[1];
-            const uint &last = Data.LastWeight[v5];
-            if (v5 == v1 || v5 == v2 || v5 == v3) continue;
-            if (judge(w4, w5) && judge(last, w1)) {
-              ret[3].insert(ret[3].end(), {v1, v2, v3, v4, v5});
+            if (!(Base.Reach[v5] & 2) || v1 == v5 || v2 == v5 || v3 == v5) {
+              continue;
+            } else if (!judge(w4, w5)) {
+              continue;
+            } else if (v5 == st) {
+              if (judge(w5, w1)) {
+                ret[2].insert(ret[2].end(), {v1, v2, v3, v4});
+              }
+              continue;
             }
-          }
 
-          for (const auto &it : Data.Path3[v4]) {
-            const uint &v5 = it[0], &v6 = it[1], &w6 = it[2];
-            const uint &last = Data.LastWeight[v6];
-            if (v5 == v1 || v5 == v2 || v5 == v3) continue;
-            if (v6 == v1 || v6 == v2 || v6 == v3 || v6 == v4) continue;
-            if (judge(w4, w6) && judge(last, w1)) {
+            const DFSEdge *e6 = &G[Head[v5]];
+
+            for (uint it6 = Head[v5]; it6 < Head[v5 + 1]; ++it6, ++e6) {
+              const uint &v6 = e6->idx, &w6 = e6->w;
+
+              if (!(Base.Reach[v6] & 1) || v1 == v6 || v2 == v6 || v3 == v6 ||
+                  v4 == v6) {
+                continue;
+              } else if (!judge(w5, w6)) {
+                continue;
+              } else if (v6 == st) {
+                if (judge(w6, w1)) {
+                  ret[3].insert(ret[3].end(), {v1, v2, v3, v4, v5});
+                }
+                continue;
+              }
+
+              const uint &w7 = Base.LastWeight[v6];
+
+              if (!judge(w6, w7) || !judge(w7, w1)) {
+                continue;
+              }
+
               ret[4].insert(ret[4].end(), {v1, v2, v3, v4, v5, v6});
             }
           }
@@ -683,57 +759,61 @@ void ForwardSearch2(ThData2 &Data, const uint &st) {
   }
 }
 
-// 1: 6+3(剪枝); 2: 4+3(保存路径)
-uint ChooseStragety(const uint &job) {
-  if (BackLen[job] * 1.5 > HeadLen[job]) return 1;
-  return 2;
-  // return random() % 2;
-}
+void BackSearchKey(uint key) {
+  uint l = Back[key], r = Back[key + 1] - 1;
+  while (l < r && GBack[r].idx <= key) --r;
+  ++r;
 
-void HandleFindCycle(uint pid) {
-#ifdef TESTSPEED
-  struct timeval tim {};
-  gettimeofday(&tim, nullptr);
-  double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-#endif
+  std::thread Th[NTHREAD];
+  uint st = l, block = (r - l + 1) / NTHREAD;
+  for (uint t = 0; t < NTHREAD; ++t) {
+    uint ed = (t == NTHREAD - 1 ? r : st + block);
+    Th[t] = std::thread(KeyPointBack, t, key, st, ed);
+    st = ed;
+  }
+  for (auto &it : Th) it.join();
 
-  auto &Data1 = ThreadData1[pid];
-  auto &Data2 = ThreadData2[pid];
-  Data2.Path2 = std::vector<std::vector<std::array<uint, 2>>>(MaxID);
-  Data2.Path3 = std::vector<std::vector<std::array<uint, 3>>>(MaxID);
-
-  while (true) {
-    while (_JOB_LOCK_.test_and_set())
-      ;
-    uint job = JobCur < JobsCount ? Jobs[JobCur++] : -1;
-    _JOB_LOCK_.clear();
-    if (job == -1) break;
-
-    uint choice = ChooseStragety(job);
-
-    if (choice == 1) {
-      BackSearch1(Data1, job);
-      ForwardSearch1(Data1, job);
-    } else {
-      BackSearch2(Data2, job);
-      ForwardSearch2(Data2, job);
+  auto &Base = ThreadKeyData[0];
+  for (uint t = 1; t < NTHREAD; ++t) {
+    const auto &info = ThreadKeyData[t];
+    for (uint j = 0; j < info.ReachCount; ++j) {
+      const uint &v = info.ReachPoint[j];
+      Base.Reach[v] |= info.Reach[v];
+      Base.LastWeight[v] |= info.LastWeight[v];
+      Base.ReachPoint[Base.ReachCount++] = v;
     }
   }
-
-#ifdef TESTSPEED
-  gettimeofday(&tim, nullptr);
-  double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-  printf("@ thread %d: [find cycle] [cost: %.4fs]\n", pid, t4 - t1);
-#endif
 }
 
-void FindCircle() {
-  Cycles.reserve(MaxID);
-  JobCur = 0;
+void ForwardSearchKey(uint key) {
+  uint l = Head[key], r = Head[key + 1];
+  while (l < r && G[l].idx <= key) ++l;
+
+  const auto &Base = ThreadKeyData[0];
   std::thread Th[NTHREAD];
-  for (uint i = 1; i < NTHREAD; ++i) Th[i] = std::thread(HandleFindCycle, i);
-  HandleFindCycle(0);
-  for (uint i = 1; i < NTHREAD; ++i) Th[i].join();
+  uint st = l, block = (r - l + 1) / NTHREAD;
+
+  for (uint t = 0; t < NTHREAD; ++t) {
+    uint ed = (t == NTHREAD - 1 ? r : st + block);
+    Th[t] = std::thread(KeyPointForward, t, key, st, ed, std::ref(Base));
+    st = ed;
+  }
+  for (auto &it : Th) it.join();
+
+  std::vector<uint>(&ret)[5] = Cycles[key].cycle;
+  for (auto &it : ThreadKeyData) {
+    for (uint j = 0; j < 5; ++j) {
+      ret[j].insert(ret[j].end(), it.cycle[j].begin(), it.cycle[j].end());
+    }
+  }
+}
+
+void FindKeyPointCycle() {
+  std::cerr << KeyPoint.size() << "\n";
+  for (const auto &key : KeyPoint) {
+    BackSearchKey(key);
+    ForwardSearchKey(key);
+  }
 }
 
 void CalOffset() {
@@ -743,8 +823,8 @@ void CalOffset() {
   double t1 = tim.tv_sec + (tim.tv_usec / 1000000.0);
 #endif
   uint tolSize = 0;
-  for (uint i = 0; i < JobsCount; ++i) {
-    const auto &ret = Cycles[Jobs[i]];
+  for (uint i = 0; i < StartCount; ++i) {
+    const auto &ret = Cycles[Start[i]];
     for (int j = 0; j < 5; ++j) {
       uint sz = ret.cycle[j].size();
       Answers += sz / (j + 2);
@@ -756,8 +836,9 @@ void CalOffset() {
   uint strow = 0, endrow = 0, stcol = 0, edcol = 0, times = 0;
   for (uint i = 0; i < 5; ++i) {
     for (uint j = 0; j < JobsCount; ++j) {
+      const uint &start = Start[j];
       if (i == 4 && j == JobsCount - 1) {
-        times += Cycles[Jobs[j]].cycle[i].size();
+        times += Cycles[start].cycle[i].size();
         break;
       }
 
@@ -768,12 +849,12 @@ void CalOffset() {
         strow = i, stcol = j;
       }
 
-      times += Cycles[Jobs[j]].cycle[i].size();
+      times += Cycles[start].cycle[i].size();
     }
   }
 
   AnswerBuffer[OffSet.size()] = new char[times * 7 * NUMLENGTH];
-  OffSet.emplace_back(std::array<uint, 4>{strow, 4, stcol, JobsCount});
+  OffSet.emplace_back(std::array<uint, 4>{strow, 4, stcol, StartCount});
 #ifdef TESTSPEED
   gettimeofday(&tim, nullptr);
   double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
@@ -800,11 +881,11 @@ void HandleSaveAnswer(uint pid) {
     char *result = AnswerBuffer[cur];
     for (uint i = stl; i <= edl; ++i) {
       uint low = (i == stl ? stidx : 0);
-      uint high = (i == edl ? edidx : JobsCount);
+      uint high = (i == edl ? edidx : StartCount);
       for (uint j = low; j < high; ++j) {
-        uint idx = 0;
-        const auto &cycle = Cycles[Jobs[j]].cycle[i];
-        const auto &st = MapID[Jobs[j]];
+        uint idx = 0, start = Start[j];
+        const auto &cycle = Cycles[start].cycle[i];
+        const auto &st = MapID[start];
         for (const auto &v : cycle) {
           if (idx == 0) {
             memcpy(result, st.str, st.len);
@@ -870,11 +951,22 @@ void SaveAnswer() {
 int main() {
   LoadData();
   FindCircle();
+  FindKeyPointCycle();
   CalOffset();
   SaveAnswer();
 // sleep(1);
 #ifdef LOCAL
   std::cerr << "@ Answers: " << Answers << "\n";
+  uint cnt[5] = {0};
+  for (uint i = 0; i < StartCount; ++i) {
+    auto &ret = Cycles[Start[i]];
+    for (uint j = 0; j < 5; ++j) {
+      cnt[j] += ret.cycle[j].size() / (j + 2);
+    }
+  }
+  std::cerr << "@ ans: ";
+  for (uint i = 0; i < 5; ++i) std::cerr << cnt[i] << " ";
+  std::cerr << "\n";
 #endif
   return 0;
 }

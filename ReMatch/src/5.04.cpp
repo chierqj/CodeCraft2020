@@ -24,6 +24,7 @@
 #include <unordered_set>
 #include <vector>
 #define uint uint32_t
+#define ulong uint64_t
 #define W3_MAX 715827882
 #define W5_MAX 429496729
 #define INF 4294967295
@@ -32,7 +33,7 @@
 #define P10(x) ((x << 3) + (x << 1))
 
 #ifdef LOCAL
-#define TRAIN "../data/18908526/test_data.txt"
+#define TRAIN "../data/15371869/test_data.txt"
 #define RESULT "/dev/shm/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
@@ -47,35 +48,28 @@ const uint MAXEDGE = 2000000 + 7;  // 最多边数目
 const uint MAXN = MAXEDGE;         // 最多点数目
 const uint NTHREAD = 4;            // 线程个数
 const uint NUMLENGTH = 12;         // ID最大长度
-const uint BUFFERBLOCK = 64;       // 输出块数
+const uint BUFFERBLOCK = 64;       // 输出
 
 struct DFSEdge {
-  uint idx, w;
+  uint idx;
+  ulong w;
 };
 struct Edge {
-  uint u, v, w;
+  uint u, v;
+  ulong w;
 };
 struct PreBuffer {
   uint len;
   char str[NUMLENGTH];
 };
 struct Answer {
-  std::vector<uint> cycle[5];
+  std::vector<uint> cycle[6];
 };
 struct ThData1 {
-  uint ReachCount = 0;    // 反向可达点数目
-  char Reach[MAXN];       // 标记反向可达
-  uint ReachPoint[MAXN];  // 可达点集合
-  uint LastWeight[MAXN];  // 最后一步权重
-};
-struct ThData2 {
-  uint ReachCount = 0;    // 反向可达点数目
-  char Reach[MAXN];       // 标记反向可达
-  bool vis[MAXN];         // 是否sort
-  uint ReachPoint[MAXN];  // 可达点集合
-  uint LastWeight[MAXN];  // 最后一步权重
-  std::vector<std::vector<std::array<uint, 2>>> Path2;
-  std::vector<std::vector<std::array<uint, 3>>> Path3;
+  uint ReachCount = 0;     // 反向可达点数目
+  uint Reach[MAXN];        // 标记反向可达
+  uint ReachPoint[MAXN];   // 可达点集合
+  ulong LastWeight[MAXN];  // 最后一步权重
 };
 
 uint MaxID = 0;                                     // 最大点
@@ -97,7 +91,6 @@ uint Jobs[MAXN];                                    // 有效点
 PreBuffer MapID[MAXN];                              // 解析int
 std::vector<Answer> Cycles;                         // 所有答案
 ThData1 ThreadData1[NTHREAD];                       // 线程找环
-ThData2 ThreadData2[NTHREAD];                       // 线程找环
 char *AnswerBuffer[BUFFERBLOCK];
 
 struct HashTable {
@@ -137,18 +130,18 @@ struct HashTable {
     }
     return -1;
   }
-  void Sort() {
-    std::sort(HashIdx, HashIdx + count, [&](const uint &x, const uint &y) {
-      return Map[x].key < Map[y].key;
-    });
-    for (int i = 0; i < count; ++i) {
-      const uint &idx = HashIdx[i];
-      Map[idx].val = i;
-      auto &mpid = MapID[i];
-      sprintf(mpid.str, "%d,", Map[idx].key);
-      mpid.len = strlen(mpid.str);
-    }
-  }
+  // void Sort() {
+  //   std::sort(HashIdx, HashIdx + count, [&](const uint &x, const uint &y) {
+  //     return Map[x].key < Map[y].key;
+  //   });
+  //   for (int i = 0; i < count; ++i) {
+  //     const uint &idx = HashIdx[i];
+  //     Map[idx].val = i;
+  //     auto &mpid = MapID[i];
+  //     sprintf(mpid.str, "%d,", Map[idx].key);
+  //     mpid.len = strlen(mpid.str);
+  //   }
+  // }
 };
 HashTable HashMap;
 
@@ -162,7 +155,7 @@ struct LoadInfo {
 };
 LoadInfo LoadInfos[NTHREAD];
 
-void addEdge(const uint &u, const uint &v, const uint &w, LoadInfo &data) {
+void addEdge(const uint &u, const uint &v, const ulong &w, LoadInfo &data) {
   uint mod = u % NTHREAD;
   auto &e = data.thedges[mod][data.thedgesCnt[mod]];
   e.u = u;
@@ -172,7 +165,8 @@ void addEdge(const uint &u, const uint &v, const uint &w, LoadInfo &data) {
 }
 void HandleReadBuffer(const char *buffer, uint st, uint ed, uint pid) {
   const char *ptr = buffer + st, *end = buffer + ed;
-  uint u = 0, v = 0, w = 0;
+  uint u = 0, v = 0;
+  ulong w = 0;
   auto &loadinfo = LoadInfos[pid];
   while (ptr < end) {
     while (*ptr != ',') {
@@ -185,12 +179,25 @@ void HandleReadBuffer(const char *buffer, uint st, uint ed, uint pid) {
       ++ptr;
     }
     ++ptr;
+
+    bool f = false;
+    uint cnt = 0;
     while (*ptr != '\r' && *ptr != '\n') {
-      w = P10(w) + *ptr - '0';
+      if (*ptr == '.') {
+        ++ptr;
+        f = true;
+        continue;
+      }
+      if (f) {
+        ++cnt;
+      }
+      w = w * 10 + *ptr - '0';
       ++ptr;
     }
     if (*ptr == '\r') ++ptr;
     ++ptr;
+    if (cnt == 0) w = w * 100;
+    if (cnt == 1) w = w * 10;
     addEdge(u, v, w, loadinfo);
     u = v = w = 0;
   }
@@ -348,6 +355,40 @@ void BuildBackGraph(uint pid) {
   }
 }
 
+void TopSort() {
+  std::queue<uint> q;
+  for (uint i = 0; i < MaxID; ++i) {
+    if (BackLen[i] == 0) {
+      q.push(i);
+    }
+  }
+  while (!q.empty()) {
+    uint p = q.front();
+    q.pop();
+    for (uint i = Head[p]; i < Head[p + 1]; ++i) {
+      uint v = G[i].idx;
+      if (--BackLen[v] == 0) {
+        q.push(v);
+      }
+    }
+  }
+  for (uint i = 0; i < MaxID; ++i) {
+    if (HeadLen[i] == 0) {
+      q.push(i);
+    }
+  }
+  while (!q.empty()) {
+    uint p = q.front();
+    q.pop();
+    for (uint i = Back[p]; i < Back[p + 1]; ++i) {
+      uint v = GBack[i].idx;
+      if (--HeadLen[v] == 0) {
+        q.push(v);
+      }
+    }
+  }
+}
+
 void LoadData() {
 #ifdef LOCAL
   struct timeval tim {};
@@ -393,11 +434,17 @@ void LoadData() {
   for (uint i = 0; i < NTHREAD; ++i) Th[i] = std::thread(BuildBackGraph, i);
   for (auto &it : Th) it.join();
 
+  TopSort();
   for (uint i = 0; i < MaxID; ++i) {
     if (HeadLen[i] > 0 && BackLen[i] > 0) {
       Jobs[JobsCount++] = i;
     }
   }
+
+  // for (uint i = 0; i < EdgesCount; ++i) {
+  //   auto &e = Edges[i];
+  //   std::cerr << e.u << ", " << e.v << ", " << e.w << "\n";
+  // }
 
 #ifdef LOCAL
   gettimeofday(&tim, nullptr);
@@ -407,10 +454,13 @@ void LoadData() {
 #endif
 }
 
-inline bool judge(const uint &w1, const uint &w2) {
-  return (w2 > W5_MAX || w1 <= P5(w2)) && (w1 > W3_MAX || P3(w1) >= w2);
+// inline bool judge(const uint &w1, const uint &w2) {
+//   return (w2 > W5_MAX || w1 <= P5(w2)) && (w1 > W3_MAX || P3(w1) >= w2);
+// }
+inline bool judge(const ulong &w1, const ulong &w2) {
+  return (w1 <= P5(w2)) && (P3(w1) >= w2);
 }
-
+// 8 4 2 1
 void BackSearch1(ThData1 &Data, const uint &st) {
   for (uint i = 0; i < Data.ReachCount; ++i) {
     const uint &v = Data.ReachPoint[i];
@@ -418,25 +468,25 @@ void BackSearch1(ThData1 &Data, const uint &st) {
   }
   Data.ReachCount = 0;
   Data.ReachPoint[Data.ReachCount++] = st;
-  Data.Reach[st] = 7;
+  Data.Reach[st] = 15;
 
   const DFSEdge *e1 = &GBack[Back[st]];
   for (uint it1 = Back[st]; it1 < Back[st + 1]; ++it1, ++e1) {
     const uint &v1 = e1->idx;
     if (v1 <= st) break;
-    const uint &w1 = e1->w;
+    const ulong &w1 = e1->w;
     Data.LastWeight[v1] = w1;
-    Data.Reach[v1] = 7;
+    Data.Reach[v1] = 15;
     Data.ReachPoint[Data.ReachCount++] = v1;
 
     const DFSEdge *e2 = &GBack[Back[v1]];
     for (uint it2 = Back[v1]; it2 < Back[v1 + 1]; ++it2, ++e2) {
       const uint &v2 = e2->idx;
       if (v2 <= st) break;
-      const uint &w2 = e2->w;
+      const ulong &w2 = e2->w;
 
       if (!judge(w2, w1)) continue;
-      Data.Reach[v2] |= 6;
+      Data.Reach[v2] |= 14;
       Data.ReachPoint[Data.ReachCount++] = v2;
 
       const DFSEdge *e3 = &GBack[Back[v2]];
@@ -444,32 +494,46 @@ void BackSearch1(ThData1 &Data, const uint &st) {
         const uint &v3 = e3->idx;
         if (v3 <= st) break;
         if (v3 == v1) continue;
-        const uint &w3 = e3->w;
+        const ulong &w3 = e3->w;
         if (!judge(w3, w2)) continue;
-        Data.Reach[v3] |= 4;
+        Data.Reach[v3] |= 12;
         Data.ReachPoint[Data.ReachCount++] = v3;
+        const DFSEdge *e4 = &GBack[Back[v3]];
+        for (uint it4 = Back[v3]; it4 < Back[v3 + 1]; ++it4, ++e4) {
+          const uint &v4 = e4->idx;
+          if (v4 <= st) break;
+          if (v4 == v1 || v4 == v2) continue;
+          const ulong &w4 = e4->w;
+          if (!judge(w4, w3)) continue;
+          Data.Reach[v4] |= 8;
+          Data.ReachPoint[Data.ReachCount++] = v4;
+        }
       }
     }
   }
 }
+
 void ForwardSearch1(ThData1 &Data, const uint &st) {
-  std::vector<uint>(&ret)[5] = Cycles[st].cycle;
+  std::vector<uint>(&ret)[6] = Cycles[st].cycle;
 
   const DFSEdge *e1 = &G[Head[st]];
   for (uint it1 = Head[st]; it1 < Head[st + 1]; ++it1, ++e1) {
-    const uint &v1 = e1->idx, &w1 = e1->w;
+    const uint &v1 = e1->idx;
+    const ulong &w1 = e1->w;
     if (v1 < st) continue;
 
     const DFSEdge *e2 = &G[Head[v1]];
 
     for (uint it2 = Head[v1]; it2 < Head[v1 + 1]; ++it2, ++e2) {
-      const uint &v2 = e2->idx, &w2 = e2->w;
+      const uint &v2 = e2->idx;
+      const ulong &w2 = e2->w;
       if (v2 <= st || !judge(w1, w2)) continue;
 
       const DFSEdge *e3 = &G[Head[v2]];
 
       for (uint it3 = Head[v2]; it3 < Head[v2 + 1]; ++it3, ++e3) {
-        const uint &v3 = e3->idx, &w3 = e3->w;
+        const uint &v3 = e3->idx;
+        const ulong &w3 = e3->w;
 
         if (v3 < st || v3 == v1 || !judge(w2, w3)) {
           continue;
@@ -483,9 +547,10 @@ void ForwardSearch1(ThData1 &Data, const uint &st) {
         const DFSEdge *e4 = &G[Head[v3]];
 
         for (uint it4 = Head[v3]; it4 < Head[v3 + 1]; ++it4, ++e4) {
-          const uint &v4 = e4->idx, &w4 = e4->w;
+          const uint &v4 = e4->idx;
+          const ulong &w4 = e4->w;
 
-          if (!(Data.Reach[v4] & 4) || v1 == v4 || v2 == v4) {
+          if (!(Data.Reach[v4] & 8) || v1 == v4 || v2 == v4) {
             continue;
           } else if (!judge(w3, w4)) {
             continue;
@@ -499,9 +564,10 @@ void ForwardSearch1(ThData1 &Data, const uint &st) {
           const DFSEdge *e5 = &G[Head[v4]];
 
           for (uint it5 = Head[v4]; it5 < Head[v4 + 1]; ++it5, ++e5) {
-            const uint &v5 = e5->idx, &w5 = e5->w;
+            const uint &v5 = e5->idx;
+            const ulong &w5 = e5->w;
 
-            if (!(Data.Reach[v5] & 2) || v1 == v5 || v2 == v5 || v3 == v5) {
+            if (!(Data.Reach[v5] & 4) || v1 == v5 || v2 == v5 || v3 == v5) {
               continue;
             } else if (!judge(w4, w5)) {
               continue;
@@ -515,9 +581,10 @@ void ForwardSearch1(ThData1 &Data, const uint &st) {
             const DFSEdge *e6 = &G[Head[v5]];
 
             for (uint it6 = Head[v5]; it6 < Head[v5 + 1]; ++it6, ++e6) {
-              const uint &v6 = e6->idx, &w6 = e6->w;
+              const uint &v6 = e6->idx;
+              const ulong &w6 = e6->w;
 
-              if (!(Data.Reach[v6] & 1) || v1 == v6 || v2 == v6 || v3 == v6 ||
+              if (!(Data.Reach[v6] & 2) || v1 == v6 || v2 == v6 || v3 == v6 ||
                   v4 == v6) {
                 continue;
               } else if (!judge(w5, w6)) {
@@ -528,166 +595,39 @@ void ForwardSearch1(ThData1 &Data, const uint &st) {
                 }
                 continue;
               }
-              const uint &w7 = Data.LastWeight[v6];
 
-              if (!judge(w6, w7) || !judge(w7, w1)) {
-                continue;
+              const DFSEdge *e7 = &G[Head[v6]];
+
+              for (uint it7 = Head[v6]; it7 < Head[v6 + 1]; ++it7, ++e7) {
+                const uint &v7 = e7->idx;
+                const ulong &w7 = e7->w;
+
+                if (!(Data.Reach[v7] & 1) || v1 == v7 || v2 == v7 || v3 == v7 ||
+                    v4 == v7 || v5 == v7) {
+                  continue;
+                } else if (!judge(w6, w7)) {
+                  continue;
+                } else if (v7 == st) {
+                  if (judge(w7, w1)) {
+                    ret[4].insert(ret[4].end(), {v1, v2, v3, v4, v5, v6});
+                  }
+                  continue;
+                }
+
+                const ulong &w8 = Data.LastWeight[v7];
+
+                if (!judge(w7, w8) || !judge(w8, w1)) {
+                  continue;
+                }
+
+                ret[5].insert(ret[5].end(), {v1, v2, v3, v4, v5, v6, v7});
               }
-
-              ret[4].insert(ret[4].end(), {v1, v2, v3, v4, v5, v6});
             }
           }
         }
       }
     }
   }
-}
-
-void BackSearch2(ThData2 &Data, const uint &st) {
-  for (uint i = 0; i < Data.ReachCount; ++i) {
-    const uint &v = Data.ReachPoint[i];
-    Data.Reach[v] = 0;
-    Data.Path2[v].resize(0);
-    Data.Path3[v].resize(0);
-    Data.vis[v] = false;
-  }
-  Data.ReachCount = 0;
-  Data.ReachPoint[Data.ReachCount++] = st;
-  Data.Reach[st] = 7;
-
-  const DFSEdge *e1 = &GBack[Back[st]];
-  for (uint it1 = Back[st]; it1 < Back[st + 1]; ++it1, ++e1) {
-    const uint &v1 = e1->idx;
-    if (v1 <= st) break;
-    const uint &w1 = e1->w;
-    Data.LastWeight[v1] = w1;
-    Data.Reach[v1] = 7;
-    Data.ReachPoint[Data.ReachCount++] = v1;
-
-    const DFSEdge *e2 = &GBack[Back[v1]];
-    for (uint it2 = Back[v1]; it2 < Back[v1 + 1]; ++it2, ++e2) {
-      const uint &v2 = e2->idx;
-      if (v2 <= st) break;
-      const uint &w2 = e2->w;
-
-      if (!judge(w2, w1)) continue;
-      Data.Reach[v2] |= 6;
-      Data.ReachPoint[Data.ReachCount++] = v2;
-      Data.Path2[v2].emplace_back(std::array<uint, 2>{v1, w2});
-
-      const DFSEdge *e3 = &GBack[Back[v2]];
-      for (uint it3 = Back[v2]; it3 < Back[v2 + 1]; ++it3, ++e3) {
-        const uint &v3 = e3->idx;
-        if (v3 <= st) break;
-        if (v3 == v1) continue;
-        const uint &w3 = e3->w;
-        if (!judge(w3, w2)) continue;
-        Data.Reach[v3] |= 4;
-        Data.ReachPoint[Data.ReachCount++] = v3;
-        Data.Path3[v3].emplace_back(std::array<uint, 3>{v2, v1, w3});
-      }
-    }
-  }
-}
-
-void ForwardSearch2(ThData2 &Data, const uint &st) {
-  std::vector<uint>(&ret)[5] = Cycles[st].cycle;
-
-  const DFSEdge *e1 = &G[Head[st]];
-  for (uint it1 = Head[st]; it1 < Head[st + 1]; ++it1, ++e1) {
-    const uint &v1 = e1->idx, &w1 = e1->w;
-    if (v1 < st) continue;
-
-    const DFSEdge *e2 = &G[Head[v1]];
-
-    for (uint it2 = Head[v1]; it2 < Head[v1 + 1]; ++it2, ++e2) {
-      const uint &v2 = e2->idx, &w2 = e2->w;
-      if (v2 <= st || !judge(w1, w2)) continue;
-
-      const DFSEdge *e3 = &G[Head[v2]];
-
-      for (uint it3 = Head[v2]; it3 < Head[v2 + 1]; ++it3, ++e3) {
-        const uint &v3 = e3->idx, &w3 = e3->w;
-
-        if (v3 < st || v3 == v1 || !judge(w2, w3)) {
-          continue;
-        } else if (v3 == st) {
-          if (judge(w3, w1)) {
-            ret[0].insert(ret[0].end(), {v1, v2});
-          }
-          continue;
-        }
-
-        const DFSEdge *e4 = &G[Head[v3]];
-
-        for (uint it4 = Head[v3]; it4 < Head[v3 + 1]; ++it4, ++e4) {
-          const uint &v4 = e4->idx, &w4 = e4->w;
-
-          if (!(Data.Reach[v4] & 4) || v1 == v4 || v2 == v4) {
-            continue;
-          } else if (!judge(w3, w4)) {
-            continue;
-          } else if (v4 == st) {
-            if (judge(w4, w1)) {
-              ret[1].insert(ret[1].end(), {v1, v2, v3});
-            }
-            continue;
-          }
-
-          //  * 保存长度为567的环
-          //  * st,v1,v2,v3,v4,v5,v6
-          //  * Path2[v5] = (v6,W_56)
-          //  * Path3[v4] = (v5,v6,W_45)
-          //  * v4, w4 = W_34
-
-          const uint &lastw = Data.LastWeight[v4];
-          if ((Data.Reach[v4] & 1) && judge(w4, lastw) && judge(lastw, w1)) {
-            ret[2].insert(ret[2].end(), {v1, v2, v3, v4});
-          }
-
-          if (!Data.vis[v4]) {
-            Data.vis[v4] = true;
-            std::sort(
-                Data.Path2[v4].begin(), Data.Path2[v4].end(),
-                [&](const std::array<uint, 2> &p1,
-                    const std::array<uint, 2> &p2) { return p1[0] < p2[0]; });
-            std::sort(Data.Path3[v4].begin(), Data.Path3[v4].end(),
-                      [&](const std::array<uint, 3> &p1,
-                          const std::array<uint, 3> &p2) {
-                        if (p1[0] == p2[0]) return p1[1] < p2[1];
-                        return p1[0] < p2[0];
-                      });
-          }
-
-          for (const auto &it : Data.Path2[v4]) {
-            const uint &v5 = it[0], &w5 = it[1];
-            const uint &last = Data.LastWeight[v5];
-            if (v5 == v1 || v5 == v2 || v5 == v3) continue;
-            if (judge(w4, w5) && judge(last, w1)) {
-              ret[3].insert(ret[3].end(), {v1, v2, v3, v4, v5});
-            }
-          }
-
-          for (const auto &it : Data.Path3[v4]) {
-            const uint &v5 = it[0], &v6 = it[1], &w6 = it[2];
-            const uint &last = Data.LastWeight[v6];
-            if (v5 == v1 || v5 == v2 || v5 == v3) continue;
-            if (v6 == v1 || v6 == v2 || v6 == v3 || v6 == v4) continue;
-            if (judge(w4, w6) && judge(last, w1)) {
-              ret[4].insert(ret[4].end(), {v1, v2, v3, v4, v5, v6});
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
-// 1: 6+3(剪枝); 2: 4+3(保存路径)
-uint ChooseStragety(const uint &job) {
-  if (BackLen[job] * 1.5 > HeadLen[job]) return 1;
-  return 2;
-  // return random() % 2;
 }
 
 void HandleFindCycle(uint pid) {
@@ -698,9 +638,6 @@ void HandleFindCycle(uint pid) {
 #endif
 
   auto &Data1 = ThreadData1[pid];
-  auto &Data2 = ThreadData2[pid];
-  Data2.Path2 = std::vector<std::vector<std::array<uint, 2>>>(MaxID);
-  Data2.Path3 = std::vector<std::vector<std::array<uint, 3>>>(MaxID);
 
   while (true) {
     while (_JOB_LOCK_.test_and_set())
@@ -709,21 +646,15 @@ void HandleFindCycle(uint pid) {
     _JOB_LOCK_.clear();
     if (job == -1) break;
 
-    uint choice = ChooseStragety(job);
-
-    if (choice == 1) {
-      BackSearch1(Data1, job);
-      ForwardSearch1(Data1, job);
-    } else {
-      BackSearch2(Data2, job);
-      ForwardSearch2(Data2, job);
-    }
+    BackSearch1(Data1, job);
+    if (Data1.ReachCount < 2) continue;
+    ForwardSearch1(Data1, job);
   }
 
 #ifdef TESTSPEED
   gettimeofday(&tim, nullptr);
   double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-  printf("@ thread %d: [find cycle] [cost: %.4fs]\n", pid, t4 - t1);
+  printf("@ thread %llu: [find cycle] [cost: %.4fs]\n", pid, t4 - t1);
 #endif
 }
 
@@ -745,7 +676,7 @@ void CalOffset() {
   uint tolSize = 0;
   for (uint i = 0; i < JobsCount; ++i) {
     const auto &ret = Cycles[Jobs[i]];
-    for (int j = 0; j < 5; ++j) {
+    for (int j = 0; j < 6; ++j) {
       uint sz = ret.cycle[j].size();
       Answers += sz / (j + 2);
       tolSize += sz;
@@ -754,9 +685,9 @@ void CalOffset() {
 
   uint block = tolSize / BUFFERBLOCK + 1;
   uint strow = 0, endrow = 0, stcol = 0, edcol = 0, times = 0;
-  for (uint i = 0; i < 5; ++i) {
+  for (uint i = 0; i < 6; ++i) {
     for (uint j = 0; j < JobsCount; ++j) {
-      if (i == 4 && j == JobsCount - 1) {
+      if (i == 5 && j == JobsCount - 1) {
         times += Cycles[Jobs[j]].cycle[i].size();
         break;
       }
@@ -773,7 +704,7 @@ void CalOffset() {
   }
 
   AnswerBuffer[OffSet.size()] = new char[times * 7 * NUMLENGTH];
-  OffSet.emplace_back(std::array<uint, 4>{strow, 4, stcol, JobsCount});
+  OffSet.emplace_back(std::array<uint, 4>{strow, 5, stcol, JobsCount});
 #ifdef TESTSPEED
   gettimeofday(&tim, nullptr);
   double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
@@ -827,7 +758,7 @@ void HandleSaveAnswer(uint pid) {
 #ifdef TESTSPEED
   gettimeofday(&tim, nullptr);
   double t4 = tim.tv_sec + (tim.tv_usec / 1000000.0);
-  printf("@ thread %d: [memcpy] [cost: %.4fs]\n", pid, t4 - t1);
+  printf("@ thread %llu: [memcpy] [cost: %.4fs]\n", pid, t4 - t1);
 #endif
 }
 
@@ -839,7 +770,7 @@ void WriteAnswer(int pid) {
 #endif
 
   char tmp[NUMLENGTH];
-  sprintf(tmp, "%d\n", Answers);
+  sprintf(tmp, "%llu\n", Answers);
   FILE *fp = fopen(RESULT, "w");
   fwrite(tmp, 1, strlen(tmp), fp);
 
@@ -875,6 +806,16 @@ int main() {
 // sleep(1);
 #ifdef LOCAL
   std::cerr << "@ Answers: " << Answers << "\n";
+  uint cnt[6] = {0};
+  for (uint i = 0; i < JobsCount; ++i) {
+    auto &ret = Cycles[Jobs[i]];
+    for (uint j = 0; j < 6; ++j) {
+      cnt[j] += ret.cycle[j].size() / (j + 2);
+    }
+  }
+  std::cerr << "@ ans: ";
+  for (uint i = 0; i < 6; ++i) std::cerr << cnt[i] << " ";
+  std::cerr << "\n";
 #endif
   return 0;
 }
