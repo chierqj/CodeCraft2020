@@ -30,7 +30,7 @@
 #define P10(x) ((x << 3) + (x << 1))
 
 #ifdef LOCAL
-#define TRAIN "../data/18908526/test_data.txt"
+#define TRAIN "../data/std/test_data.txt"
 #define RESULT "../data/std/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
@@ -48,9 +48,9 @@ inline void cyan() { fprintf(stderr, "\033[1;36m"); }
 inline void orange() { fprintf(stderr, "\033[38;5;214m"); }
 inline void newline() { fprintf(stderr, "\n"); }
 }  // namespace Color
-class ScopeTime {
+class Timer {
  public:
-  ScopeTime() : m_begin(std::chrono::high_resolution_clock::now()) {}
+  Timer() : m_begin(std::chrono::high_resolution_clock::now()) {}
   inline double elapsed() const {
     auto t = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::high_resolution_clock::now() - m_begin);
@@ -268,6 +268,7 @@ void ReHashTable(uint pid) {
   for (uint i = 0; i < hashmap.Size(); ++i) {
     auto &p = hashmap.Map[hashmap.HashIdx[i]];
     p.val = Rank[p.val];
+    IDDom[p.val] = p.key;
   }
 }
 void RankEdge(uint pid) {
@@ -332,7 +333,7 @@ void BuildGraphBack(uint pid) {
 }
 void LoadData() {
 #ifdef LOCAL
-  ScopeTime t;
+  Timer t;
 #endif
   InitLoadInfo();
   ReadBuffer();
@@ -366,7 +367,171 @@ void LoadData() {
 #endif
 }
 /************************** LoadData End ****************************/
+
+/************************** Algorithm Start ****************************/
+typedef std::pair<uint, double> prud;
+struct Node {
+  uint idx;   // 结点id
+  ulong val;  // dis[idx]
+  bool operator<(const Node &r) const { return val > r.val; }
+};
+struct ThreadData {
+  std::priority_queue<Node> pq;  // 优先队列
+  std::vector<bool> vis;         // 标记访问
+  std::vector<ulong> dis;        // 最短距离
+  std::vector<uint> count;       // (dis[u] + w == dis[v]) -> count[v]
+  uint points[MAX_NODE];         // 反向找点
+  std::vector<double> ans;       // 线程结果
+};
+ThreadData TData[T];                       // 线程数据
+std::vector<prud> Answer;                  // 最终结果
+uint job_cur = 0;                          // 任务cur
+std::atomic_flag lock = ATOMIC_FLAG_INIT;  // lock
+
+/*
+ * 1. dijkstr寻找最短路
+ * 2. 利用拆分的公式计算中心性
+ */
+void ClearThreadData(ThreadData &Data) {
+  Data.vis = std::vector<bool>(g_NodeNum);
+  Data.dis = std::vector<ulong>(g_NodeNum, std::numeric_limits<ulong>::max());
+  Data.count = std::vector<uint>(g_NodeNum, 0);
+}
+
+void Dijkstra(ThreadData &Data, uint start) {
+  Data.pq.push(Node{start, 0});
+  Data.dis[start] = 0;
+  while (!Data.pq.empty()) {
+    const auto u = Data.pq.top().idx;
+    Data.pq.pop();
+    if (Data.vis[u]) continue;
+    Data.vis[u] = true;
+    for (uint i = Head[u]; i < Head[u + 1]; ++i) {
+      const auto &e = GHead[i];
+      if (Data.dis[u] + e.w > Data.dis[e.idx]) continue;
+      if (Data.dis[u] + e.w == Data.dis[e.idx]) {
+        ++Data.count[e.idx];
+      } else {
+        Data.count[e.idx] = 1;
+        Data.dis[e.idx] = Data.dis[u] + e.w;
+        Data.pq.push(Node{e.idx, Data.dis[e.idx]});
+      }
+    }
+  }
+}
+void CalAnswer(ThreadData &Data, uint start) {
+  uint l = 0, r = 0;
+
+  std::vector<double> f(g_NodeNum, 0);
+  Data.points[++r] = start;
+  f[start] = 1;
+
+  while (r > l) {
+    int u = Data.points[++l];
+    for (uint i = Head[u]; i < Head[u + 1]; ++i) {
+      const auto &e = GHead[i];
+      if (Data.dis[u] + e.w == Data.dis[e.idx]) {
+        if (!--Data.count[e.idx]) Data.points[++r] = e.idx;
+        f[e.idx] += f[u] * 1.0;
+      }
+    }
+  }
+
+  std::vector<double> g(g_NodeNum, 0);
+  for (int p = r; p > 1; --p) {
+    uint u = Data.points[p];
+    for (uint i = Head[u]; i < Head[u + 1]; ++i) {
+      const auto &e = GHead[i];
+      if (Data.dis[u] + e.w == Data.dis[e.idx]) {
+        g[u] += g[e.idx] * 1.0;
+      }
+    }
+    Data.ans[u] += 1.0 * f[u] * g[u];
+    g[u] += (double)(1.0 / f[u]);
+  }
+}
+
+void HandleSolve(uint pid) {
+  auto &Data = TData[pid];
+  Data.ans = std::vector<double>(g_NodeNum, 0);
+
+  uint cur = 0;
+  while (true) {
+    while (lock.test_and_set())
+      ;
+    cur = job_cur < g_NodeNum ? job_cur++ : -1;
+    lock.clear();
+
+    if (cur == -1) break;
+    ClearThreadData(Data);
+    Dijkstra(Data, cur);
+    CalAnswer(Data, cur);
+  }
+}
+
+void Solve() {
+#ifdef LOCAL
+  Timer t;
+#endif
+
+  std::thread Th[T];
+  for (uint i = 0; i < T; ++i) Th[i] = std::thread(HandleSolve, i);
+  for (auto &it : Th) it.join();
+
+  Answer = std::vector<prud>(g_NodeNum);
+  for (uint i = 0; i < g_NodeNum; ++i) {
+    Answer[i].first = IDDom[i];
+    Answer[i].second = 0;
+    for (const auto &data : TData) {
+      Answer[i].second += data.ans[i];
+    }
+  }
+
+#ifdef LOCAL
+  Color::magenta();
+  printf("@ Solve: [dijkstra] [cost: %.4fs]\n", t.elapsed());
+  Color::reset();
+#endif
+}
+
+/************************** Algorithm End ****************************/
+
+void SaveAnswer() {
+#ifdef LOCAL
+  Timer t;
+#endif
+  std::sort(Answer.begin(), Answer.end(), [](const prud &p1, const prud &p2) {
+    if (p1.second == p2.second) return p1.first < p2.first;
+    return p1.second > p2.second;
+  });
+
+  uint up = g_NodeNum > 100 ? 100 : g_NodeNum;
+
+  char *buffer = new char[50 * 100];
+  char *ptr = buffer;
+
+  for (uint i = 0; i < up; ++i) {
+    const auto &it = Answer[i];
+    ptr += sprintf(ptr, "%d,%.3lf\n", it.first, it.second);
+  }
+
+  FILE *fp = fopen(RESULT, "w");
+  fwrite(buffer, 1, ptr - buffer, fp);
+  fclose(fp);
+
+#ifdef LOCAL
+  Color::magenta();
+  printf("@ Save: [sort and save] [cost: %.4fs]\n", t.elapsed());
+  Color::reset();
+#endif
+}
+
 int main() {
+  std::cerr << std::fixed << std::setprecision(3);
+
   LoadData();
+  Solve();
+  SaveAnswer();
+
   return 0;
 }
