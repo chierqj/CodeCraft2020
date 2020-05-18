@@ -110,11 +110,11 @@ struct HashTable {
 };
 struct DFSEdge {
   uint idx;
-  ulong w;
+  ulong w, val;  // 边权, 边宽; 目前默认边宽为1，等一手改需求
 };
 struct ReadEdge {
   uint u, v;
-  ulong w;
+  ulong w, val;  // 边权, 边宽; 目前默认边宽为1，等一手改需求
 };
 struct LoadInfo {
   uint offsz = 0;                     // 线程hashmap偏移
@@ -156,15 +156,17 @@ void InitLoadInfo() {
     }
   }
 };
-void addEdge(const uint &u, const uint &v, const ulong &w, LoadInfo &data) {
+void addEdge(const uint &u, const uint &v, const ulong &w, const ulong &val,
+             LoadInfo &data) {
   uint umod = u % T, vmod = v % T;
-  data.th_edges[umod].emplace_back(ReadEdge{u, v, w});
+  data.th_edges[umod].emplace_back(ReadEdge{u, v, w, val});
   data.th_ids[umod].emplace_back(u);
   data.th_ids[vmod].emplace_back(v);
 }
 void HandleReadBuffer(const char *buffer, uint st, uint ed, uint pid) {
   const char *ptr = buffer + st, *end = buffer + ed;
-  uint u = 0, v = 0, w = 0;
+  uint u = 0, v = 0;
+  ulong w = 0, val = 1;
   auto &loadinfo = LoadInfos[pid];
   while (ptr < end) {
     while (*ptr != ',') {
@@ -183,7 +185,7 @@ void HandleReadBuffer(const char *buffer, uint st, uint ed, uint pid) {
     }
     if (*ptr == '\r') ++ptr;
     ++ptr;
-    addEdge(u, v, w, loadinfo);
+    addEdge(u, v, w, val, loadinfo);
     u = v = w = 0;
   }
 }
@@ -311,8 +313,7 @@ void BuildGraphHead(uint pid) {
       }
       ++HeadLen[e.u];
       pre = e.u;
-      GHead[i].idx = e.v;
-      GHead[i].w = e.w;
+      GHead[i] = {e.v, e.w, e.val};
     }
     if (e.v % T == pid) {
       ++BackLen[e.v];
@@ -325,8 +326,7 @@ void BuildGraphBack(uint pid) {
     const auto &e = Edges[i];
     if (e.v % T == pid) {
       auto &p = GBack[Back[e.v] + cnt[e.v]];
-      p.idx = e.u;
-      p.w = e.w;
+      p = {e.u, e.w, e.val};
       ++cnt[e.v];
     }
   }
@@ -432,7 +432,7 @@ void CalAnswer(ThreadData &Data, uint start) {
       const auto &e = GHead[i];
       if (Data.dis[u] + e.w == Data.dis[e.idx]) {
         if (!--Data.count[e.idx]) Data.points[++r] = e.idx;
-        f[e.idx] += f[u] * 1.0;
+        f[e.idx] += f[u] * e.val;
       }
     }
   }
@@ -443,7 +443,7 @@ void CalAnswer(ThreadData &Data, uint start) {
     for (uint i = Head[u]; i < Head[u + 1]; ++i) {
       const auto &e = GHead[i];
       if (Data.dis[u] + e.w == Data.dis[e.idx]) {
-        g[u] += g[e.idx] * 1.0;
+        g[u] += g[e.idx] * e.val;
       }
     }
     Data.ans[u] += 1.0 * f[u] * g[u];
