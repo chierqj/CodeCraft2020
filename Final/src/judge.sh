@@ -1,16 +1,19 @@
 #!/bin/bash
 
+RED='\e[1;31m'  # 红
+GREEN='\e[1;32m'  # 绿
+YELLOW='\033[1;33m'  # 黄
+BLUE='\E[1;34m'  # 蓝
+PINK='\E[1;35m'  # 粉红
+RES='\033[0m'  # 清除颜色
+
 
 test_file[0]="../data/std/test_data.txt"
-test_file[1]="../data/15371869/test_data.txt"
-test_file[2]="../data/18908526/test_data.txt"
-test_file[3]="../data/19630345/test_data.txt"
+test_file[1]="../data/gen/test_data.txt"
 
 
 answer_file[0]="../data/std/answer.txt"
-answer_file[1]="../data/15371869/answer.txt"
-answer_file[2]="../data/18908526/answer.txt"
-answer_file[3]="../data/19630345/answer.txt"
+answer_file[1]="../data/gen/answer.txt"
 
 
 g++ -std=c++11 -O3 $1 -o main -lpthread -fpic
@@ -39,7 +42,7 @@ total_cnt=0
 
 for ((i=0;i<${#test_file[@]};i++))
 do
-    echo ${test_file[$i]}
+    echo -e "${PINK}[File$i: ${test_file[$i]}]${RES}"
     cp ${test_file[$i]} /data/test_data.txt
     time ./main
     if [ -f "/projects/student/result.txt" ]
@@ -48,18 +51,18 @@ do
         len=$(sed -n '$=' log.txt)
         if [ $len -gt $old ]
         then
-            echo "Fail!"
+            echo -e "${RED}[@ Wrong Answer]${RES}"
         else
-            echo "Pass!"
+            echo -e "${GREEN}[@ Accepted]${RES}"
             let cnt+=1
         fi
         rm /projects/student/result.txt
     else
-        echo "File not generated !"
+        echo -e "${RED}[@ File not generated${RES}"
     fi
         old=$len
     let total_cnt+=1
     echo "----------------------------------"
 done
 
-echo "$cnt/$total_cnt Passed" | tee -a ./log.txt
+echo -e "${YELLOW}[$cnt/$total_cnt Accepted]${RES}" | tee -a ./log.txt

@@ -67,7 +67,7 @@ class Timer {
  */
 const uint MAX_EDGE = 3000000 + 7;  // 最多边数目
 const uint MAX_NODE = 6000000 + 7;  // 最多点数目
-const uint T = 4;                   // 线程个数
+const uint T = 8;                   // 线程个数
 
 /************************** LoadData Begin ****************************/
 struct HashTable {
@@ -196,9 +196,11 @@ void ReadBuffer() {
   close(fd);
   std::thread Th[T];
   uint st = 0, block = bufsize / T;
+  uint up = 0;
   for (uint i = 0; i < T; ++i) {
     if (i == T - 1) {
       Th[i] = std::thread(HandleReadBuffer, buffer, st, bufsize, i);
+      up = T;
       break;
     }
     uint ed = st + block;
@@ -206,17 +208,25 @@ void ReadBuffer() {
     ++ed;
     Th[i] = std::thread(HandleReadBuffer, buffer, st, ed, i);
     st = ed;
+    if (st >= bufsize) {
+      up = i + 1;
+      break;
+    }
   }
-  for (auto &it : Th) it.join();
+  for (uint i = 0; i < up; ++i) Th[i].join();
 }
 void MergeSortIdAndEdge(uint pid) {
   auto &data = LoadInfos[pid];
   for (uint i = 0; i < T; ++i) {
     const auto &info = LoadInfos[i];
-    data.edges.insert(data.edges.end(), info.th_edges[pid].begin(),
-                      info.th_edges[pid].end());
-    data.ids.insert(data.ids.end(), info.th_ids[pid].begin(),
-                    info.th_ids[pid].end());
+    if (!info.th_edges[pid].empty()) {
+      data.edges.insert(data.edges.end(), info.th_edges[pid].begin(),
+                        info.th_edges[pid].end());
+    }
+    if (!info.th_ids[pid].empty()) {
+      data.ids.insert(data.ids.end(), info.th_ids[pid].begin(),
+                      info.th_ids[pid].end());
+    }
   }
   std::sort(data.ids.begin(), data.ids.end());
   std::sort(data.edges.begin(), data.edges.end(),
@@ -283,8 +293,9 @@ void RankEdge(uint pid) {
 void MergeEdge() {
   uint left[T] = {0};
   ReadEdge *ptr = Edges;
+  uint cnt = 0;
   while (true) {
-    uint minx = g_NodeNum + 7, minidx = -1;
+    uint minx = g_NodeNum + 7, minidx = g_NodeNum + 7;
     for (uint i = 0; i < T; ++i) {
       const auto &data = LoadInfos[i];
       if (left[i] < data.edges.size() && data.edges[left[i]].u < minx) {
@@ -292,13 +303,14 @@ void MergeEdge() {
         minidx = i;
       }
     }
-    if (minidx == -1) break;
+    if (minidx == g_NodeNum + 7) break;
     const auto &data = LoadInfos[minidx];
-    uint &l = left[minidx];
-    while (data.edges[l].u == minx) {
+    uint &l = left[minidx], r = data.edges.size();
+    while (l < r && data.edges[l].u == minx) {
       memcpy(ptr, &data.edges[left[minidx]], sizeof(ReadEdge));
       ++ptr;
       ++l;
+      ++cnt;
     }
   }
   g_EdgeNum = ptr - Edges;
@@ -377,16 +389,15 @@ struct Node {
 };
 struct ThreadData {
   std::priority_queue<Node> pq;  // 优先队列
+  std::queue<uint> q;            // SPFA
   std::vector<bool> vis;         // 标记访问
   std::vector<ulong> dis;        // 最短距离
   std::vector<uint> count;       // (dis[u] + w == dis[v]) -> count[v]
-  uint points[MAX_NODE];         // 反向找点
+  uint points[MAX_NODE];         // 最短路上的点
   std::vector<double> ans;       // 线程结果
 };
-ThreadData TData[T];                       // 线程数据
-std::vector<prud> Answer;                  // 最终结果
-uint job_cur = 0;                          // 任务cur
-std::atomic_flag lock = ATOMIC_FLAG_INIT;  // lock
+ThreadData TData[T];       // 线程数据
+std::vector<prud> Answer;  // 最终结果
 
 /*
  * 1. dijkstr寻找最短路
@@ -398,74 +409,131 @@ void ClearThreadData(ThreadData &Data) {
   Data.count = std::vector<uint>(g_NodeNum, 0);
 }
 
-void Dijkstra(ThreadData &Data, uint start) {
-  Data.pq.push(Node{start, 0});
-  Data.dis[start] = 0;
-  while (!Data.pq.empty()) {
-    const auto u = Data.pq.top().idx;
-    Data.pq.pop();
-    if (Data.vis[u]) continue;
-    Data.vis[u] = true;
-    for (uint i = Head[u]; i < Head[u + 1]; ++i) {
-      const auto &e = GHead[i];
-      if (Data.dis[u] + e.w > Data.dis[e.idx]) continue;
-      if (Data.dis[u] + e.w == Data.dis[e.idx]) {
-        ++Data.count[e.idx];
-      } else {
-        Data.count[e.idx] = 1;
-        Data.dis[e.idx] = Data.dis[u] + e.w;
-        Data.pq.push(Node{e.idx, Data.dis[e.idx]});
-      }
-    }
-  }
-}
-void CalAnswer(ThreadData &Data, uint start) {
+void SPFAAnswer(ThreadData &Data, uint start) {
   uint l = 0, r = 0;
-
   std::vector<double> f(g_NodeNum, 0);
   Data.points[++r] = start;
   f[start] = 1;
-
+  // 先计算拓扑序
   while (r > l) {
     int u = Data.points[++l];
     for (uint i = Head[u]; i < Head[u + 1]; ++i) {
       const auto &e = GHead[i];
       if (Data.dis[u] + e.w == Data.dis[e.idx]) {
         if (!--Data.count[e.idx]) Data.points[++r] = e.idx;
-        f[e.idx] += f[u] * e.val;
+        f[e.idx] += f[u];
       }
     }
   }
-
+  // 更新ans
   std::vector<double> g(g_NodeNum, 0);
   for (int p = r; p > 1; --p) {
     uint u = Data.points[p];
     for (uint i = Head[u]; i < Head[u + 1]; ++i) {
       const auto &e = GHead[i];
       if (Data.dis[u] + e.w == Data.dis[e.idx]) {
-        g[u] += g[e.idx] * e.val;
+        g[u] += g[e.idx];
       }
     }
     Data.ans[u] += 1.0 * f[u] * g[u];
     g[u] += (double)(1.0 / f[u]);
   }
 }
+void SPFA(ThreadData &Data, uint start) {
+  Data.q.push(start);
+  Data.vis[start] = true;
+  Data.dis[start] = 0;
+  while (!Data.q.empty()) {
+    const uint u = Data.q.front();
+    Data.q.pop();
+    Data.vis[u] = false;
+    for (uint i = Head[u]; i < Head[u + 1]; ++i) {
+      const auto &e = GHead[i];
+      if (Data.dis[u] + e.w > Data.dis[e.idx]) continue;
+      if (Data.dis[u] + e.w == Data.dis[e.idx]) {
+        ++Data.count[e.idx];  // (dis[u] + w = dis[v]) -> count[v]++;
+      } else {
+        Data.dis[e.idx] = Data.dis[u] + e.w;
+        Data.count[e.idx] = 1;
+        if (!Data.vis[e.idx]) {
+          Data.q.push(e.idx);
+          Data.vis[e.idx] = true;
+        }
+      }
+    }
+  }
+  SPFAAnswer(Data, start);
+}
+void Dijkstra(ThreadData &Data, uint start) {
+  Data.pq.push(Node{start, 0});
+  uint l = 0, r = 0;
+  Data.dis[start] = 0;
+  Data.count[start] = 1;
+  while (!Data.pq.empty()) {
+    const auto u = Data.pq.top().idx;
+    Data.pq.pop();
+    if (Data.vis[u]) continue;
+    Data.vis[u] = true;
+    Data.points[++r] = u;  //拓扑序
+    for (uint i = Head[u]; i < Head[u + 1]; ++i) {
+      const auto &e = GHead[i];
+      if (Data.dis[u] + e.w > Data.dis[e.idx]) continue;
+      if (Data.dis[u] + e.w == Data.dis[e.idx]) {
+        Data.count[e.idx] += Data.count[u];  // s到e.idx的最短路条数
+      } else {
+        Data.count[e.idx] = Data.count[u];
+        Data.dis[e.idx] = Data.dis[u] + e.w;
+        Data.pq.push(Node{e.idx, Data.dis[e.idx]});
+      }
+    }
+  }
+
+  //更新ans
+  std::vector<double> g(g_NodeNum, 0);
+  for (int p = r; p > 1; --p) {
+    uint u = Data.points[p];
+    for (uint i = Head[u]; i < Head[u + 1]; ++i) {
+      const auto &e = GHead[i];
+      if (Data.dis[u] + e.w == Data.dis[e.idx]) {
+        g[u] += g[e.idx];
+      }
+    }
+    Data.ans[u] += 1.0 * Data.count[u] * g[u];
+    g[u] += (double)(1.0 / Data.count[u]);
+  }
+}
+
+// atomic for job
+inline void getJob(uint &job) {
+  static uint l = 0;
+  static std::atomic_flag lock = ATOMIC_FLAG_INIT;
+  while (lock.test_and_set())
+    ;
+  job = l < g_NodeNum ? l++ : -1;
+  lock.clear();
+}
+
+// 1: dijkstra; 2: spfa
+inline uint ChooseStragety(const uint &start) { return random() & 1; }
 
 void HandleSolve(uint pid) {
   auto &Data = TData[pid];
   Data.ans = std::vector<double>(g_NodeNum, 0);
 
-  uint cur = 0;
+  ClearThreadData(Data);
+  uint job = 0;
   while (true) {
-    while (lock.test_and_set())
-      ;
-    cur = job_cur < g_NodeNum ? job_cur++ : -1;
-    lock.clear();
+    getJob(job);
+    if (job == -1) break;
 
-    if (cur == -1) break;
+    uint stragety = ChooseStragety(job);
+
+    if (stragety == 1) {
+      Dijkstra(Data, job);
+    } else {
+      SPFA(Data, job);
+    }
     ClearThreadData(Data);
-    Dijkstra(Data, cur);
-    CalAnswer(Data, cur);
   }
 }
 
