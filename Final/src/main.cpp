@@ -110,11 +110,13 @@ struct HashTable {
 };
 struct DFSEdge {
   uint idx;
-  ulong w, val;  // 边权, 边宽; 目前默认边宽为1，等一手改需求
+  ulong w;
+  // ulong val;  // 边权, 边宽; 目前默认边宽为1，等一手改需求
 };
 struct ReadEdge {
   uint u, v;
-  ulong w, val;  // 边权, 边宽; 目前默认边宽为1，等一手改需求
+  ulong w;
+  // ulong val;  // 边权, 边宽; 目前默认边宽为1，等一手改需求
 };
 struct LoadInfo {
   uint offsz = 0;                     // 线程hashmap偏移
@@ -156,17 +158,16 @@ void InitLoadInfo() {
     }
   }
 };
-void addEdge(const uint &u, const uint &v, const ulong &w, const ulong &val,
-             LoadInfo &data) {
+void addEdge(const uint &u, const uint &v, const ulong &w, LoadInfo &data) {
   uint umod = u % T, vmod = v % T;
-  data.th_edges[umod].emplace_back(ReadEdge{u, v, w, val});
+  data.th_edges[umod].emplace_back(ReadEdge{u, v, w});
   data.th_ids[umod].emplace_back(u);
   data.th_ids[vmod].emplace_back(v);
 }
 void HandleReadBuffer(const char *buffer, uint st, uint ed, uint pid) {
   const char *ptr = buffer + st, *end = buffer + ed;
   uint u = 0, v = 0;
-  ulong w = 0, val = 1;
+  ulong w = 0;
   auto &loadinfo = LoadInfos[pid];
   while (ptr < end) {
     while (*ptr != ',') {
@@ -185,7 +186,7 @@ void HandleReadBuffer(const char *buffer, uint st, uint ed, uint pid) {
     }
     if (*ptr == '\r') ++ptr;
     ++ptr;
-    addEdge(u, v, w, val, loadinfo);
+    addEdge(u, v, w, loadinfo);
     u = v = w = 0;
   }
 }
@@ -325,7 +326,7 @@ void BuildGraphHead(uint pid) {
       }
       ++HeadLen[e.u];
       pre = e.u;
-      GHead[i] = {e.v, e.w, e.val};
+      GHead[i] = {e.v, e.w};
     }
     if (e.v % T == pid) {
       ++BackLen[e.v];
@@ -338,7 +339,7 @@ void BuildGraphBack(uint pid) {
     const auto &e = Edges[i];
     if (e.v % T == pid) {
       auto &p = GBack[Back[e.v] + cnt[e.v]];
-      p = {e.u, e.w, e.val};
+      p = {e.u, e.w};
       ++cnt[e.v];
     }
   }
@@ -373,7 +374,7 @@ void LoadData() {
   for (auto &it : Th) it.join();
 #ifdef LOCAL
   Color::green();
-  printf("@ LoadData: [结点: %d, 边: %d] [cost: %.4fs]\n", g_NodeNum, g_EdgeNum,
+  printf("@ Load: [结点: %d, 边: %d] [cost: %.4fs]\n", g_NodeNum, g_EdgeNum,
          t.elapsed());
   Color::reset();
 #endif
@@ -388,102 +389,46 @@ struct Node {
   bool operator<(const Node &r) const { return val > r.val; }
 };
 struct ThreadData {
-  std::priority_queue<Node> pq;  // 优先队列
-  std::queue<uint> q;            // SPFA
-  std::vector<bool> vis;         // 标记访问
-  std::vector<ulong> dis;        // 最短距离
-  std::vector<uint> count;       // (dis[u] + w == dis[v]) -> count[v]
-  uint points[MAX_NODE];         // 最短路上的点
-  std::vector<double> ans;       // 线程结果
+  uint points[MAX_NODE];
+  double ans[MAX_NODE];
 };
 ThreadData TData[T];       // 线程数据
 std::vector<prud> Answer;  // 最终结果
+
+#define ls (id << 1)
+#define rs ((id << 1) | 1)
+#define mid ((l + r) >> 1)
 
 /*
  * 1. dijkstr寻找最短路
  * 2. 利用拆分的公式计算中心性
  */
-void ClearThreadData(ThreadData &Data) {
-  Data.vis = std::vector<bool>(g_NodeNum);
-  Data.dis = std::vector<ulong>(g_NodeNum, std::numeric_limits<ulong>::max());
-  Data.count = std::vector<uint>(g_NodeNum, 0);
-}
-
-void SPFAAnswer(ThreadData &Data, uint start) {
-  uint l = 0, r = 0;
-  std::vector<double> f(g_NodeNum, 0);
-  Data.points[++r] = start;
-  f[start] = 1;
-  // 先计算拓扑序
-  while (r > l) {
-    int u = Data.points[++l];
-    for (uint i = Head[u]; i < Head[u + 1]; ++i) {
-      const auto &e = GHead[i];
-      if (Data.dis[u] + e.w == Data.dis[e.idx]) {
-        if (!--Data.count[e.idx]) Data.points[++r] = e.idx;
-        f[e.idx] += f[u];
-      }
-    }
-  }
-  // 更新ans
-  std::vector<double> g(g_NodeNum, 0);
-  for (int p = r; p > 1; --p) {
-    uint u = Data.points[p];
-    for (uint i = Head[u]; i < Head[u + 1]; ++i) {
-      const auto &e = GHead[i];
-      if (Data.dis[u] + e.w == Data.dis[e.idx]) {
-        g[u] += g[e.idx];
-      }
-    }
-    Data.ans[u] += 1.0 * f[u] * g[u];
-    g[u] += (double)(1.0 / f[u]);
-  }
-}
-void SPFA(ThreadData &Data, uint start) {
-  Data.q.push(start);
-  Data.vis[start] = true;
-  Data.dis[start] = 0;
-  while (!Data.q.empty()) {
-    const uint u = Data.q.front();
-    Data.q.pop();
-    Data.vis[u] = false;
-    for (uint i = Head[u]; i < Head[u + 1]; ++i) {
-      const auto &e = GHead[i];
-      if (Data.dis[u] + e.w > Data.dis[e.idx]) continue;
-      if (Data.dis[u] + e.w == Data.dis[e.idx]) {
-        ++Data.count[e.idx];  // (dis[u] + w = dis[v]) -> count[v]++;
-      } else {
-        Data.dis[e.idx] = Data.dis[u] + e.w;
-        Data.count[e.idx] = 1;
-        if (!Data.vis[e.idx]) {
-          Data.q.push(e.idx);
-          Data.vis[e.idx] = true;
-        }
-      }
-    }
-  }
-  SPFAAnswer(Data, start);
-}
 void Dijkstra(ThreadData &Data, uint start) {
-  Data.pq.push(Node{start, 0});
-  uint l = 0, r = 0;
-  Data.dis[start] = 0;
-  Data.count[start] = 1;
-  while (!Data.pq.empty()) {
-    const auto u = Data.pq.top().idx;
-    Data.pq.pop();
-    if (Data.vis[u]) continue;
-    Data.vis[u] = true;
+  std::priority_queue<Node> pq;
+  std::vector<bool> vis(g_NodeNum, false);
+  std::vector<ulong> dis(g_NodeNum, std::numeric_limits<ulong>::max());
+  std::vector<uint> count(g_NodeNum, 0);
+
+  pq.push(Node{start, 0});
+  dis[start] = 0;
+  count[start] = 1;
+
+  uint r = 0;
+  while (!pq.empty()) {
+    const auto u = pq.top().idx;
+    pq.pop();
+    if (vis[u]) continue;
+    vis[u] = true;
     Data.points[++r] = u;  //拓扑序
     for (uint i = Head[u]; i < Head[u + 1]; ++i) {
       const auto &e = GHead[i];
-      if (Data.dis[u] + e.w > Data.dis[e.idx]) continue;
-      if (Data.dis[u] + e.w == Data.dis[e.idx]) {
-        Data.count[e.idx] += Data.count[u];  // s到e.idx的最短路条数
+      if (dis[u] + e.w > dis[e.idx]) continue;
+      if (dis[u] + e.w == dis[e.idx]) {
+        count[e.idx] += count[u];  // s到e.idx的最短路条数
       } else {
-        Data.count[e.idx] = Data.count[u];
-        Data.dis[e.idx] = Data.dis[u] + e.w;
-        Data.pq.push(Node{e.idx, Data.dis[e.idx]});
+        count[e.idx] = count[u];
+        dis[e.idx] = dis[u] + e.w;
+        pq.push(Node{e.idx, dis[e.idx]});
       }
     }
   }
@@ -494,12 +439,12 @@ void Dijkstra(ThreadData &Data, uint start) {
     uint u = Data.points[p];
     for (uint i = Head[u]; i < Head[u + 1]; ++i) {
       const auto &e = GHead[i];
-      if (Data.dis[u] + e.w == Data.dis[e.idx]) {
+      if (dis[u] + e.w == dis[e.idx]) {
         g[u] += g[e.idx];
       }
     }
-    Data.ans[u] += 1.0 * Data.count[u] * g[u];
-    g[u] += (double)(1.0 / Data.count[u]);
+    Data.ans[u] += 1.0 * count[u] * g[u];
+    g[u] += (double)(1.0 / count[u]);
   }
 }
 
@@ -513,27 +458,13 @@ inline void getJob(uint &job) {
   lock.clear();
 }
 
-// 1: dijkstra; 2: spfa
-inline uint ChooseStragety(const uint &start) { return random() & 1; }
-
 void HandleSolve(uint pid) {
   auto &Data = TData[pid];
-  Data.ans = std::vector<double>(g_NodeNum, 0);
-
-  ClearThreadData(Data);
   uint job = 0;
   while (true) {
     getJob(job);
     if (job == -1) break;
-
-    uint stragety = ChooseStragety(job);
-
-    if (stragety == 1) {
-      Dijkstra(Data, job);
-    } else {
-      SPFA(Data, job);
-    }
-    ClearThreadData(Data);
+    Dijkstra(Data, job);
   }
 }
 
@@ -557,7 +488,7 @@ void Solve() {
 
 #ifdef LOCAL
   Color::magenta();
-  printf("@ Solve: [dijkstra] [cost: %.4fs]\n", t.elapsed());
+  printf("@ Find: [cost: %.4fs]\n", t.elapsed());
   Color::reset();
 #endif
 }
@@ -575,7 +506,7 @@ void SaveAnswer() {
 
   uint up = g_NodeNum > 100 ? 100 : g_NodeNum;
 
-  char *buffer = new char[50 * 100];
+  char *buffer = new char[100 * 100];
   char *ptr = buffer;
 
   for (uint i = 0; i < up; ++i) {
@@ -589,7 +520,7 @@ void SaveAnswer() {
 
 #ifdef LOCAL
   Color::magenta();
-  printf("@ Save: [sort and save] [cost: %.4fs]\n", t.elapsed());
+  printf("@ Save: [cost: %.4fs]\n", t.elapsed());
   Color::reset();
 #endif
 }
