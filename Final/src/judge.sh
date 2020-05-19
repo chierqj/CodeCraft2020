@@ -9,11 +9,17 @@ RES='\033[0m'  # 清除颜色
 
 
 test_file[0]="../data/std/test_data.txt"
-test_file[1]="../data/gen/test_data.txt"
+test_file[1]="../data/data1/test_data.txt"
+test_file[2]="../data/data2/test_data.txt"
+test_file[3]="../data/data3/test_data.txt"
+test_file[4]="../data/data4/test_data.txt"
 
 
 answer_file[0]="../data/std/answer.txt"
-answer_file[1]="../data/gen/answer.txt"
+answer_file[1]="../data/data1/answer.txt"
+answer_file[2]="../data/data2/answer.txt"
+answer_file[3]="../data/data3/answer.txt"
+answer_file[4]="../data/data4/answer.txt"
 
 
 g++ -std=c++11 -O3 $1 -o main -lpthread -fpic
