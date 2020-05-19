@@ -30,8 +30,8 @@
 #define P10(x) ((x << 3) + (x << 1))
 
 #ifdef LOCAL
-#define TRAIN "../data/data2/test_data.txt"
-#define RESULT "../data/data2/result.txt"
+#define TRAIN "../data/data4/test_data.txt"
+#define RESULT "../data/data4/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -80,10 +80,10 @@ struct HashTable {
     uint key;
     int val = -1;
   };
-  uint count = 0;
+  uint m_count = 0;
   Data Map[MOD1];
   uint HashIdx[MOD1];
-  uint Size() { return count; }
+  uint Size() { return m_count; }
   uint hash(const uint &k, const int &i) {
     return (k % MOD1 + i * (MOD2 - k % MOD2)) % MOD1;
   }
@@ -92,8 +92,8 @@ struct HashTable {
       const uint &val = this->hash(key, i);
       if (Map[val].val == -1) {
         Map[val].key = key;
-        Map[val].val = count;
-        HashIdx[count++] = val;
+        Map[val].val = m_count;
+        HashIdx[m_count++] = val;
         break;
       }
       if (Map[val].key == key) break;
@@ -239,10 +239,10 @@ void MergeSortIdAndEdge(uint pid) {
 void HashIds(uint pid) {
   auto &data = LoadInfos[pid];
   if (data.ids.empty()) return;
-  uint pre = data.ids[0] + 7;
+  uint m_pre = data.ids[0] + 7;
   for (auto &v : data.ids) {
-    if (v == pre) continue;
-    pre = v;
+    if (v == m_pre) continue;
+    m_pre = v;
     data.hashmap.Insert(v);
   }
 }
@@ -317,15 +317,15 @@ void MergeEdge() {
   g_EdgeNum = ptr - Edges;
 }
 void BuildGraphHead(uint pid) {
-  uint pre = g_NodeNum + 7;
+  uint m_pre = g_NodeNum + 7;
   for (uint i = 0; i < g_EdgeNum; ++i) {
     const auto &e = Edges[i];
     if (e.u % T == pid) {
-      if (e.u != pre) {
+      if (e.u != m_pre) {
         Head[e.u] = i;
       }
       ++HeadLen[e.u];
-      pre = e.u;
+      m_pre = e.u;
       GHead[i] = {e.v, e.w};
     }
     if (e.v % T == pid) {
@@ -382,230 +382,148 @@ void LoadData() {
 /************************** LoadData End ****************************/
 
 /************************** Algorithm Start ****************************/
-struct SegmentTree {
-#define ls (id << 1)
-#define rs ((id << 1) | 1)
-#define mid ((l + r) >> 1)
-  ulong node[MAX_NODE << 2];
-  void push_up(uint id, uint l, uint r) {
-    node[id] = std::min(node[ls], node[rs]);
-  }
-  void build(uint id, uint l, uint r) {
-    if (l == r) {
-      node[id] = UINT64_MAX;
-      return;
-    }
-    build(ls, l, mid);
-    build(rs, mid + 1, r);
-    push_up(id, l, r);
-  }
-  void update(uint id, uint l, uint r, uint p, ulong val) {
-    if (l == r && l == p) {
-      node[id] = val;
-      return;
-    }
-    if (p <= mid) {
-      update(ls, l, mid, p, val);
-    } else {
-      update(rs, mid + 1, r, p, val);
-    }
-    push_up(id, l, r);
-  }
-  uint query(uint id, uint l, uint r) {
-    if (l == r) return l;
-    if (node[ls] < node[rs]) return query(ls, l, mid);
-    return query(rs, mid + 1, r);
-  }
-};
-struct Heap {
-  // head[0]表示Heap的大小
-  // id表示节点在heap中存放的位置
-  std::vector<uint> head, id;
-  std::vector<ulong> dis;  //最短路
-  inline void init(uint maxn) {
-    id = std::vector<uint>(maxn, 0);
-    dis = std::vector<ulong>(maxn, std::numeric_limits<ulong>::max());
-  }
-  inline void up(uint x) {
-    for (uint i = x, j = x >> 1; j; i = j, j >>= 1) {
-      if (dis[head[i]] < dis[head[j]]) {
-        std::swap(head[i], head[j]), std::swap(id[head[i]], id[head[j]]);
-      } else
-        break;
-    }
-    return;
-  }
-  inline void push(uint x) {
-    head[++head[0]] = x;
-    id[x] = head[0];
-    up(head[0]);
-  }
-  inline void pop() {
-    id[head[1]] = 0;
-    id[head[head[0]]] = 1;
-    head[1] = head[head[0]--];
-    for (uint i = 1, j = 2; j <= head[0]; i = j, j <<= 1) {
-      if (dis[head[j + 1]] < dis[head[j]]) ++j;
-      if (dis[head[i]] > dis[head[j]]) {
-        std::swap(head[i], head[j]), std::swap(id[head[i]], id[head[j]]);
-      } else
-        break;
-    }
-    return;
-  }
-};
-
-typedef std::pair<uint, double> prud;
-struct Node {
-  uint idx;   // 结点id
-  ulong val;  // dis[idx]
-  bool operator<(const Node &r) const { return val > r.val; }
-};
-struct ThreadData {
-  uint points[MAX_NODE];
-  double ans[MAX_NODE];
-  Heap heap;
-};
-ThreadData TData[T];       // 线程数据
-std::vector<prud> Answer;  // 最终结果
 /*
  * 1. dijkstr寻找最短路
  * 2. 利用拆分的公式计算中心性
  */
-void DijkstraWithSegmentTree(ThreadData &Data, uint start) {
-  SegmentTree *seg = new SegmentTree;
-  seg->build(1, 1, g_NodeNum + 1);
-  seg->update(1, 1, g_NodeNum + 1, start + 1, 0);
-  std::vector<ulong> dis(g_NodeNum, UINT64_MAX);
-  std::vector<uint> count(g_NodeNum, 0);
-
-  dis[start] = 0;
-  count[start] = 1;
-
-  uint r = 0;
-  while (seg->node[1] != UINT64_MAX) {
-    uint u = seg->query(1, 1, g_NodeNum + 1);
-    seg->update(1, 1, g_NodeNum + 1, u, UINT64_MAX);
-    --u;
-    Data.points[++r] = u;  //拓扑序
-    for (uint i = Head[u]; i < Head[u + 1]; ++i) {
-      const auto &e = GHead[i];
-      if (dis[u] + e.w > dis[e.idx]) continue;
-      if (dis[u] + e.w == dis[e.idx]) {
-        count[e.idx] += count[u];  // s到e.idx的最短路条数
-      } else {
-        count[e.idx] = count[u];
-        dis[e.idx] = dis[u] + e.w;
-        seg->update(1, 1, g_NodeNum + 1, e.idx + 1, dis[e.idx]);
-      }
+class Solver {
+ private:
+  void update(uint x) {
+    for (uint i = x, j = x >> 1; j; i = j, j >>= 1) {
+      if (m_dis[m_head[i]] >= m_dis[m_head[j]]) return;
+      std::swap(m_head[i], m_head[j]),
+          std::swap(m_id[m_head[i]], m_id[m_head[j]]);
     }
   }
-  delete seg;
-
-  //更新ans
-  std::vector<double> g(g_NodeNum, 0);
-  for (int p = r; p > 1; --p) {
-    uint u = Data.points[p];
-    for (uint i = Head[u]; i < Head[u + 1]; ++i) {
-      const auto &e = GHead[i];
-      if (dis[u] + e.w == dis[e.idx]) {
-        g[u] += g[e.idx];
-      }
-    }
-    Data.ans[u] += 1.0 * count[u] * g[u];
-    g[u] += (double)(1.0 / count[u]);
+  void push(uint x) {
+    m_head[++m_head[0]] = x;
+    m_id[x] = m_head[0];
+    update(m_head[0]);
   }
-}
-void DijkstraWithHeap(ThreadData &Data, uint start) {
-  auto &pq = Data.heap;
-  pq.init(g_NodeNum);
+  void pop() {
+    m_id[m_head[1]] = 0;
+    m_id[m_head[m_head[0]]] = 1;
+    m_head[1] = m_head[m_head[0]--];
+    for (uint i = 1, j = 2; j <= m_head[0]; i = j, j <<= 1) {
+      if (m_dis[m_head[j + 1]] < m_dis[m_head[j]]) ++j;
+      if (m_dis[m_head[i]] <= m_dis[m_head[j]]) return;
+      std::swap(m_head[i], m_head[j]),
+          std::swap(m_id[m_head[i]], m_id[m_head[j]]);
+    }
+  }
 
-  std::vector<uint> count(g_NodeNum, 0);
-
-  pq.dis[start] = 0;
-  pq.push(start);
-  count[start] = 1;
-
-  uint r = 0;
-  while (pq.head[0]) {
-    const auto u = pq.head[1];
-    pq.pop();
-    Data.points[++r] = u;  //拓扑序
-    for (uint i = Head[u]; i < Head[u + 1]; ++i) {
-      const auto &e = GHead[i];
-      if (pq.dis[u] + e.w > pq.dis[e.idx]) continue;
-      if (pq.dis[u] + e.w == pq.dis[e.idx]) {
-        count[e.idx] += count[u];  // s到e.idx的最短路条数
-      } else {
-        count[e.idx] = count[u];
-        pq.dis[e.idx] = pq.dis[u] + e.w;
-        if (!pq.id[e.idx]) {
-          pq.push(e.idx);
+ public:
+  void Initialize() {
+    m_head = std::vector<uint>(g_NodeNum, 0);
+    m_g = std::vector<double>(g_NodeNum, 0);
+    m_count = std::vector<uint>(g_NodeNum, 0);
+    m_points = std::vector<uint>(g_NodeNum + 7, 0);
+    m_ans = std::vector<double>(g_NodeNum, 0);
+  }
+  void clear() {
+    m_pointNum = 0;
+    m_id = std::vector<uint>(g_NodeNum, 0);
+    m_dis = std::vector<ulong>(g_NodeNum, UINT64_MAX);
+    m_pre = std::vector<std::vector<uint>>(g_NodeNum);
+  }
+  void GetAnswer() {
+    std::vector<std::vector<uint>> newHead(g_NodeNum);
+    for (uint i = 0; i < g_NodeNum; ++i) {
+      for (auto &v : m_pre[i]) newHead[v].emplace_back(i);
+    }
+    for (uint p = m_pointNum; p > 1; --p) {
+      const uint &u = m_points[p];
+      for (const auto &v : newHead[u]) {
+        m_g[u] += m_g[v];
+      }
+      m_ans[u] += m_g[u] * m_count[u];
+      m_g[u] += (double)(1.0 / m_count[u]);
+    }
+  }
+  void DijkstraWithHeap(uint start) {
+    this->clear();
+    m_dis[start] = 0;
+    this->push(start);
+    m_count[start] = 1;
+    m_pointNum = 0;
+    while (m_head[0]) {
+      const auto u = m_head[1];
+      m_g[u] = 0;
+      this->pop();
+      m_points[++m_pointNum] = u;  //拓扑序
+      for (uint i = Head[u]; i < Head[u + 1]; ++i) {
+        const auto &e = GHead[i];
+        if (m_dis[u] + e.w > m_dis[e.idx]) continue;
+        if (m_dis[u] + e.w == m_dis[e.idx]) {
+          m_count[e.idx] += m_count[u];  // s到e.idx的最短路条数
+          m_pre[e.idx].emplace_back(u);
         } else {
-          pq.up(pq.id[e.idx]);
+          m_count[e.idx] = m_count[u];
+          m_dis[e.idx] = m_dis[u] + e.w;
+          if (!m_id[e.idx]) {
+            this->push(e.idx);
+          } else {
+            this->update(m_id[e.idx]);
+          }
+          m_pre[e.idx] = {u};
         }
       }
     }
+    this->GetAnswer();
   }
+  void Dijkstra(uint start) {
+    this->clear();
 
-  std::vector<double> g(g_NodeNum, 0);
-  //更新ans
-  for (uint p = r; p > 1; --p) {
-    const uint &u = Data.points[p];
-    for (uint i = Head[u]; i < Head[u + 1]; ++i) {
-      const auto &e = GHead[i];
-      if (pq.dis[u] + e.w == pq.dis[e.idx]) {
-        g[u] += g[e.idx];
+    struct Node {
+      uint idx;
+      ulong val;
+      bool operator<(const Node &r) const { return val > r.val; }
+    };
+    std::priority_queue<Node> pq;
+    std::vector<bool> vis(g_NodeNum, false);
+
+    pq.push(Node{start, 0});
+    m_dis[start] = 0;
+    m_count[start] = 1;
+
+    while (!pq.empty()) {
+      const auto u = pq.top().idx;
+      pq.pop();
+      if (vis[u]) continue;
+      vis[u] = true;
+      m_g[u] = 0;
+      m_points[++m_pointNum] = u;  //拓扑序
+      for (uint i = Head[u]; i < Head[u + 1]; ++i) {
+        const auto &e = GHead[i];
+        if (m_dis[u] + e.w > m_dis[e.idx]) continue;
+        if (m_dis[u] + e.w == m_dis[e.idx]) {
+          m_count[e.idx] += m_count[u];  // s到e.idx的最短路条数
+          m_pre[e.idx].emplace_back(u);
+        } else {
+          m_count[e.idx] = m_count[u];
+          m_dis[e.idx] = m_dis[u] + e.w;
+          pq.push(Node{e.idx, m_dis[e.idx]});
+          m_pre[e.idx] = {u};
+        }
       }
     }
-    Data.ans[u] += g[u] * count[u];
-    g[u] += (double)(1.0 / count[u]);
-  }
-}
-void Dijkstra(ThreadData &Data, uint start) {
-  std::priority_queue<Node> pq;
-  std::vector<bool> vis(g_NodeNum, false);
-  std::vector<ulong> dis(g_NodeNum, UINT64_MAX);
-  std::vector<uint> count(g_NodeNum, 0);
 
-  pq.push(Node{start, 0});
-  dis[start] = 0;
-  count[start] = 1;
-
-  uint r = 0;
-  while (!pq.empty()) {
-    const auto u = pq.top().idx;
-    pq.pop();
-    if (vis[u]) continue;
-    vis[u] = true;
-    Data.points[++r] = u;  //拓扑序
-    for (uint i = Head[u]; i < Head[u + 1]; ++i) {
-      const auto &e = GHead[i];
-      if (dis[u] + e.w > dis[e.idx]) continue;
-      if (dis[u] + e.w == dis[e.idx]) {
-        count[e.idx] += count[u];  // s到e.idx的最短路条数
-      } else {
-        count[e.idx] = count[u];
-        dis[e.idx] = dis[u] + e.w;
-        pq.push(Node{e.idx, dis[e.idx]});
-      }
-    }
+    this->GetAnswer();
   }
 
-  //更新ans
-  std::vector<double> g(g_NodeNum, 0);
-  for (int p = r; p > 1; --p) {
-    uint u = Data.points[p];
-    for (uint i = Head[u]; i < Head[u + 1]; ++i) {
-      const auto &e = GHead[i];
-      if (dis[u] + e.w == dis[e.idx]) {
-        g[u] += g[e.idx];
-      }
-    }
-    Data.ans[u] += 1.0 * count[u] * g[u];
-    g[u] += (double)(1.0 / count[u]);
-  }
-}
+ public:
+  std::vector<uint> m_head;              // for heap
+  std::vector<uint> m_id;                // for heap
+  std::vector<ulong> m_dis;              // 最短距离
+  uint m_pointNum = 0;                   // 拓扑点数目
+  std::vector<uint> m_points;            // 拓扑点
+  std::vector<uint> m_count;             // 最短路径数目
+  std::vector<double> m_g;               // m_g value
+  std::vector<double> m_ans;             // 保存答案
+  std::vector<std::vector<uint>> m_pre;  // 前驱集合
+};
+
+Solver ThSolvers[T];
 
 // atomic for job
 inline void getJob(uint &job) {
@@ -617,39 +535,62 @@ inline void getJob(uint &job) {
   lock.clear();
 }
 
-void HandleSolve(uint pid) {
-  auto &Data = TData[pid];
-  Data.heap.head = std::vector<uint>(g_NodeNum);
+void printProcess(const uint &job) {
+  static char bar[102];
+  const char *lable = "|/-\\";
+  double a = job, b = g_NodeNum - 1;
+  double val = a / b;
+  uint v = val * 100;
+  bar[v] = '#';
+  Color::magenta();
+  printf("[%-100s][%d%%][%c]\r", bar, v, lable[v % 4]);
+  if (job == g_NodeNum - 1) {
+    std::cerr << "\n";
+    Color::reset();
+    return;
+  }
+  fflush(stdout);
+  Color::reset();
+}
+void FindTask(uint pid) {
+  auto &solver = ThSolvers[pid];
+  solver.Initialize();
   uint job = 0;
   while (true) {
     getJob(job);
     if (job == -1) break;
-    // Dijkstra(Data, job);
-    // DijkstraWithSegmentTree(Data, job);
-    DijkstraWithHeap(Data, job);
+
+    solver.DijkstraWithHeap(job);
+    // solver.Dijkstra(job);
+
+#ifdef LOCAL
+    printProcess(job);
+#endif
   }
 }
 
-void Solve() {
+typedef std::pair<uint, double> prud;
+std::vector<prud> Answer;  // 最终结果
+void Find() {
 #ifdef LOCAL
   Timer t;
 #endif
 
   std::thread Th[T];
-  for (uint i = 0; i < T; ++i) Th[i] = std::thread(HandleSolve, i);
+  for (uint i = 0; i < T; ++i) Th[i] = std::thread(FindTask, i);
   for (auto &it : Th) it.join();
 
   Answer = std::vector<prud>(g_NodeNum);
   for (uint i = 0; i < g_NodeNum; ++i) {
     Answer[i].first = IDDom[i];
     Answer[i].second = 0;
-    for (const auto &data : TData) {
-      Answer[i].second += data.ans[i];
+    for (const auto &data : ThSolvers) {
+      Answer[i].second += data.m_ans[i];
     }
   }
 
 #ifdef LOCAL
-  Color::magenta();
+  Color::green();
   printf("@ Find: [cost: %.4fs]\n", t.elapsed());
   Color::reset();
 #endif
@@ -681,7 +622,7 @@ void SaveAnswer() {
   fclose(fp);
 
 #ifdef LOCAL
-  Color::magenta();
+  Color::green();
   printf("@ Save: [cost: %.4fs]\n", t.elapsed());
   Color::reset();
 #endif
@@ -691,7 +632,7 @@ int main() {
   std::cerr << std::fixed << std::setprecision(3);
 
   LoadData();
-  Solve();
+  Find();
   SaveAnswer();
 
   return 0;
