@@ -19,9 +19,9 @@ using namespace std;
 #ifdef LOCAL
 
 #include <sys/time.h>
-#define TESTFILE "/data/tiny/test_data.txt"
+#define TESTFILE "../data/data11/test_data.txt"
 //#define TESTFILE "/data/1w/test_data.txt"
-#define RESULT "/tmp/result.txt"
+#define RESULT "../data/data11/result.txt"
 #else
 #define TESTFILE "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -145,6 +145,7 @@ uint g_find_num = 0;
 
 /**读数据*/
 void addEdge(uint x, uint y, ulong w, WorkerLoadInfo &data) {
+  if (w == 0) return;
   uint mod_x_pid = x % kThreadNum;
   RawEdge &e = data.mod_edge[mod_x_pid][data.mod_edge_num[mod_x_pid]];
   e.u = x;

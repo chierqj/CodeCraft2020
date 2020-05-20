@@ -159,6 +159,7 @@ void InitLoadInfo() {
   }
 };
 void addEdge(const uint &u, const uint &v, const ulong &w, LoadInfo &data) {
+  if (w == 0) return;
   uint umod = u % T, vmod = v % T;
   data.th_edges[umod].emplace_back(ReadEdge{u, v, w});
   data.th_ids[umod].emplace_back(u);
@@ -426,7 +427,8 @@ class Solver {
     m_dis = std::vector<ulong>(g_NodeNum, UINT64_MAX);
     m_pre = std::vector<std::vector<uint>>(g_NodeNum);
   }
-  void GetAnswer() {
+  // 记录前驱计算答案
+  void GetAnswerWithPre() {
     std::vector<std::vector<uint>> newHead(g_NodeNum);
     for (uint i = 0; i < g_NodeNum; ++i) {
       for (auto &v : m_pre[i]) newHead[v].emplace_back(i);
@@ -440,7 +442,22 @@ class Solver {
       m_g[u] += (double)(1.0 / (double)(m_count[u]));
     }
   }
-  void DijkstraWithHeap(uint start) {
+  // 不记录前驱计算答案
+  void GetAnswer() {
+    for (uint p = m_pointNum; p > 1; --p) {
+      const uint &u = m_points[p];
+      for (uint i = Head[u]; i < Head[u + 1]; ++i) {
+        const auto &e = GHead[i];
+        if (m_dis[u] + e.w == m_dis[e.idx]) {
+          m_g[u] += m_g[e.idx];
+        }
+      }
+      m_ans[u] += (double)(m_g[u] * (double)m_count[u]);
+      m_g[u] += (double)(1.0 / (double)(m_count[u]));
+    }
+  }
+  // 手写堆记录前驱
+  void DijkstraWithHeapAndPre(uint start) {
     this->clear();
     m_dis[start] = 0;
     this->push(start);
@@ -469,11 +486,41 @@ class Solver {
         }
       }
     }
+    this->GetAnswerWithPre();
+  }
+  // 手写堆不记录前驱
+  void DijkstraWithHeap(uint start) {
+    this->clear();
+    m_dis[start] = 0;
+    this->push(start);
+    m_count[start] = 1;
+    m_pointNum = 0;
+    while (m_head[0]) {
+      const auto u = m_head[1];
+      m_g[u] = 0;
+      this->pop();
+      m_points[++m_pointNum] = u;  //拓扑序
+      for (uint i = Head[u]; i < Head[u + 1]; ++i) {
+        const auto &e = GHead[i];
+        if (m_dis[u] + e.w > m_dis[e.idx]) continue;
+        if (m_dis[u] + e.w == m_dis[e.idx]) {
+          m_count[e.idx] += m_count[u];  // s到e.idx的最短路条数
+        } else {
+          m_count[e.idx] = m_count[u];
+          m_dis[e.idx] = m_dis[u] + e.w;
+          if (!m_id[e.idx]) {
+            this->push(e.idx);
+          } else {
+            this->update(m_id[e.idx]);
+          }
+        }
+      }
+    }
     this->GetAnswer();
   }
-  void Dijkstra(uint start) {
+  // stl优先队列记录前驱
+  void DijkstraWithPre(uint start) {
     this->clear();
-
     struct Node {
       uint idx;
       ulong val;
@@ -508,6 +555,42 @@ class Solver {
       }
     }
 
+    this->GetAnswerWithPre();
+  }
+  // stl优先队列不记录前驱
+  void Dijkstra(uint start) {
+    this->clear();
+    struct Node {
+      uint idx;
+      ulong val;
+      bool operator<(const Node &r) const { return val > r.val; }
+    };
+    std::priority_queue<Node> pq;
+    std::vector<bool> vis(g_NodeNum, false);
+
+    pq.push(Node{start, 0});
+    m_dis[start] = 0;
+    m_count[start] = 1;
+
+    while (!pq.empty()) {
+      const auto u = pq.top().idx;
+      pq.pop();
+      if (vis[u]) continue;
+      vis[u] = true;
+      m_g[u] = 0;
+      m_points[++m_pointNum] = u;  //拓扑序
+      for (uint i = Head[u]; i < Head[u + 1]; ++i) {
+        const auto &e = GHead[i];
+        if (m_dis[u] + e.w > m_dis[e.idx]) continue;
+        if (m_dis[u] + e.w == m_dis[e.idx]) {
+          m_count[e.idx] += m_count[u];  // s到e.idx的最短路条数
+        } else {
+          m_count[e.idx] = m_count[u];
+          m_dis[e.idx] = m_dis[u] + e.w;
+          pq.push(Node{e.idx, m_dis[e.idx]});
+        }
+      }
+    }
     this->GetAnswer();
   }
 
@@ -561,8 +644,10 @@ void FindTask(uint pid) {
     getJob(job);
     if (job == -1) break;
 
-    solver.DijkstraWithHeap(job);
-    // solver.Dijkstra(job);
+    solver.DijkstraWithHeap(job);  // 手写堆不记录前驱
+    // solver.DijkstraWithHeapAndPre(job);  // 手写堆记录前驱
+    // solver.Dijkstra(job);                // stl优先队列不记录前驱
+    // solver.DijkstraWithPre(job);         // stl优先队列记录前驱
 
 #ifdef DEBUG
     printProcess(job);
