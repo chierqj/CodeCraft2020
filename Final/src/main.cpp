@@ -30,8 +30,8 @@
 #define P10(x) ((x << 3) + (x << 1))
 
 #ifdef LOCAL
-#define TRAIN "../data/data4/test_data.txt"
-#define RESULT "../data/data4/result.txt"
+#define TRAIN "../data/data11/test_data.txt"
+#define RESULT "../data/data11/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -436,8 +436,8 @@ class Solver {
       for (const auto &v : newHead[u]) {
         m_g[u] += m_g[v];
       }
-      m_ans[u] += m_g[u] * m_count[u];
-      m_g[u] += (double)(1.0 / m_count[u]);
+      m_ans[u] += (double)(m_g[u] * (double)m_count[u]);
+      m_g[u] += (double)(1.0 / (double)(m_count[u]));
     }
   }
   void DijkstraWithHeap(uint start) {
@@ -551,6 +551,7 @@ void printProcess(const uint &job) {
   }
   fflush(stdout);
   Color::reset();
+  usleep(10);
 }
 void FindTask(uint pid) {
   auto &solver = ThSolvers[pid];
@@ -563,7 +564,7 @@ void FindTask(uint pid) {
     solver.DijkstraWithHeap(job);
     // solver.Dijkstra(job);
 
-#ifdef LOCAL
+#ifdef DEBUG
     printProcess(job);
 #endif
   }

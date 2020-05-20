@@ -596,8 +596,8 @@ void findAtDijkstra(uint s, WorkerFindInfo &info) {
     for (uint i = g_out_list[u]; i < g_out_list[u + 1]; ++i) {
       const BriefEdge &e = g_edge[i];
       const uint v = e.v;
-      const uint w = e.w;
-      uint new_dist = dist[u] + w;
+      const ulong w = e.w;
+      ulong new_dist = dist[u] + w;
       if (new_dist < dist[v]) {
         dist[v] = new_dist;
         prev[v] = {u};
@@ -668,7 +668,8 @@ void findShortestPath(uint pid) {
     next_node = g_find_num < g_node_num ? g_find_num++ : g_node_num;
     g_find_lock.clear();
     if (next_node >= g_node_num) break;
-    if (next_node % 1000 == 0) printf("%d\n", next_node);
+    // if (next_node % 1000 == 0)
+    // printf("%d\n", next_node);
     // findAtSPFA(next_node, w_find_info[pid]);
     findAtDijkstra(next_node, w_find_info[pid]);
   }
