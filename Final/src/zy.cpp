@@ -19,9 +19,9 @@ using namespace std;
 #ifdef LOCAL
 
 #include <sys/time.h>
-#define TESTFILE "../data/data11/test_data.txt"
+#define TESTFILE "../data/gen/test_data.txt"
 //#define TESTFILE "/data/1w/test_data.txt"
-#define RESULT "../data/data11/result.txt"
+#define RESULT "../data/gen/result.txt"
 #else
 #define TESTFILE "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"

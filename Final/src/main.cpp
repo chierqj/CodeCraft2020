@@ -30,8 +30,8 @@
 #define P10(x) ((x << 3) + (x << 1))
 
 #ifdef LOCAL
-#define TRAIN "../data/data11/test_data.txt"
-#define RESULT "../data/data11/result.txt"
+#define TRAIN "../data/gen/test_data.txt"
+#define RESULT "../data/gen/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -389,14 +389,14 @@ void LoadData() {
  */
 class Solver {
  private:
-  void update(uint x) {
+  void update(const uint &x) {
     for (uint i = x, j = x >> 1; j; i = j, j >>= 1) {
       if (m_dis[m_head[i]] >= m_dis[m_head[j]]) return;
-      std::swap(m_head[i], m_head[j]),
-          std::swap(m_id[m_head[i]], m_id[m_head[j]]);
+      std::swap(m_head[i], m_head[j]);
+      std::swap(m_id[m_head[i]], m_id[m_head[j]]);
     }
   }
-  void push(uint x) {
+  void push(const uint &x) {
     m_head[++m_head[0]] = x;
     m_id[x] = m_head[0];
     update(m_head[0]);
@@ -408,28 +408,42 @@ class Solver {
     for (uint i = 1, j = 2; j <= m_head[0]; i = j, j <<= 1) {
       if (m_dis[m_head[j + 1]] < m_dis[m_head[j]]) ++j;
       if (m_dis[m_head[i]] <= m_dis[m_head[j]]) return;
-      std::swap(m_head[i], m_head[j]),
-          std::swap(m_id[m_head[i]], m_id[m_head[j]]);
+      std::swap(m_head[i], m_head[j]);
+      std::swap(m_id[m_head[i]], m_id[m_head[j]]);
     }
   }
 
  public:
   void Initialize() {
-    m_head = std::vector<uint>(g_NodeNum, 0);
-    m_g = std::vector<double>(g_NodeNum, 0);
-    m_count = std::vector<uint>(g_NodeNum, 0);
-    m_points = std::vector<uint>(g_NodeNum + 7, 0);
-    m_ans = std::vector<double>(g_NodeNum, 0);
+    for (uint i = 0; i < g_NodeNum; ++i) {
+      m_head[i] = 0;
+      m_count[i] = 0;
+      m_ans[i] = 0;
+      m_id[i] = 0;
+      m_dis[i] = UINT64_MAX;
+      m_g[i] = 0;
+    }
+  }
+  void clearPre() {
+    m_pointNum = 0;
+    for (uint i = 0; i < m_pointNum; ++i) {
+      m_id[i] = 0;
+      m_dis[i] = UINT64_MAX;
+      m_g[i] = 0;
+      m_pre[i].resize(0);
+    }
   }
   void clear() {
     m_pointNum = 0;
-    m_id = std::vector<uint>(g_NodeNum, 0);
-    m_dis = std::vector<ulong>(g_NodeNum, UINT64_MAX);
-    m_pre = std::vector<std::vector<uint>>(g_NodeNum);
+    for (uint i = 0; i < g_NodeNum; ++i) {
+      m_id[i] = 0;
+      m_dis[i] = UINT64_MAX;
+      m_g[i] = 0;
+    }
   }
   // 记录前驱计算答案
   void GetAnswerWithPre() {
-    std::vector<std::vector<uint>> newHead(g_NodeNum);
+    std::vector<uint> newHead[g_NodeNum];
     for (uint i = 0; i < g_NodeNum; ++i) {
       for (auto &v : m_pre[i]) newHead[v].emplace_back(i);
     }
@@ -446,10 +460,10 @@ class Solver {
   void GetAnswer() {
     for (uint p = m_pointNum; p > 1; --p) {
       const uint &u = m_points[p];
-      for (uint i = Head[u]; i < Head[u + 1]; ++i) {
-        const auto &e = GHead[i];
-        if (m_dis[u] + e.w == m_dis[e.idx]) {
-          m_g[u] += m_g[e.idx];
+      const DFSEdge *e = &GHead[Head[u]];
+      for (uint i = Head[u]; i < Head[u + 1]; ++i, ++e) {
+        if (m_dis[u] + e->w == m_dis[e->idx]) {
+          m_g[u] += m_g[e->idx];
         }
       }
       m_ans[u] += (double)(m_g[u] * (double)m_count[u]);
@@ -458,14 +472,12 @@ class Solver {
   }
   // 手写堆记录前驱
   void DijkstraWithHeapAndPre(uint start) {
-    this->clear();
+    this->clearPre();
     m_dis[start] = 0;
     this->push(start);
     m_count[start] = 1;
-    m_pointNum = 0;
     while (m_head[0]) {
       const auto u = m_head[1];
-      m_g[u] = 0;
       this->pop();
       m_points[++m_pointNum] = u;  //拓扑序
       for (uint i = Head[u]; i < Head[u + 1]; ++i) {
@@ -491,103 +503,28 @@ class Solver {
   // 手写堆不记录前驱
   void DijkstraWithHeap(uint start) {
     this->clear();
-    m_dis[start] = 0;
     this->push(start);
+    m_dis[start] = 0;
     m_count[start] = 1;
-    m_pointNum = 0;
     while (m_head[0]) {
       const auto u = m_head[1];
-      m_g[u] = 0;
       this->pop();
       m_points[++m_pointNum] = u;  //拓扑序
-      for (uint i = Head[u]; i < Head[u + 1]; ++i) {
-        const auto &e = GHead[i];
-        if (m_dis[u] + e.w > m_dis[e.idx]) continue;
-        if (m_dis[u] + e.w == m_dis[e.idx]) {
-          m_count[e.idx] += m_count[u];  // s到e.idx的最短路条数
-        } else {
-          m_count[e.idx] = m_count[u];
-          m_dis[e.idx] = m_dis[u] + e.w;
-          if (!m_id[e.idx]) {
-            this->push(e.idx);
+      const DFSEdge *e = &GHead[Head[u]];
+      for (uint i = Head[u]; i < Head[u + 1]; ++i, ++e) {
+        const auto &v = e->idx;
+        const auto &w = e->w;
+        const auto &newdis = m_dis[u] + w;
+        if (newdis < m_dis[v]) {
+          m_count[v] = m_count[u];
+          m_dis[v] = newdis;
+          if (!m_id[v]) {
+            this->push(v);
           } else {
-            this->update(m_id[e.idx]);
+            this->update(m_id[v]);
           }
-        }
-      }
-    }
-    this->GetAnswer();
-  }
-  // stl优先队列记录前驱
-  void DijkstraWithPre(uint start) {
-    this->clear();
-    struct Node {
-      uint idx;
-      ulong val;
-      bool operator<(const Node &r) const { return val > r.val; }
-    };
-    std::priority_queue<Node> pq;
-    std::vector<bool> vis(g_NodeNum, false);
-
-    pq.push(Node{start, 0});
-    m_dis[start] = 0;
-    m_count[start] = 1;
-
-    while (!pq.empty()) {
-      const auto u = pq.top().idx;
-      pq.pop();
-      if (vis[u]) continue;
-      vis[u] = true;
-      m_g[u] = 0;
-      m_points[++m_pointNum] = u;  //拓扑序
-      for (uint i = Head[u]; i < Head[u + 1]; ++i) {
-        const auto &e = GHead[i];
-        if (m_dis[u] + e.w > m_dis[e.idx]) continue;
-        if (m_dis[u] + e.w == m_dis[e.idx]) {
-          m_count[e.idx] += m_count[u];  // s到e.idx的最短路条数
-          m_pre[e.idx].emplace_back(u);
-        } else {
-          m_count[e.idx] = m_count[u];
-          m_dis[e.idx] = m_dis[u] + e.w;
-          pq.push(Node{e.idx, m_dis[e.idx]});
-          m_pre[e.idx] = {u};
-        }
-      }
-    }
-
-    this->GetAnswerWithPre();
-  }
-  // stl优先队列不记录前驱
-  void Dijkstra(uint start) {
-    this->clear();
-    struct Node {
-      uint idx;
-      ulong val;
-      bool operator<(const Node &r) const { return val > r.val; }
-    };
-    std::priority_queue<Node> pq;
-    std::vector<bool> vis(g_NodeNum, false);
-
-    pq.push(Node{start, 0});
-    m_dis[start] = 0;
-    m_count[start] = 1;
-
-    while (!pq.empty()) {
-      const auto u = pq.top().idx;
-      pq.pop();
-      if (vis[u]) continue;
-      vis[u] = true;
-      m_g[u] = 0;
-      m_points[++m_pointNum] = u;  //拓扑序
-      for (uint i = Head[u]; i < Head[u + 1]; ++i) {
-        const auto &e = GHead[i];
-        if (m_dis[u] + e.w > m_dis[e.idx]) continue;
-        if (m_dis[u] + e.w == m_dis[e.idx]) {
-          m_count[e.idx] += m_count[u];  // s到e.idx的最短路条数
-        } else {
-          m_count[e.idx] = m_count[u];
-          m_dis[e.idx] = m_dis[u] + e.w;
-          pq.push(Node{e.idx, m_dis[e.idx]});
+        } else if (newdis == m_dis[v]) {
+          m_count[v] += m_count[u];  // s到e.idx的最短路条数
         }
       }
     }
@@ -595,15 +532,15 @@ class Solver {
   }
 
  public:
-  std::vector<uint> m_head;              // for heap
-  std::vector<uint> m_id;                // for heap
-  std::vector<ulong> m_dis;              // 最短距离
-  uint m_pointNum = 0;                   // 拓扑点数目
-  std::vector<uint> m_points;            // 拓扑点
-  std::vector<uint> m_count;             // 最短路径数目
-  std::vector<double> m_g;               // m_g value
-  std::vector<double> m_ans;             // 保存答案
-  std::vector<std::vector<uint>> m_pre;  // 前驱集合
+  uint m_pointNum = 0;                // 拓扑点数目
+  uint m_head[MAX_NODE];              // for heap
+  uint m_id[MAX_NODE];                // for heap
+  uint m_points[MAX_NODE];            // 拓扑点
+  uint m_count[MAX_NODE];             // 最短路径数目
+  ulong m_dis[MAX_NODE];              // 最短距离
+  double m_ans[MAX_NODE];             // 保存答案
+  double m_g[MAX_NODE];               // gvalue
+  std::vector<uint> m_pre[MAX_NODE];  // 前驱集合
 };
 
 Solver ThSolvers[T];
@@ -634,7 +571,6 @@ void printProcess(const uint &job) {
   }
   fflush(stdout);
   Color::reset();
-  usleep(10);
 }
 void FindTask(uint pid) {
   auto &solver = ThSolvers[pid];
@@ -646,8 +582,6 @@ void FindTask(uint pid) {
 
     solver.DijkstraWithHeap(job);  // 手写堆不记录前驱
     // solver.DijkstraWithHeapAndPre(job);  // 手写堆记录前驱
-    // solver.Dijkstra(job);                // stl优先队列不记录前驱
-    // solver.DijkstraWithPre(job);         // stl优先队列记录前驱
 
 #ifdef DEBUG
     printProcess(job);
