@@ -30,8 +30,8 @@
 #define P10(x) ((x << 3) + (x << 1))
 
 #ifdef LOCAL
-#define TRAIN "../data/gen/test_data.txt"
-#define RESULT "../data/gen/result.txt"
+#define TRAIN "../data/big/test_data.txt"
+#define RESULT "../data/big/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -128,6 +128,7 @@ struct LoadInfo {
 };
 uint g_NodeNum = 0;                      // 加载完数据后结点数目
 uint g_EdgeNum = 0;                      // 加载完数据后边数目
+uint g_OutDegree = 0;                    // 出度之和
 uint Head[MAX_NODE], HeadLen[MAX_NODE];  // 前向星标记位置和长度
 uint Back[MAX_NODE], BackLen[MAX_NODE];  // 后向星标记位置和长度
 ReadEdge Edges[MAX_EDGE];                // 多线程边合并后的所有边
@@ -346,9 +347,8 @@ void BuildGraphBack(uint pid) {
   }
 }
 void LoadData() {
-#ifdef LOCAL
   Timer t;
-#endif
+
   InitLoadInfo();
   ReadBuffer();
   std::thread Th[T];
@@ -367,18 +367,23 @@ void LoadData() {
   MergeEdge();
   for (uint i = 0; i < T; ++i) Th[i] = std::thread(BuildGraphHead, i);
   for (auto &it : Th) it.join();
+
   for (uint i = 1; i <= g_NodeNum; ++i) {
     Head[i] = Head[i - 1] + HeadLen[i - 1];
     Back[i] = Back[i - 1] + BackLen[i - 1];
+    g_OutDegree += HeadLen[i - 1];
   }
-  for (uint i = 0; i < T; ++i) Th[i] = std::thread(BuildGraphBack, i);
-  for (auto &it : Th) it.join();
-#ifdef LOCAL
+
+  // for (uint i = 0; i < T; ++i) Th[i] = std::thread(BuildGraphBack, i);
+  // for (auto &it : Th) it.join();
+
+  // #ifdef LOCAL
   Color::green();
-  printf("@ Load: [结点: %d, 边: %d] [cost: %.4fs]\n", g_NodeNum, g_EdgeNum,
+  printf("@ Load: [结点: %d, 边: %d, 出度: %d, 平均出度: %d] [cost: %.4fs]\n",
+         g_NodeNum, g_EdgeNum, g_OutDegree, g_OutDegree / g_NodeNum,
          t.elapsed());
   Color::reset();
-#endif
+  // #endif
 }
 /************************** LoadData End ****************************/
 
@@ -424,36 +429,13 @@ class Solver {
       m_g[i] = 0;
     }
   }
-  void clearPre() {
-    m_pointNum = 0;
-    for (uint i = 0; i < m_pointNum; ++i) {
-      m_id[i] = 0;
-      m_dis[i] = UINT64_MAX;
-      m_g[i] = 0;
-      m_pre[i].resize(0);
-    }
-  }
   void clear() {
     m_pointNum = 0;
     for (uint i = 0; i < g_NodeNum; ++i) {
       m_id[i] = 0;
       m_dis[i] = UINT64_MAX;
+      m_vis[i] = false;
       m_g[i] = 0;
-    }
-  }
-  // 记录前驱计算答案
-  void GetAnswerWithPre() {
-    std::vector<uint> newHead[g_NodeNum];
-    for (uint i = 0; i < g_NodeNum; ++i) {
-      for (auto &v : m_pre[i]) newHead[v].emplace_back(i);
-    }
-    for (uint p = m_pointNum; p > 1; --p) {
-      const uint &u = m_points[p];
-      for (const auto &v : newHead[u]) {
-        m_g[u] += m_g[v];
-      }
-      m_ans[u] += (double)(m_g[u] * (double)m_count[u]);
-      m_g[u] += (double)(1.0 / (double)(m_count[u]));
     }
   }
   // 不记录前驱计算答案
@@ -469,36 +451,6 @@ class Solver {
       m_ans[u] += (double)(m_g[u] * (double)m_count[u]);
       m_g[u] += (double)(1.0 / (double)(m_count[u]));
     }
-  }
-  // 手写堆记录前驱
-  void DijkstraWithHeapAndPre(uint start) {
-    this->clearPre();
-    m_dis[start] = 0;
-    this->push(start);
-    m_count[start] = 1;
-    while (m_head[0]) {
-      const auto u = m_head[1];
-      this->pop();
-      m_points[++m_pointNum] = u;  //拓扑序
-      for (uint i = Head[u]; i < Head[u + 1]; ++i) {
-        const auto &e = GHead[i];
-        if (m_dis[u] + e.w > m_dis[e.idx]) continue;
-        if (m_dis[u] + e.w == m_dis[e.idx]) {
-          m_count[e.idx] += m_count[u];  // s到e.idx的最短路条数
-          m_pre[e.idx].emplace_back(u);
-        } else {
-          m_count[e.idx] = m_count[u];
-          m_dis[e.idx] = m_dis[u] + e.w;
-          if (!m_id[e.idx]) {
-            this->push(e.idx);
-          } else {
-            this->update(m_id[e.idx]);
-          }
-          m_pre[e.idx] = {u};
-        }
-      }
-    }
-    this->GetAnswerWithPre();
   }
   // 手写堆不记录前驱
   void DijkstraWithHeap(uint start) {
@@ -530,17 +482,53 @@ class Solver {
     }
     this->GetAnswer();
   }
+  // stl优先队列不记录前驱
+  void Dijkstra(uint start) {
+    this->clear();
+    struct Node {
+      uint idx;
+      ulong val;
+      bool operator<(const Node &r) const { return val > r.val; }
+    };
+    std::priority_queue<Node> pq;
+
+    pq.push(Node{start, 0});
+    m_dis[start] = 0;
+    m_count[start] = 1;
+
+    while (!pq.empty()) {
+      const auto u = pq.top().idx;
+      pq.pop();
+      if (m_vis[u]) continue;
+      m_vis[u] = true;
+      m_points[++m_pointNum] = u;  //拓扑序
+      const DFSEdge *e = &GHead[Head[u]];
+      for (uint i = Head[u]; i < Head[u + 1]; ++i, ++e) {
+        const auto &v = e->idx;
+        const auto &w = e->w;
+        const auto &newdis = m_dis[u] + w;
+        if (newdis < m_dis[v]) {
+          m_count[v] = m_count[u];
+          m_dis[v] = newdis;
+          pq.push(Node{v, m_dis[v]});
+        } else if (newdis == m_dis[v]) {
+          m_count[v] += m_count[u];  // s到e.idx的最短路条数
+        }
+      }
+    }
+    this->GetAnswer();
+  }
 
  public:
-  uint m_pointNum = 0;                // 拓扑点数目
-  uint m_head[MAX_NODE];              // for heap
-  uint m_id[MAX_NODE];                // for heap
-  uint m_points[MAX_NODE];            // 拓扑点
-  uint m_count[MAX_NODE];             // 最短路径数目
-  ulong m_dis[MAX_NODE];              // 最短距离
-  double m_ans[MAX_NODE];             // 保存答案
-  double m_g[MAX_NODE];               // gvalue
-  std::vector<uint> m_pre[MAX_NODE];  // 前驱集合
+  uint m_pointNum = 0;      // 拓扑点数目
+  uint m_head[MAX_NODE];    // for heap
+  uint m_id[MAX_NODE];      // for heap
+  uint m_points[MAX_NODE];  // 拓扑点
+  uint m_count[MAX_NODE];   // 最短路径数目
+  ulong m_dis[MAX_NODE];    // 最短距离
+  bool m_vis[MAX_NODE];     // vis
+  double m_ans[MAX_NODE];   // 保存答案
+  double m_g[MAX_NODE];     // gvalue
 };
 
 Solver ThSolvers[T];
@@ -576,16 +564,33 @@ void FindTask(uint pid) {
   auto &solver = ThSolvers[pid];
   solver.Initialize();
   uint job = 0;
-  while (true) {
-    getJob(job);
-    if (job == -1) break;
 
-    solver.DijkstraWithHeap(job);  // 手写堆不记录前驱
-    // solver.DijkstraWithHeapAndPre(job);  // 手写堆记录前驱
+  // true: 稀疏图,std好一点； false: 稠密图 手写堆
+  // 一个图的边数小于等于点数的 10 倍，这个图为稀疏图，否则，这个图是稠密图。
+  // bool sign = g_OutDegree / g_NodeNum <= 10 ? true : false;
+  bool sign = g_EdgeNum <= 10 * g_NodeNum ? true : false;
+
+  if (sign) {
+    while (true) {
+      getJob(job);
+      if (job == -1) break;
+
+      solver.Dijkstra(job);  // std 堆
 
 #ifdef DEBUG
-    printProcess(job);
+      printProcess(job);
 #endif
+    }
+  } else {
+    while (true) {
+      getJob(job);
+      if (job == -1) break;
+      solver.DijkstraWithHeap(job);  // 手写堆
+
+#ifdef DEBUG
+      printProcess(job);
+#endif
+    }
   }
 }
 
