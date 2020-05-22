@@ -352,10 +352,6 @@ void BuildGraphBack(uint pid) {
   }
 }
 void LoadData() {
-#ifdef DEBUG
-  Timer t;
-#endif
-
   InitLoadInfo();
   ReadBuffer();
   std::thread Th[T];
@@ -382,26 +378,22 @@ void LoadData() {
 
   // for (uint i = 0; i < T; ++i) Th[i] = std::thread(BuildGraphBack, i);
   // for (auto &it : Th) it.join();
-
-  // E <= V * 10 -> 稀疏图
-  IfSparseGraph = g_EdgeNum <= 10 * g_NodeNum ? true : false;
-
-#ifdef DEBUG
-  Color::green();
-  std::cerr << "==================================\n";
-  std::cerr << "* 地图类型: " << (IfSparseGraph ? "稀疏图" : "稠密图") << "\n";
-  std::cerr << "* 结点: " << g_NodeNum << "\n";
-  std::cerr << "* 边数: " << g_EdgeNum << "\n";
-  std::cerr << "* 平均出度: " << (double)g_EdgeNum / (double)g_NodeNum << "\n";
-  std::cerr << "* cost: " << t.elapsed() << "s\n";
-  std::cerr << "==================================\n";
-  Color::reset();
-#endif
 }
 /************************** LoadData End ****************************/
 
 /************************** Algorithm Start ****************************/
+uint Fa[MAX_NODE];                      // 并查集
+uint BlockNum = 0;                      // 集合数
+std::pair<uint, uint> Block[MAX_NODE];  // 集合内(V, E)
+
+uint getFa(uint x) { return Fa[x] == x ? x : Fa[x] = getFa(Fa[x]); }
+
 class Solver {
+  struct Node {
+    uint idx;
+    ulong val;
+    bool operator<(const Node &r) const { return val > r.val; }
+  };
   /*
    * 1. dijkstr寻找最短路
    * 2. 利用拆分的公式计算中心性
@@ -431,17 +423,7 @@ class Solver {
     }
   }
 
- public:
-  void Initialize() {
-    for (uint i = 0; i < g_NodeNum; ++i) {
-      m_head[i] = 0;
-      m_count[i] = 0;
-      m_ans[i] = 0;
-      m_id[i] = 0;
-      m_dis[i] = UINT64_MAX;
-      m_g[i] = 0;
-    }
-  }
+ private:
   void clear() {
     for (uint i = 1; i <= m_pointNum; ++i) {
       const uint &v = m_points[i];
@@ -452,12 +434,25 @@ class Solver {
     }
     m_pointNum = 0;
   }
+  void clearWithPre() {
+    for (uint i = 1; i <= m_pointNum; ++i) {
+      const uint &v = m_points[i];
+      m_id[v] = 0;
+      m_dis[v] = UINT64_MAX;
+      m_vis[v] = false;
+      m_g[v] = 0;
+      m_pre[v].resize(0);
+      m_dag[v].resize(0);
+    }
+    m_pointNum = 0;
+  }
   // 计算答案
-  void GetAnswer() {
+  void getAnswer() {
     for (uint p = m_pointNum; p > 1; --p) {
       const uint &u = m_points[p];
       const DFSEdge *e = &GHead[Head[u]];
-      for (uint i = Head[u]; i < Head[u + 1]; ++i, ++e) {
+      const auto &l = Head[u], &r = Head[u + 1];
+      for (uint i = l; i < r; ++i, ++e) {
         if (m_dis[u] + e->w == m_dis[e->idx]) {
           m_g[u] += m_g[e->idx];
         }
@@ -466,9 +461,23 @@ class Solver {
       m_g[u] += (double)(1.0 / (double)(m_count[u]));
     }
   }
+  // 保存前驱计算答案
+  void getAnswerWithPre() {
+    for (uint p = m_pointNum; p > 1; --p) {
+      const uint &u = m_points[p];
+      for (auto &v : m_pre[u]) m_dag[v].emplace_back(u);
+    }
+    for (uint p = m_pointNum; p > 1; --p) {
+      const uint &u = m_points[p];
+      for (const auto &v : m_dag[u]) {
+        m_g[u] += m_g[v];
+      }
+      m_ans[u] += (double)(m_g[u] * (double)m_count[u]);
+      m_g[u] += (double)(1.0 / (double)(m_count[u]));
+    }
+  }
   // 手写堆
-  void DijkstraWithHeap(uint start) {
-    this->clear();
+  void dijkstraWithHeap(const uint &start) {
     this->push(start);
     m_dis[start] = 0;
     m_count[start] = 1;
@@ -494,22 +503,47 @@ class Solver {
         }
       }
     }
-    this->GetAnswer();
+    this->getAnswer();
+    this->clear();
+  }
+  // 保存前驱手写堆
+  void dijkstraWithHeapAndPre(const uint &start) {
+    this->push(start);
+    m_dis[start] = 0;
+    m_count[start] = 1;
+    while (m_head[0]) {
+      const auto u = m_head[1];
+      this->pop();
+      m_points[++m_pointNum] = u;  //拓扑序
+      const DFSEdge *e = &GHead[Head[u]];
+      for (uint i = Head[u]; i < Head[u + 1]; ++i, ++e) {
+        const auto &v = e->idx;
+        const auto &w = e->w;
+        const auto &newdis = m_dis[u] + w;
+        if (newdis < m_dis[v]) {
+          m_count[v] = m_count[u];
+          m_dis[v] = newdis;
+          m_pre[v] = {u};
+          if (!m_id[v]) {
+            this->push(v);
+          } else {
+            this->update(m_id[v]);
+          }
+        } else if (newdis == m_dis[v]) {
+          m_count[v] += m_count[u];  // s到e.idx的最短路条数
+          m_pre[v].emplace_back(u);
+        }
+      }
+    }
+    this->getAnswerWithPre();
+    this->clearWithPre();
   }
   // stl优先队列
-  void Dijkstra(uint start) {
-    this->clear();
-    struct Node {
-      uint idx;
-      ulong val;
-      bool operator<(const Node &r) const { return val > r.val; }
-    };
+  void dijkstra(const uint &start) {
     std::priority_queue<Node> pq;
-
     pq.push(Node{start, 0});
     m_dis[start] = 0;
     m_count[start] = 1;
-
     while (!pq.empty()) {
       const auto u = pq.top().idx;
       pq.pop();
@@ -517,7 +551,8 @@ class Solver {
       m_vis[u] = true;
       m_points[++m_pointNum] = u;  //拓扑序
       const DFSEdge *e = &GHead[Head[u]];
-      for (uint i = Head[u]; i < Head[u + 1]; ++i, ++e) {
+      const auto &l = Head[u], &r = Head[u + 1];
+      for (uint i = l; i < r; ++i, ++e) {
         const auto &v = e->idx;
         const auto &w = e->w;
         const auto &newdis = m_dis[u] + w;
@@ -530,24 +565,88 @@ class Solver {
         }
       }
     }
-    this->GetAnswer();
+    this->getAnswer();
+    this->clear();
+  }
+  // 保存前驱stl优先队列
+  void dijkstraWithPre(const uint &start) {
+    std::priority_queue<Node> pq;
+    pq.push(Node{start, 0});
+    m_dis[start] = 0;
+    m_count[start] = 1;
+    while (!pq.empty()) {
+      const auto u = pq.top().idx;
+      pq.pop();
+      if (m_vis[u]) continue;
+      m_vis[u] = true;
+      m_g[u] = 0;
+      m_points[++m_pointNum] = u;  //拓扑序
+      const DFSEdge *e = &GHead[Head[u]];
+      const auto &l = Head[u], &r = Head[u + 1];
+      for (uint i = l; i < r; ++i, ++e) {
+        const auto &v = e->idx;
+        const auto &w = e->w;
+        const auto &newdis = m_dis[u] + w;
+        if (newdis < m_dis[v]) {
+          m_count[v] = m_count[u];
+          m_dis[v] = newdis;
+          m_pre[v] = {u};
+          pq.push(Node{v, m_dis[v]});
+        } else if (newdis == m_dis[v]) {
+          m_count[v] += m_count[u];  // s到e.idx的最短路条数
+          m_pre[v].emplace_back(u);
+        }
+      }
+    }
+    this->getAnswerWithPre();
+    this->clearWithPre();
   }
 
  public:
-  uint m_pointNum = 0;      // 拓扑点数目
-  uint m_head[MAX_NODE];    // for heap
-  uint m_id[MAX_NODE];      // for heap
-  uint m_points[MAX_NODE];  // 拓扑点
-  uint m_count[MAX_NODE];   // 最短路径数目
-  ulong m_dis[MAX_NODE];    // 最短距离
-  bool m_vis[MAX_NODE];     // vis
-  double m_ans[MAX_NODE];   // 保存答案
-  double m_g[MAX_NODE];     // gvalue
+  void Initialize() {
+    for (uint i = 0; i < g_NodeNum; ++i) {
+      m_head[i] = 0;
+      m_count[i] = 0;
+      m_ans[i] = 0;
+      m_id[i] = 0;
+      m_dis[i] = UINT64_MAX;
+      m_g[i] = 0;
+    }
+  }
+  void Run(const uint &start) {
+    // this->dijkstra(start);
+    // this->dijkstraWithPre(start);
+    // this->dijkstraWithHeap(start);
+    // this->dijkstraWithHeapAndPre(start);
+    if (IfSparseGraph) {
+      if (Block[getFa(start)].second <= 20) {
+        this->dijkstraWithPre(start);
+      } else {
+        this->dijkstra(start);
+      }
+    } else {
+      this->dijkstraWithHeap(start);
+    }
+  }
+
+ public:
+  uint m_pointNum = 0;                // 拓扑点数目
+  uint m_head[MAX_NODE];              // for heap
+  uint m_id[MAX_NODE];                // for heap
+  uint m_points[MAX_NODE];            // 拓扑点
+  uint m_count[MAX_NODE];             // 最短路径数目
+  ulong m_dis[MAX_NODE];              // 最短距离
+  bool m_vis[MAX_NODE];               // vis
+  double m_ans[MAX_NODE];             // 保存答案
+  double m_g[MAX_NODE];               // gvalue
+  std::vector<uint> m_pre[MAX_NODE];  // 前驱
+  std::vector<uint> m_dag[MAX_NODE];  // 前驱
 };
 
 Solver ThSolvers[T];
 
 // atomic for job
+
 inline void getJob(uint &job) {
   static uint l = 0;
   static std::atomic_flag lock = ATOMIC_FLAG_INIT;
@@ -562,12 +661,12 @@ void printProcess(const uint &job) {}
 void FindTask(uint pid) {
   auto &solver = ThSolvers[pid];
   solver.Initialize();
-  uint job = 0;
 
+  uint job = 0;
   while (true) {
     getJob(job);
     if (job == -1) break;
-    IfSparseGraph ? solver.Dijkstra(job) : solver.DijkstraWithHeap(job);
+    solver.Run(job);
 #ifdef DEBUG
     printProcess(job);
 #endif
@@ -576,6 +675,7 @@ void FindTask(uint pid) {
 
 typedef std::pair<uint, double> prud;
 std::vector<prud> Answer;  // 最终结果
+
 void Find() {
   std::thread Th[T];
   for (uint i = 0; i < T; ++i) Th[i] = std::thread(FindTask, i);
@@ -614,10 +714,54 @@ void SaveAnswer() {
   fclose(fp);
 }
 
+void UnionSet() {
+  for (uint i = 0; i <= g_NodeNum; ++i) Fa[i] = i;
+  for (uint i = 0; i < g_EdgeNum; ++i) {
+    auto &e = Edges[i];
+    uint x = getFa(e.u), y = getFa(e.v);
+    Fa[x] = Fa[y];
+  }
+
+  for (uint i = 0; i < g_NodeNum; ++i) {
+    uint x = getFa(i);
+    if (x == i) BlockNum++;
+    ++Block[x].first;
+    Block[x].second += HeadLen[i];
+  }
+  // for (uint i = 0; i < g_NodeNum; ++i) {
+  //   if (get(i) == i) {
+  //     std::cerr << BlockNum++ << ": (V: " << Block[i].first
+  //               << ", E: " << Block[i].second << ")\n";
+  //   }
+  // }
+}
+
+void AnalysisGraph() {
+#ifdef DEBUG
+  Timer t;
+#endif
+  // E <= V * 10 -> 稀疏图
+  IfSparseGraph = g_EdgeNum <= 10 * g_NodeNum ? true : false;
+  UnionSet();
+#ifdef DEBUG
+  Color::green();
+  std::cerr << "==================================\n";
+  std::cerr << "* 地图类型: " << (IfSparseGraph ? "稀疏图" : "稠密图") << "\n";
+  std::cerr << "* 结点: " << g_NodeNum << "\n";
+  std::cerr << "* 边数: " << g_EdgeNum << "\n";
+  std::cerr << "* 集合: " << BlockNum << "\n";
+  std::cerr << "* 平均出度: " << (double)g_EdgeNum / (double)g_NodeNum << "\n";
+  std::cerr << "* cost: " << t.elapsed() << "s\n";
+  std::cerr << "==================================\n";
+  Color::reset();
+#endif
+}
+
 int main() {
   std::cerr << std::fixed << std::setprecision(4);
 
   LoadData();
+  AnalysisGraph();
   Find();
   SaveAnswer();
 
