@@ -30,8 +30,8 @@
 #define P10(x) ((x << 3) + (x << 1))
 
 #ifdef LOCAL
-#define TRAIN "../data/big/test_data.txt"
-#define RESULT "../data/big/result.txt"
+#define TRAIN "../data/std1/test_data.txt"
+#define RESULT "../data/std1/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -135,6 +135,12 @@ ReadEdge Edges[MAX_EDGE];                // 多线程边合并后的所有边
 DFSEdge GHead[MAX_NODE];                 // 前向星所有边
 DFSEdge GBack[MAX_NODE];                 // 后向星所有边
 LoadInfo LoadInfos[T];                   // 多线程加载数据
+/*
+ * 是否是稀疏图
+ * 稀疏图: std::priority_queue
+ * 稠密图: 手写heap
+ */
+bool IfSparseGraph = false;
 
 /*
  * 加载数据
@@ -347,7 +353,9 @@ void BuildGraphBack(uint pid) {
   }
 }
 void LoadData() {
+#ifdef DEBUG
   Timer t;
+#endif
 
   InitLoadInfo();
   ReadBuffer();
@@ -377,22 +385,29 @@ void LoadData() {
   // for (uint i = 0; i < T; ++i) Th[i] = std::thread(BuildGraphBack, i);
   // for (auto &it : Th) it.join();
 
-  // #ifdef LOCAL
+  IfSparseGraph = g_EdgeNum <= 10 * g_NodeNum ? true : false;
+
+#ifdef DEBUG
   Color::green();
-  printf("@ Load: [结点: %d, 边: %d, 出度: %d, 平均出度: %d] [cost: %.4fs]\n",
-         g_NodeNum, g_EdgeNum, g_OutDegree, g_OutDegree / g_NodeNum,
-         t.elapsed());
+  std::cerr << "==================================\n";
+  std::cerr << "* 地图类型: " << (IfSparseGraph ? "稀疏图" : "稠密图") << "\n";
+  std::cerr << "* 结点: " << g_NodeNum << "\n";
+  std::cerr << "* 边数: " << g_EdgeNum << "\n";
+  std::cerr << "* 出度之和: " << g_OutDegree << "\n";
+  std::cerr << "* 平均出度: " << g_OutDegree / g_NodeNum << "\n";
+  std::cerr << "* cost: " << t.elapsed() << "s\n";
+  std::cerr << "==================================\n";
   Color::reset();
-  // #endif
+#endif
 }
 /************************** LoadData End ****************************/
 
 /************************** Algorithm Start ****************************/
-/*
- * 1. dijkstr寻找最短路
- * 2. 利用拆分的公式计算中心性
- */
 class Solver {
+  /*
+   * 1. dijkstr寻找最短路
+   * 2. 利用拆分的公式计算中心性
+   */
  private:
   void update(const uint &x) {
     for (uint i = x, j = x >> 1; j; i = j, j >>= 1) {
@@ -438,7 +453,7 @@ class Solver {
       m_g[i] = 0;
     }
   }
-  // 不记录前驱计算答案
+  // 计算答案
   void GetAnswer() {
     for (uint p = m_pointNum; p > 1; --p) {
       const uint &u = m_points[p];
@@ -452,7 +467,7 @@ class Solver {
       m_g[u] += (double)(1.0 / (double)(m_count[u]));
     }
   }
-  // 手写堆不记录前驱
+  // 手写堆
   void DijkstraWithHeap(uint start) {
     this->clear();
     this->push(start);
@@ -482,7 +497,7 @@ class Solver {
     }
     this->GetAnswer();
   }
-  // stl优先队列不记录前驱
+  // stl优先队列
   void Dijkstra(uint start) {
     this->clear();
     struct Node {
@@ -554,53 +569,38 @@ void printProcess(const uint &job) {
   printf("[%-100s][%d%%][%c]\r", bar, v, lable[v % 4]);
   if (job == g_NodeNum - 1) {
     std::cerr << "\n";
+    fflush(stdout);
     Color::reset();
     return;
   }
   fflush(stdout);
   Color::reset();
 }
+
 void FindTask(uint pid) {
   auto &solver = ThSolvers[pid];
   solver.Initialize();
   uint job = 0;
 
-  // true: 稀疏图,std好一点； false: 稠密图 手写堆
-  // 一个图的边数小于等于点数的 10 倍，这个图为稀疏图，否则，这个图是稠密图。
-  // bool sign = g_OutDegree / g_NodeNum <= 10 ? true : false;
-  bool sign = g_EdgeNum <= 10 * g_NodeNum ? true : false;
+  while (true) {
+    getJob(job);
+    if (job == -1) break;
 
-  if (sign) {
-    while (true) {
-      getJob(job);
-      if (job == -1) break;
-
-      solver.Dijkstra(job);  // std 堆
-
-#ifdef DEBUG
-      printProcess(job);
-#endif
-    }
-  } else {
-    while (true) {
-      getJob(job);
-      if (job == -1) break;
+    if (IfSparseGraph) {
+      solver.Dijkstra(job);  // std堆
+    } else {
       solver.DijkstraWithHeap(job);  // 手写堆
+    }
 
 #ifdef DEBUG
-      printProcess(job);
+    printProcess(job);
 #endif
-    }
   }
 }
 
 typedef std::pair<uint, double> prud;
 std::vector<prud> Answer;  // 最终结果
 void Find() {
-#ifdef LOCAL
-  Timer t;
-#endif
-
   std::thread Th[T];
   for (uint i = 0; i < T; ++i) Th[i] = std::thread(FindTask, i);
   for (auto &it : Th) it.join();
@@ -613,20 +613,11 @@ void Find() {
       Answer[i].second += data.m_ans[i];
     }
   }
-
-#ifdef LOCAL
-  Color::green();
-  printf("@ Find: [cost: %.4fs]\n", t.elapsed());
-  Color::reset();
-#endif
 }
 
 /************************** Algorithm End ****************************/
 
 void SaveAnswer() {
-#ifdef LOCAL
-  Timer t;
-#endif
   std::sort(Answer.begin(), Answer.end(), [](const prud &p1, const prud &p2) {
     if (p1.second == p2.second) return p1.first < p2.first;
     return p1.second > p2.second;
@@ -645,16 +636,10 @@ void SaveAnswer() {
   FILE *fp = fopen(RESULT, "w");
   fwrite(buffer, 1, ptr - buffer, fp);
   fclose(fp);
-
-#ifdef LOCAL
-  Color::green();
-  printf("@ Save: [cost: %.4fs]\n", t.elapsed());
-  Color::reset();
-#endif
 }
 
 int main() {
-  std::cerr << std::fixed << std::setprecision(3);
+  std::cerr << std::fixed << std::setprecision(4);
 
   LoadData();
   Find();
