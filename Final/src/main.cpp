@@ -128,7 +128,6 @@ struct LoadInfo {
 };
 uint g_NodeNum = 0;                      // 加载完数据后结点数目
 uint g_EdgeNum = 0;                      // 加载完数据后边数目
-uint g_OutDegree = 0;                    // 出度之和
 uint Head[MAX_NODE], HeadLen[MAX_NODE];  // 前向星标记位置和长度
 uint Back[MAX_NODE], BackLen[MAX_NODE];  // 后向星标记位置和长度
 ReadEdge Edges[MAX_EDGE];                // 多线程边合并后的所有边
@@ -379,12 +378,12 @@ void LoadData() {
   for (uint i = 1; i <= g_NodeNum; ++i) {
     Head[i] = Head[i - 1] + HeadLen[i - 1];
     Back[i] = Back[i - 1] + BackLen[i - 1];
-    g_OutDegree += HeadLen[i - 1];
   }
 
   // for (uint i = 0; i < T; ++i) Th[i] = std::thread(BuildGraphBack, i);
   // for (auto &it : Th) it.join();
 
+  // E <= V * 10 -> 稀疏图
   IfSparseGraph = g_EdgeNum <= 10 * g_NodeNum ? true : false;
 
 #ifdef DEBUG
@@ -393,8 +392,7 @@ void LoadData() {
   std::cerr << "* 地图类型: " << (IfSparseGraph ? "稀疏图" : "稠密图") << "\n";
   std::cerr << "* 结点: " << g_NodeNum << "\n";
   std::cerr << "* 边数: " << g_EdgeNum << "\n";
-  std::cerr << "* 出度之和: " << g_OutDegree << "\n";
-  std::cerr << "* 平均出度: " << g_OutDegree / g_NodeNum << "\n";
+  std::cerr << "* 平均出度: " << (double)g_EdgeNum / (double)g_NodeNum << "\n";
   std::cerr << "* cost: " << t.elapsed() << "s\n";
   std::cerr << "==================================\n";
   Color::reset();
@@ -445,13 +443,14 @@ class Solver {
     }
   }
   void clear() {
-    m_pointNum = 0;
-    for (uint i = 0; i < g_NodeNum; ++i) {
-      m_id[i] = 0;
-      m_dis[i] = UINT64_MAX;
-      m_vis[i] = false;
-      m_g[i] = 0;
+    for (uint i = 1; i <= m_pointNum; ++i) {
+      const uint &v = m_points[i];
+      m_id[v] = 0;
+      m_dis[v] = UINT64_MAX;
+      m_vis[v] = false;
+      m_g[v] = 0;
     }
+    m_pointNum = 0;
   }
   // 计算答案
   void GetAnswer() {
@@ -558,24 +557,7 @@ inline void getJob(uint &job) {
   lock.clear();
 }
 
-void printProcess(const uint &job) {
-  static char bar[102];
-  const char *lable = "|/-\\";
-  double a = job, b = g_NodeNum - 1;
-  double val = a / b;
-  uint v = val * 100;
-  bar[v] = '#';
-  Color::magenta();
-  printf("[%-100s][%d%%][%c]\r", bar, v, lable[v % 4]);
-  if (job == g_NodeNum - 1) {
-    std::cerr << "\n";
-    fflush(stdout);
-    Color::reset();
-    return;
-  }
-  fflush(stdout);
-  Color::reset();
-}
+void printProcess(const uint &job) {}
 
 void FindTask(uint pid) {
   auto &solver = ThSolvers[pid];
@@ -585,13 +567,7 @@ void FindTask(uint pid) {
   while (true) {
     getJob(job);
     if (job == -1) break;
-
-    if (IfSparseGraph) {
-      solver.Dijkstra(job);  // std堆
-    } else {
-      solver.DijkstraWithHeap(job);  // 手写堆
-    }
-
+    IfSparseGraph ? solver.Dijkstra(job) : solver.DijkstraWithHeap(job);
 #ifdef DEBUG
     printProcess(job);
 #endif
