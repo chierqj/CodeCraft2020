@@ -30,8 +30,8 @@
 #define P10(x) ((x << 3) + (x << 1))
 
 #ifdef LOCAL
-#define TRAIN "../data/std3/test_data.txt"
-#define RESULT "../data/std3/result.txt"
+#define TRAIN "../data/std1/test_data.txt"
+#define RESULT "../data/std1/result.txt"
 #else
 #define TRAIN "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -111,10 +111,12 @@ struct HashTable {
 struct DFSEdge {
   uint idx;
   uint w;
+  // ulong val;  // 边权, 边宽; 目前默认边宽为1，等一手改需求
 };
 struct ReadEdge {
   uint u, v;
   uint w;
+  // ulong val;  // 边权, 边宽; 目前默认边宽为1，等一手改需求
 };
 struct LoadInfo {
   uint offsz = 0;                     // 线程hashmap偏移
@@ -140,11 +142,6 @@ LoadInfo LoadInfos[T];                   // 多线程加载数据
 bool IfSparseGraph = false;
 
 /*
- * Team: 孤芳自赏
- * No1. chier
- * No2. XDUls
- * No3. yangzhi__
- *
  * 加载数据
  * 1. 多线程解析buffer, 每个线程存 u%T 的边
  * 2. 将每个线程th_edges[u%T]的边memcpy到LoadInfo[pid]里面,并排序
@@ -156,10 +153,7 @@ bool IfSparseGraph = false;
  * 8. 遍历所有边,将u, v改成Hash之后的映射id
  * 9. 构造前向星
  * 10. 构造后向星
- *
- * 注释不够多，不美观
  */
-
 void InitLoadInfo() {
   for (uint i = 0; i < T; ++i) {
     LoadInfos[i].ids.reserve(MAX_NODE);
@@ -387,19 +381,6 @@ void LoadData() {
 /************************** LoadData End ****************************/
 
 /************************** Algorithm Start ****************************/
-
-/*
- * Team: 孤芳自赏
- * No1. chier
- * No2. XDUls
- * No3. yangzhi__
- *
- * [这里是DataStruct的定义]
- * 没啥说的，就是变量定义，都加注释了，自己看
- *
- * 注释不够多，不美观
- */
-
 uint Fa[MAX_NODE];                       // 并查集
 uint BlockNum = 0;                       // 集合数目
 std::pair<uint, uint> Blocks[MAX_NODE];  // 并查集(V,E)
@@ -408,56 +389,88 @@ bool Top[MAX_NODE];                      // Top
 
 uint getFa(uint x) { return Fa[x] == x ? x : Fa[x] = getFa(Fa[x]); }
 
-struct SolverData {
-  uint pointNum = 0;        // 拓扑点数目
-  uint points[MAX_NODE];    // 拓扑点
-  uint count[MAX_NODE];     // 最短路径数目
-  uint viscount[MAX_NODE];  // viscount
-  uint head[MAX_NODE];      // for heap
-  uint id[MAX_NODE];        // for heap
-  ulong dis[MAX_NODE];      // 最短距离
-  bool vis[MAX_NODE];       // vis
-  double ans[MAX_NODE];     // 保存答案
-  double g[MAX_NODE];       // gvalue
-};
-SolverData SovData[T];
+void TopSort() {
+  std::queue<uint> q;
+  for (uint i = 0; i < g_NodeNum; ++i) {
+    if (BackLen[i] == 0) q.push(i);
+  }
+  while (!q.empty()) {
+    uint u = q.front();
+    q.pop();
 
-struct Node {
-  uint idx;
-  ulong val;
-  bool operator<(const Node &r) const { return val > r.val; }
-};
+    Top[u] = true;
 
-/*
- * 全地球人公用一个更新答案的接口
- * 需要正确计算的东西 (拓扑序点 + m_count)
- * 1. 按照公式更新。
- * 2. 如果是关键点，就反向bfs更新
- */
-void GetAnswer(SolverData &Data, const uint &start) {
-  uint(&m_points)[MAX_NODE] = Data.points;
-  uint(&m_count)[MAX_NODE] = Data.count;
-  ulong(&m_dis)[MAX_NODE] = Data.dis;
-  double(&m_ans)[MAX_NODE] = Data.ans;
-  double(&m_g)[MAX_NODE] = Data.g;
-  uint &m_pointNum = Data.pointNum;
-  // 更新ans
-  double pw = Label[start] + 1;
-  for (uint p = m_pointNum; p > 1; --p) {
-    const uint &u = m_points[p];
-    const DFSEdge *e = &GHead[Head[u]];
-    const auto &l = Head[u], &r = Head[u + 1];
-    for (uint i = l; i < r; ++i, ++e) {
-      const uint &v = e->idx;
-      if (m_dis[u] + e->w == m_dis[v]) {
-        m_g[u] += m_g[v];
+    for (uint i = Head[u]; i < Head[u + 1]; ++i) {
+      const auto &e = GHead[i];
+      if (HeadLen[u] == 1) {
+        Label[e.idx] += (Label[u] + 1);
       }
+      if (--BackLen[e.idx] <= 0) q.push(e.idx);
     }
-    m_ans[u] += (double)(m_g[u] * (double)m_count[u] * pw);
-    m_g[u] += (double)(1.0 / (double)(m_count[u]));
+  }
+}
+
+class Solver {
+  struct Node {
+    uint idx;
+    ulong val;
+    bool operator<(const Node &r) const { return val > r.val; }
+  };
+  /*
+   * 1. dijkstr寻找最短路
+   * 2. 利用拆分的公式计算中心性
+   */
+ private:
+  void update(const uint &x) {
+    for (uint i = x, j = x >> 1; j; i = j, j >>= 1) {
+      if (m_dis[m_head[i]] >= m_dis[m_head[j]]) return;
+      std::swap(m_head[i], m_head[j]);
+      std::swap(m_id[m_head[i]], m_id[m_head[j]]);
+    }
+  }
+  void push(const uint &x) {
+    m_head[++m_head[0]] = x;
+    m_id[x] = m_head[0];
+    update(m_head[0]);
+  }
+  void pop() {
+    m_id[m_head[1]] = 0;
+    m_id[m_head[m_head[0]]] = 1;
+    m_head[1] = m_head[m_head[0]--];
+    for (uint i = 1, j = 2; j <= m_head[0]; i = j, j <<= 1) {
+      if (m_dis[m_head[j + 1]] < m_dis[m_head[j]]) ++j;
+      if (m_dis[m_head[i]] <= m_dis[m_head[j]]) return;
+      std::swap(m_head[i], m_head[j]);
+      std::swap(m_id[m_head[i]], m_id[m_head[j]]);
+    }
   }
 
-  if (Label[start] > 0) {
+  void clear() {
+    for (uint i = 1; i <= m_pointNum; ++i) {
+      const uint &v = m_points[i];
+      m_dis[v] = UINT64_MAX;
+      m_g[v] = 0;
+      m_id[v] = 0;
+    }
+    m_pointNum = 0;
+  }
+  // 计算答案
+  void getAnswer(const uint &start) {
+    double pw = Label[start] + 1;
+    for (uint p = m_pointNum; p > 1; --p) {
+      const uint &u = m_points[p];
+      const DFSEdge *e = &GHead[Head[u]];
+      const auto &l = Head[u], &r = Head[u + 1];
+      for (uint i = l; i < r; ++i, ++e) {
+        const uint &v = e->idx;
+        if (m_dis[u] + e->w == m_dis[v]) {
+          m_g[u] += m_g[v];
+        }
+      }
+      m_ans[u] += (double)(m_g[u] * (double)m_count[u] * pw);
+      m_g[u] += (double)(1.0 / (double)(m_count[u]));
+    }
+    if (Label[start] <= 0) return;
     m_ans[start] += (double)(m_pointNum - 1) * Label[start];
     std::queue<std::pair<uint, ulong>> q;
     q.push(std::make_pair(start, m_pointNum - 1));
@@ -475,47 +488,118 @@ void GetAnswer(SolverData &Data, const uint &start) {
       }
     }
   }
-}
 
-// 全地球人公用一个clear的接口
-void Clear(SolverData &Data) {
-  uint(&m_points)[MAX_NODE] = Data.points;
-  uint(&m_count)[MAX_NODE] = Data.count;
-  uint(&m_viscount)[MAX_NODE] = Data.viscount;
-  uint(&m_id)[MAX_NODE] = Data.id;
-  bool(&m_vis)[MAX_NODE] = Data.vis;
-  ulong(&m_dis)[MAX_NODE] = Data.dis;
-  double(&m_g)[MAX_NODE] = Data.g;
-  uint &m_pointNum = Data.pointNum;
-  for (uint i = 1; i <= m_pointNum; ++i) {
-    const uint &v = m_points[i];
-    m_dis[v] = UINT64_MAX;
-    m_g[v] = 0;
-    m_vis[v] = false;
-    m_viscount[v] = 0;
-    m_count[v] = 0;
-    m_id[v] = 0;
+  // stl优先队列
+  void dijkstra(const uint &start) {
+    std::priority_queue<Node> pq;
+    pq.push(Node{start, 0});
+    m_dis[start] = 0;
+    m_count[start] = 1;
+    while (!pq.empty()) {
+      Node head = pq.top();
+      pq.pop();
+      uint u = head.idx;
+      if (head.val > m_dis[u]) continue;
+      m_points[++m_pointNum] = u;  //拓扑序
+      const DFSEdge *e = &GHead[Head[u]];
+      const auto &l = Head[u], &r = Head[u + 1];
+      for (uint i = l; i < r; ++i, ++e) {
+        const auto &v = e->idx;
+        const auto &w = e->w;
+        const auto &newdis = m_dis[u] + w;
+        if (newdis < m_dis[v]) {
+          m_count[v] = m_count[u];
+          m_dis[v] = newdis;
+          pq.push(Node{v, m_dis[v]});
+        } else if (newdis == m_dis[v]) {
+          m_count[v] += m_count[u];  // s到e.idx的最短路条数
+        }
+      }
+    }
+    this->getAnswer(start);
+    this->clear();
   }
-  m_pointNum = 0;
-}
+  // 手写堆
+  void dijkstraAtHeap(const uint &start) {
+    this->push(start);
+    m_dis[start] = 0;
+    m_count[start] = 1;
+    while (m_head[0]) {
+      const auto u = m_head[1];
+      this->pop();
+      m_points[++m_pointNum] = u;  //拓扑序
+      const DFSEdge *e = &GHead[Head[u]];
+      for (uint i = Head[u]; i < Head[u + 1]; ++i, ++e) {
+        const auto &v = e->idx;
+        const auto &w = e->w;
+        const auto &newdis = m_dis[u] + w;
+        if (newdis < m_dis[v]) {
+          m_count[v] = m_count[u];
+          m_dis[v] = newdis;
+          if (!m_id[v]) {
+            this->push(v);
+          } else {
+            this->update(m_id[v]);
+          }
+        } else if (newdis == m_dis[v]) {
+          m_count[v] += m_count[u];  // s到e.idx的最短路条数
+        }
+      }
+    }
+    this->getAnswer(start);
+    this->clear();
+  }
 
-/*
- * Team: 孤芳自赏
- * No1. chier
- * No2. XDUls
- * No3. yangzhi__
- *
- * [Stragety: Dijkstra]
- *
- * 这里是一个Dijkstra算法，为了看起来好看，我必须加这个注释
- * 1. std::priority_queue 优先队列记录count
- * 2. 全地球人公用一个更新答案的接口
- * 3. 全地球人公用一个clear的接口
- *
- * 注释不够多，不美观
- */
+ public:
+  void Initialize() {
+    for (uint i = 0; i < g_NodeNum; ++i) {
+      m_count[i] = 0;
+      m_ans[i] = 0;
+      m_dis[i] = UINT64_MAX;
+      m_g[i] = 0;
+      m_head[i] = 0;
+      m_id[i] = 0;
+    }
+  }
 
-void Dijkstra(SolverData &Data, const uint &start) {
+  /*
+   * 1. dijkstra 适合稀疏图
+   * 2. dijkstraAtHeap 适合稠密图
+   */
+  void Run(const uint &start) {
+    if (Top[start] && HeadLen[start] == 1) return;
+    IfSparseGraph ? dijkstra(start) : dijkstraAtHeap(start);
+  }
+
+ public:
+  uint m_pointNum = 0;      // 拓扑点数目
+  uint m_points[MAX_NODE];  // 拓扑点
+  uint m_count[MAX_NODE];   // 最短路径数目
+  uint m_head[MAX_NODE];    // for heap
+  uint m_id[MAX_NODE];      // for heap
+  ulong m_dis[MAX_NODE];    // 最短距离
+  double m_ans[MAX_NODE];   // 保存答案
+  double m_g[MAX_NODE];     // gvalue
+};
+
+// Solver ThSolvers[T];
+
+struct SolverData {
+  uint pointNum = 0;      // 拓扑点数目
+  uint points[MAX_NODE];  // 拓扑点
+  uint count[MAX_NODE];   // 最短路径数目
+  ulong dis[MAX_NODE];    // 最短距离
+  double ans[MAX_NODE];   // 保存答案
+  double g[MAX_NODE];     // gvalue
+};
+SolverData SovData[T];
+
+struct Node {
+  uint idx;
+  ulong val;
+  bool operator<(const Node &r) const { return val > r.val; }
+};
+void dijkstra(SolverData &Data, const uint &start) {
   uint(&m_points)[MAX_NODE] = Data.points;
   uint(&m_count)[MAX_NODE] = Data.count;
   ulong(&m_dis)[MAX_NODE] = Data.dis;
@@ -550,204 +634,52 @@ void Dijkstra(SolverData &Data, const uint &start) {
     }
   }
 
-  GetAnswer(Data, start);
-  Clear(Data);
-}
-
-/*
- * Team: 孤芳自赏
- * No1. chier
- * No2. XDUls
- * No3. yangzhi__
- *
- * [Stragety: Dijkstra with heap手写堆]
- *
- * 这里是一个Dijkstra算法，并用了二叉堆优化，为了看起来好看，我必须加这个注释
- * 1. 手写二叉堆 优先队列记录count
- * 2. 全地球人公用一个更新答案的接口
- * 3. 全地球人公用一个clear的接口
- *
- * 注释不够多，不美观
- */
-
-void Update(SolverData &Data, const uint &x) {
-  for (uint i = x, j = x >> 1; j; i = j, j >>= 1) {
-    if (Data.dis[Data.head[i]] >= Data.dis[Data.head[j]]) return;
-    std::swap(Data.head[i], Data.head[j]);
-    std::swap(Data.id[Data.head[i]], Data.id[Data.head[j]]);
-  }
-}
-void Push(SolverData &Data, const uint &x) {
-  Data.head[++Data.head[0]] = x;
-  Data.id[x] = Data.head[0];
-  Update(Data, Data.head[0]);
-}
-void Pop(SolverData &Data) {
-  Data.id[Data.head[1]] = 0;
-  Data.id[Data.head[Data.head[0]]] = 1;
-  Data.head[1] = Data.head[Data.head[0]--];
-  for (uint i = 1, j = 2; j <= Data.head[0]; i = j, j <<= 1) {
-    if (Data.dis[Data.head[j + 1]] < Data.dis[Data.head[j]]) ++j;
-    if (Data.dis[Data.head[i]] <= Data.dis[Data.head[j]]) return;
-    std::swap(Data.head[i], Data.head[j]);
-    std::swap(Data.id[Data.head[i]], Data.id[Data.head[j]]);
-  }
-}
-
-void DijkstraAtHeap(SolverData &Data, const uint &start) {
-  uint(&m_points)[MAX_NODE] = Data.points;
-  uint(&m_count)[MAX_NODE] = Data.count;
-  uint(&m_head)[MAX_NODE] = Data.head;
-  uint(&m_id)[MAX_NODE] = Data.id;
-  ulong(&m_dis)[MAX_NODE] = Data.dis;
-  double(&m_ans)[MAX_NODE] = Data.ans;
-  double(&m_g)[MAX_NODE] = Data.g;
-  uint &m_pointNum = Data.pointNum;
-
-  // 找路
-  Push(Data, start);
-  m_dis[start] = 0;
-  m_count[start] = 1;
-  while (m_head[0]) {
-    const auto u = m_head[1];
-    Pop(Data);
-    m_points[++m_pointNum] = u;  //拓扑序
+  // 更新ans
+  double pw = Label[start] + 1;
+  for (uint p = m_pointNum; p > 1; --p) {
+    const uint &u = m_points[p];
     const DFSEdge *e = &GHead[Head[u]];
-    for (uint i = Head[u]; i < Head[u + 1]; ++i, ++e) {
-      const auto &v = e->idx;
-      const auto &w = e->w;
-      const auto &newdis = m_dis[u] + w;
-      if (newdis < m_dis[v]) {
-        m_count[v] = m_count[u];
-        m_dis[v] = newdis;
-        if (!m_id[v]) {
-          Push(Data, v);
-        } else {
-          Update(Data, m_id[v]);
-        }
-      } else if (newdis == m_dis[v]) {
-        m_count[v] += m_count[u];  // s到e.idx的最短路条数
+    const auto &l = Head[u], &r = Head[u + 1];
+    for (uint i = l; i < r; ++i, ++e) {
+      const uint &v = e->idx;
+      if (m_dis[u] + e->w == m_dis[v]) {
+        m_g[u] += m_g[v];
+      }
+    }
+    m_ans[u] += (double)(m_g[u] * (double)m_count[u] * pw);
+    m_g[u] += (double)(1.0 / (double)(m_count[u]));
+  }
+
+  if (Label[start] > 0) {
+    m_ans[start] += (double)(m_pointNum - 1) * Label[start];
+    std::queue<std::pair<uint, ulong>> q;
+    q.push(std::make_pair(start, m_pointNum - 1));
+    while (!q.empty()) {
+      auto head = q.front();
+      const uint &u = head.first;
+      const ulong &cnt = head.second;
+      q.pop();
+      for (uint i = Back[u]; i < Back[u + 1]; ++i) {
+        const auto &e = GBack[i];
+        if (Label[e.idx] <= 0 || !Top[e.idx] || HeadLen[e.idx] != 1) continue;
+        double x = Label[e.idx] * (cnt + 1);
+        m_ans[e.idx] += x;
+        q.push(std::make_pair(e.idx, cnt + 1));
       }
     }
   }
 
-  GetAnswer(Data, start);
-  Clear(Data);
+  // 清空
+  for (uint i = 1; i <= m_pointNum; ++i) {
+    const uint &v = m_points[i];
+    m_dis[v] = UINT64_MAX;
+    m_g[v] = 0;
+  }
+  m_pointNum = 0;
 }
 
-/*
- * Team: 孤芳自赏
- * No1. chier
- * No2. XDUls
- * No3. yangzhi__
- *
- * [Stragety: SPFA]
- *
- * 这里是一个朴素SPFA算法，为了看起来好看，我必须加这个注释
- * 1. 找最短路
- * 2. 构造拓扑序
- * 3. 全地球人公用一个更新答案的接口
- * 4. 全地球人公用一个clear的接口
- *
- * 注释不够多，不美观
- */
-
-void SPFA(SolverData &Data, const uint &start) {
-  uint(&m_points)[MAX_NODE] = Data.points;
-  uint(&m_count)[MAX_NODE] = Data.count;
-  uint(&m_viscount)[MAX_NODE] = Data.viscount;
-  bool(&m_vis)[MAX_NODE] = Data.vis;
-  ulong(&m_dis)[MAX_NODE] = Data.dis;
-  double(&m_ans)[MAX_NODE] = Data.ans;
-  double(&m_g)[MAX_NODE] = Data.g;
-  uint &m_pointNum = Data.pointNum;
-
-  std::queue<uint> q;
-  q.push(start);
-  m_vis[start] = true;
-  m_dis[start] = 0;
-
-  while (!q.empty()) {
-    const uint u = q.front();
-    q.pop();
-    m_vis[u] = false;
-
-    const DFSEdge *e = &GHead[Head[u]];
-    for (uint i = Head[u]; i < Head[u + 1]; ++i, ++e) {
-      const auto &v = e->idx;
-      const auto &w = e->w;
-      const auto &newdis = m_dis[u] + w;
-      if (newdis < m_dis[v]) {
-        m_dis[v] = newdis;
-        m_viscount[v] = 1;
-        if (!m_vis[v]) {
-          m_vis[v] = true;
-          q.push(v);
-        }
-      } else if (newdis == m_dis[v]) {
-        ++m_viscount[v];
-      }
-    }
-  }
-
-  // 构造拓扑序
-  uint l = 0;
-  m_points[++m_pointNum] = start;
-  m_count[start] = 1;
-  while (m_pointNum > l) {
-    int u = m_points[++l];
-    for (uint i = Head[u]; i < Head[u + 1]; ++i) {
-      const auto &e = GHead[i];
-      if (m_dis[u] + e.w == m_dis[e.idx]) {
-        if (!--m_viscount[e.idx]) m_points[++m_pointNum] = e.idx;
-        m_count[e.idx] += m_count[u];
-      }
-    }
-  }
-
-  // 更新答案
-  GetAnswer(Data, start);
-  Clear(Data);
-}
-
-/*
- * Team: 孤芳自赏
- * No1. chier
- * No2. XDUls
- * No3. yangzhi__
- *
- * [这里是我Simulation部分]
- *
- * 这里是一个simulation，调度任务，为了看起来好看，我必须加这个注释
- * 1. TopSort: 拓扑排序，为了gay掉可以删除的点
- * 2. GetJob: atomic维护任务队列，动态调度任务
- * 3. FindTask: 启动线程，选择哪种策略开始Gay
- *
- * 注释不够多，不美观
- */
-
-void TopSort() {
-  std::queue<uint> q;
-  for (uint i = 0; i < g_NodeNum; ++i) {
-    if (BackLen[i] == 0) q.push(i);
-  }
-  while (!q.empty()) {
-    uint u = q.front();
-    q.pop();
-
-    Top[u] = true;
-
-    for (uint i = Head[u]; i < Head[u + 1]; ++i) {
-      const auto &e = GHead[i];
-      if (HeadLen[u] == 1) {
-        Label[e.idx] += (Label[u] + 1);
-      }
-      if (--BackLen[e.idx] <= 0) q.push(e.idx);
-    }
-  }
-}
-
-inline void GetJob(uint &job) {
+// atomic for job
+inline void getJob(uint &job) {
   static uint l = 0;
   static std::atomic_flag lock = ATOMIC_FLAG_INIT;
   while (lock.test_and_set())
@@ -756,11 +688,7 @@ inline void GetJob(uint &job) {
   lock.clear();
 }
 
-void printProcess(const uint &job) {
-  if (job % 1000 == 0) {
-    std::cerr << "[" << job << "/" << g_NodeNum << "]\n";
-  }
-}
+void printProcess(const uint &job) {}
 
 void FindTask(uint pid) {
   auto &Data = SovData[pid];
@@ -769,57 +697,20 @@ void FindTask(uint pid) {
     Data.ans[i] = 0;
     Data.dis[i] = UINT64_MAX;
     Data.g[i] = 0;
-    Data.head[i] = 0;
-    Data.id[i] = 0;
-    Data.vis[i] = false;
-    Data.viscount[i] = 0;
   }
 
   uint job = 0;
   while (true) {
-    GetJob(job);
+    getJob(job);
     if (job == -1) break;
     if (Top[job] && HeadLen[job] == 1) continue;
-
-    /*
-     * GAY B, GAY wo
-     * 1. Dijkstra 稀疏图
-     * 2. DijkstraAtHeap 稠密图
-     * 3. SPFA 我也不知道能咋
-     */
-
-    int rd = random() % 3;
-    if (rd == 0) {
-      Dijkstra(Data, job);
-    } else if (rd == 1) {
-      DijkstraAtHeap(Data, job);
-    } else {
-      SPFA(Data, job);
-    }
-    // Dijkstra(Data, job);
-    // DijkstraAtHeap(Data, job);
-    // SPFA(Data, job);
-
+    // solver.Run(job);
+    dijkstra(Data, job);
 #ifdef DEBUG
     printProcess(job);
 #endif
   }
 }
-
-/*
- * Team: 孤芳自赏
- * No1. chier
- * No2. XDUls
- * No3. yangzhi__
- *
- * [这里是我处理答案部分]
- *
- * 这里是一个SaveAnswer，为了看起来好看，我必须加这个注释
- * 1. Find: 启动T个线程,完了之后合并答案
- * 2. SaveAnswer: 答案排一下顺序,然后保存到文件
- *
- * 注释不够多，不美观
- */
 
 typedef std::pair<uint, double> prud;
 std::vector<prud> Answer;  // 最终结果
@@ -862,21 +753,6 @@ void SaveAnswer() {
   fclose(fp);
 }
 
-/*
- * Team: 孤芳自赏
- * No1. chier
- * No2. XDUls
- * No3. yangzhi__
- *
- * [这里是我分析地图特征的部分]
- *
- * 这里是一个分析地图特征，为了看起来好看，我必须加这个注释
- * 1. UnionSet: 并查集瞅一瞅有多少个联通快
- * 2. AnalysisGraph: 分析一下稠密图还是稀疏图，打印一下地图情况
- *
- * 注释不够多，不美观
- */
-
 void UnionSet() {
   for (uint i = 0; i <= g_NodeNum; ++i) Fa[i] = i;
   for (uint i = 0; i < g_EdgeNum; ++i) {
@@ -898,46 +774,31 @@ void AnalysisGraph() {
   Timer t;
 #endif
   // E <= V * 10 -> 稀疏图
-  IfSparseGraph = g_EdgeNum <= 10 * g_NodeNum ? true : false;
-  UnionSet();
-  uint cnt = 0;
-  for (uint i = 0; i < g_NodeNum; ++i) {
-    if (Top[i] && HeadLen[i] == 1) {
-      ++cnt;
-    }
-  }
+  // IfSparseGraph = g_EdgeNum <= 10 * g_NodeNum ? true : false;
+  // UnionSet();
 #ifdef DEBUG
   Color::green();
   std::cerr << "==================================\n";
-  std::cerr << "* 地图: " << (IfSparseGraph ? "稀疏图" : "稠密图") << "\n";
+  std::cerr << "* 地图类型: " << (IfSparseGraph ? "稀疏图" : "稠密图") << "\n";
   std::cerr << "* 结点: " << g_NodeNum << "\n";
   std::cerr << "* 边数: " << g_EdgeNum << "\n";
   std::cerr << "* 集合: " << BlockNum << "\n";
-  std::cerr << "* 删除: " << cnt << "\n";
+  std::cerr << "* 平均出度: " << (double)g_EdgeNum / (double)g_NodeNum << "\n";
   std::cerr << "* cost: " << t.elapsed() << "s\n";
   std::cerr << "==================================\n";
   Color::reset();
 #endif
 }
 
-/*
- * Team: 孤芳自赏
- * No1. chier
- * No2. XDUls
- * No3. yangzhi__
- *
- * [这里是程序main函数]，这里要是看不懂就别写代码了
- *
- * 注释不够多，不美观
- */
 int main() {
   std::cerr << std::fixed << std::setprecision(4);
 
   LoadData();
-  TopSort();
   AnalysisGraph();
+  TopSort();
   Find();
   SaveAnswer();
 
+  // sleep(60);
   return 0;
 }

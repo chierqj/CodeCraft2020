@@ -19,10 +19,9 @@ test_file[7]="../data/data7/test_data.txt"
 test_file[8]="../data/data8/test_data.txt"
 test_file[9]="../data/data9/test_data.txt"
 test_file[10]="../data/data10/test_data.txt"
-test_file[11]="../data/data11/test_data.txt"
-test_file[12]="../data/data12/test_data.txt"
-test_file[13]="../data/std/test_data.txt"
-test_file[14]="../data/big/test_data.txt"
+test_file[11]="../data/std1/test_data.txt"
+test_file[12]="../data/std2/test_data.txt"
+test_file[13]="../data/std3/test_data.txt"
 
 
 answer_file[0]="../data/data0/answer.txt"
@@ -36,15 +35,14 @@ answer_file[7]="../data/data7/answer.txt"
 answer_file[8]="../data/data8/answer.txt"
 answer_file[9]="../data/data9/answer.txt"
 answer_file[10]="../data/data10/answer.txt"
-answer_file[11]="../data/data11/answer.txt"
-answer_file[12]="../data/data12/answer.txt"
-answer_file[13]="../data/std/answer.txt"
-answer_file[14]="../data/big/answer.txt"
+answer_file[11]="../data/std1/answer.txt"
+answer_file[12]="../data/std2/answer.txt"
+answer_file[13]="../data/std3/answer.txt"
 
 
 
 
-g++ -std=c++11 -O3 $1 -o main -lpthread -fpic
+g++ -std=c++11 -O3 $1 -o main -lpthread -fpic -D DEBUG
 
 if [ ! -d "/data/" ]
 then
