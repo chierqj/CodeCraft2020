@@ -607,6 +607,7 @@ void dijkstra(SolverData &Data, const uint &start) {
   double(&m_g)[MAX_NODE] = Data.g;
   uint &m_pointNum = Data.pointNum;
 
+  // 找路
   std::priority_queue<Node> pq;
   pq.push(Node{start, 0});
   m_dis[start] = 0;
@@ -633,6 +634,7 @@ void dijkstra(SolverData &Data, const uint &start) {
     }
   }
 
+  // 更新ans
   double pw = Label[start] + 1;
   for (uint p = m_pointNum; p > 1; --p) {
     const uint &u = m_points[p];
@@ -667,6 +669,7 @@ void dijkstra(SolverData &Data, const uint &start) {
     }
   }
 
+  // 清空
   for (uint i = 1; i <= m_pointNum; ++i) {
     const uint &v = m_points[i];
     m_dis[v] = UINT64_MAX;
@@ -688,8 +691,6 @@ inline void getJob(uint &job) {
 void printProcess(const uint &job) {}
 
 void FindTask(uint pid) {
-  // auto &solver = ThSolvers[pid];
-  // solver.Initialize();
   auto &Data = SovData[pid];
   for (uint i = 0; i < g_NodeNum; ++i) {
     Data.count[i] = 0;
@@ -773,8 +774,8 @@ void AnalysisGraph() {
   Timer t;
 #endif
   // E <= V * 10 -> 稀疏图
-  IfSparseGraph = g_EdgeNum <= 10 * g_NodeNum ? true : false;
-  UnionSet();
+  // IfSparseGraph = g_EdgeNum <= 10 * g_NodeNum ? true : false;
+  // UnionSet();
 #ifdef DEBUG
   Color::green();
   std::cerr << "==================================\n";
