@@ -381,11 +381,11 @@ void LoadData() {
 /************************** LoadData End ****************************/
 
 /************************** Algorithm Start ****************************/
-uint Fa[MAX_NODE];                       // 并查集
-uint BlockNum = 0;                       // 集合数目
-std::pair<uint, uint> Blocks[MAX_NODE];  // 并查集(V,E)
-ulong Label[MAX_NODE];                   // topsort 标记
-bool Top[MAX_NODE];                      // Top
+uint Fa[MAX_NODE];                      // 并查集
+uint BlockNum = 0;                      // 集合数
+std::pair<uint, uint> Block[MAX_NODE];  // 集合内(V, E)
+ulong Label[MAX_NODE] = {0};            // topsort 标记
+bool Top[MAX_NODE];                     // Top
 
 uint getFa(uint x) { return Fa[x] == x ? x : Fa[x] = getFa(Fa[x]); }
 
@@ -420,37 +420,14 @@ class Solver {
    * 1. dijkstr寻找最短路
    * 2. 利用拆分的公式计算中心性
    */
- private:
-  void update(const uint &x) {
-    for (uint i = x, j = x >> 1; j; i = j, j >>= 1) {
-      if (m_dis[m_head[i]] >= m_dis[m_head[j]]) return;
-      std::swap(m_head[i], m_head[j]);
-      std::swap(m_id[m_head[i]], m_id[m_head[j]]);
-    }
-  }
-  void push(const uint &x) {
-    m_head[++m_head[0]] = x;
-    m_id[x] = m_head[0];
-    update(m_head[0]);
-  }
-  void pop() {
-    m_id[m_head[1]] = 0;
-    m_id[m_head[m_head[0]]] = 1;
-    m_head[1] = m_head[m_head[0]--];
-    for (uint i = 1, j = 2; j <= m_head[0]; i = j, j <<= 1) {
-      if (m_dis[m_head[j + 1]] < m_dis[m_head[j]]) ++j;
-      if (m_dis[m_head[i]] <= m_dis[m_head[j]]) return;
-      std::swap(m_head[i], m_head[j]);
-      std::swap(m_id[m_head[i]], m_id[m_head[j]]);
-    }
-  }
 
+ private:
   void clear() {
     for (uint i = 1; i <= m_pointNum; ++i) {
       const uint &v = m_points[i];
       m_dis[v] = UINT64_MAX;
+      m_vis[v] = false;
       m_g[v] = 0;
-      m_id[v] = 0;
     }
     m_pointNum = 0;
   }
@@ -462,9 +439,8 @@ class Solver {
       const DFSEdge *e = &GHead[Head[u]];
       const auto &l = Head[u], &r = Head[u + 1];
       for (uint i = l; i < r; ++i, ++e) {
-        const uint &v = e->idx;
-        if (m_dis[u] + e->w == m_dis[v]) {
-          m_g[u] += m_g[v];
+        if (m_dis[u] + e->w == m_dis[e->idx]) {
+          m_g[u] += m_g[e->idx];
         }
       }
       m_ans[u] += (double)(m_g[u] * (double)m_count[u] * pw);
@@ -472,19 +448,18 @@ class Solver {
     }
     if (Label[start] <= 0) return;
     m_ans[start] += (double)(m_pointNum - 1) * Label[start];
-    std::queue<std::pair<uint, ulong>> q;
-    q.push(std::make_pair(start, m_pointNum - 1));
-    while (!q.empty()) {
-      auto head = q.front();
+    uint l = 0, r = 0;
+    m_q[r++] = std::make_pair(start, m_pointNum - 1);
+    while (l < r) {
+      const auto &head = m_q[l++];
       const uint &u = head.first;
       const ulong &cnt = head.second;
-      q.pop();
       for (uint i = Back[u]; i < Back[u + 1]; ++i) {
         const auto &e = GBack[i];
         if (Label[e.idx] <= 0 || !Top[e.idx] || HeadLen[e.idx] != 1) continue;
         double x = Label[e.idx] * (cnt + 1);
         m_ans[e.idx] += x;
-        q.push(std::make_pair(e.idx, cnt + 1));
+        m_q[r++] = std::make_pair(e.idx, cnt + 1);
       }
     }
   }
@@ -496,10 +471,10 @@ class Solver {
     m_dis[start] = 0;
     m_count[start] = 1;
     while (!pq.empty()) {
-      Node head = pq.top();
+      const auto u = pq.top().idx;
       pq.pop();
-      uint u = head.idx;
-      if (head.val > m_dis[u]) continue;
+      if (m_vis[u]) continue;
+      m_vis[u] = true;
       m_points[++m_pointNum] = u;  //拓扑序
       const DFSEdge *e = &GHead[Head[u]];
       const auto &l = Head[u], &r = Head[u + 1];
@@ -519,36 +494,6 @@ class Solver {
     this->getAnswer(start);
     this->clear();
   }
-  // 手写堆
-  void dijkstraAtHeap(const uint &start) {
-    this->push(start);
-    m_dis[start] = 0;
-    m_count[start] = 1;
-    while (m_head[0]) {
-      const auto u = m_head[1];
-      this->pop();
-      m_points[++m_pointNum] = u;  //拓扑序
-      const DFSEdge *e = &GHead[Head[u]];
-      for (uint i = Head[u]; i < Head[u + 1]; ++i, ++e) {
-        const auto &v = e->idx;
-        const auto &w = e->w;
-        const auto &newdis = m_dis[u] + w;
-        if (newdis < m_dis[v]) {
-          m_count[v] = m_count[u];
-          m_dis[v] = newdis;
-          if (!m_id[v]) {
-            this->push(v);
-          } else {
-            this->update(m_id[v]);
-          }
-        } else if (newdis == m_dis[v]) {
-          m_count[v] += m_count[u];  // s到e.idx的最短路条数
-        }
-      }
-    }
-    this->getAnswer(start);
-    this->clear();
-  }
 
  public:
   void Initialize() {
@@ -557,29 +502,22 @@ class Solver {
       m_ans[i] = 0;
       m_dis[i] = UINT64_MAX;
       m_g[i] = 0;
-      m_head[i] = 0;
-      m_id[i] = 0;
     }
   }
-
-  /*
-   * 1. dijkstra 适合稀疏图
-   * 2. dijkstraAtHeap 适合稠密图
-   */
   void Run(const uint &start) {
     if (Top[start] && HeadLen[start] == 1) return;
-    IfSparseGraph ? dijkstra(start) : dijkstraAtHeap(start);
+    this->dijkstra(start);
   }
 
  public:
-  uint m_pointNum = 0;      // 拓扑点数目
-  uint m_points[MAX_NODE];  // 拓扑点
-  uint m_count[MAX_NODE];   // 最短路径数目
-  uint m_head[MAX_NODE];    // for heap
-  uint m_id[MAX_NODE];      // for heap
-  ulong m_dis[MAX_NODE];    // 最短距离
-  double m_ans[MAX_NODE];   // 保存答案
-  double m_g[MAX_NODE];     // gvalue
+  uint m_pointNum = 0;                   // 拓扑点数目
+  uint m_points[MAX_NODE];               // 拓扑点
+  uint m_count[MAX_NODE];                // 最短路径数目
+  ulong m_dis[MAX_NODE];                 // 最短距离
+  bool m_vis[MAX_NODE];                  // vis
+  double m_ans[MAX_NODE];                // 保存答案
+  double m_g[MAX_NODE];                  // gvalue
+  std::pair<uint, ulong> m_q[MAX_NODE];  // q
 };
 
 Solver ThSolvers[T];
@@ -664,8 +602,8 @@ void UnionSet() {
   for (uint i = 0; i < g_NodeNum; ++i) {
     uint x = getFa(i);
     if (x == i) BlockNum++;
-    ++Blocks[x].first;
-    Blocks[x].second += HeadLen[i];
+    ++Block[x].first;
+    Block[x].second += HeadLen[i];
   }
 }
 
@@ -675,7 +613,7 @@ void AnalysisGraph() {
 #endif
   // E <= V * 10 -> 稀疏图
   IfSparseGraph = g_EdgeNum <= 10 * g_NodeNum ? true : false;
-  UnionSet();
+  // UnionSet();
 #ifdef DEBUG
   Color::green();
   std::cerr << "==================================\n";
@@ -694,7 +632,7 @@ int main() {
   std::cerr << std::fixed << std::setprecision(4);
 
   LoadData();
-  AnalysisGraph();
+  // AnalysisGraph();
   TopSort();
   Find();
   SaveAnswer();

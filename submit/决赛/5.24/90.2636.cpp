@@ -381,11 +381,11 @@ void LoadData() {
 /************************** LoadData End ****************************/
 
 /************************** Algorithm Start ****************************/
-uint Fa[MAX_NODE];                       // 并查集
-uint BlockNum = 0;                       // 集合数目
-std::pair<uint, uint> Blocks[MAX_NODE];  // 并查集(V,E)
-ulong Label[MAX_NODE];                   // topsort 标记
-bool Top[MAX_NODE];                      // Top
+uint Fa[MAX_NODE];                      // 并查集
+uint BlockNum = 0;                      // 集合数
+std::pair<uint, uint> Block[MAX_NODE];  // 集合内(V, E)
+ulong Label[MAX_NODE] = {0};            // topsort 标记
+bool Top[MAX_NODE];                     // Top
 
 uint getFa(uint x) { return Fa[x] == x ? x : Fa[x] = getFa(Fa[x]); }
 
@@ -449,6 +449,7 @@ class Solver {
     for (uint i = 1; i <= m_pointNum; ++i) {
       const uint &v = m_points[i];
       m_dis[v] = UINT64_MAX;
+      // m_vis[v] = false;
       m_g[v] = 0;
       m_id[v] = 0;
     }
@@ -462,9 +463,8 @@ class Solver {
       const DFSEdge *e = &GHead[Head[u]];
       const auto &l = Head[u], &r = Head[u + 1];
       for (uint i = l; i < r; ++i, ++e) {
-        const uint &v = e->idx;
-        if (m_dis[u] + e->w == m_dis[v]) {
-          m_g[u] += m_g[v];
+        if (m_dis[u] + e->w == m_dis[e->idx]) {
+          m_g[u] += m_g[e->idx];
         }
       }
       m_ans[u] += (double)(m_g[u] * (double)m_count[u] * pw);
@@ -496,10 +496,11 @@ class Solver {
     m_dis[start] = 0;
     m_count[start] = 1;
     while (!pq.empty()) {
-      Node head = pq.top();
+      const auto head = pq.top();
+      const auto &u = head.idx;
+      const auto &d = head.val;
       pq.pop();
-      uint u = head.idx;
-      if (head.val > m_dis[u]) continue;
+      if (d != m_dis[u]) continue;
       m_points[++m_pointNum] = u;  //拓扑序
       const DFSEdge *e = &GHead[Head[u]];
       const auto &l = Head[u], &r = Head[u + 1];
@@ -520,7 +521,7 @@ class Solver {
     this->clear();
   }
   // 手写堆
-  void dijkstraAtHeap(const uint &start) {
+  void dijkstraWithHeap(const uint &start) {
     this->push(start);
     m_dis[start] = 0;
     m_count[start] = 1;
@@ -550,8 +551,54 @@ class Solver {
     this->clear();
   }
 
+  void dijkstraZKW(const uint &start) {
+    build(g_NodeNum + 1);
+    modify(start, 0);
+    for (uint t = 0; t < g_NodeNum; ++t) {
+      uint u = mp[1];
+      del(u);
+      --u;
+      const DFSEdge *e = &GHead[Head[u]];
+      for (uint i = Head[u]; i < Head[u + 1]; ++i, ++e) {
+        const auto &v = e->idx;
+        const auto &w = e->w;
+        const auto &newdis = m_dis[u] + w;
+        if (newdis < m_dis[v]) {
+          m_count[v] = m_count[u];
+          m_dis[v] = newdis;
+          modify(v, newdis);
+        } else if (newdis == m_dis[v]) {
+          m_count[v] += m_count[u];  // s到e.idx的最短路条数
+        }
+      }
+      // erp(i, x) if (dist[v[i]] > dist[x] + w[i]) modify(v[i], dist[x] +
+      // w[i]);
+    }
+    this->getAnswer(start);
+    this->clear();
+  }
+
  public:
+  uint M = 1;
+  std::vector<uint> mp;
+  inline int cmp(int a, int b) { return m_dis[a] < m_dis[b] ? a : b; }
+  inline void build(int n) {
+    M = 1;
+    while (M < n + 2) M <<= 1;
+    mp[0] = n + 1;
+  }
+  inline void modify(int x, ulong nv) {
+    for (int i = x + M; m_dis[mp[i]] > nv; i >>= 1) mp[i] = x;
+    m_dis[x] = nv;
+  }
+  inline void del(int x) {
+    for (mp[x += M] = 0, x >>= 1; x;
+         mp[x] = cmp(mp[x << 1], mp[x << 1 | 1]), x >>= 1)
+      ;
+  }
+
   void Initialize() {
+    mp = std::vector<uint>((g_NodeNum << 2) + 7);
     for (uint i = 0; i < g_NodeNum; ++i) {
       m_count[i] = 0;
       m_ans[i] = 0;
@@ -561,14 +608,11 @@ class Solver {
       m_id[i] = 0;
     }
   }
-
-  /*
-   * 1. dijkstra 适合稀疏图
-   * 2. dijkstraAtHeap 适合稠密图
-   */
   void Run(const uint &start) {
     if (Top[start] && HeadLen[start] == 1) return;
-    IfSparseGraph ? dijkstra(start) : dijkstraAtHeap(start);
+    this->dijkstra(start);
+    // this->dijkstraWithHeap(start);
+    // this->dijkstraZKW(start);
   }
 
  public:
@@ -664,8 +708,8 @@ void UnionSet() {
   for (uint i = 0; i < g_NodeNum; ++i) {
     uint x = getFa(i);
     if (x == i) BlockNum++;
-    ++Blocks[x].first;
-    Blocks[x].second += HeadLen[i];
+    ++Block[x].first;
+    Block[x].second += HeadLen[i];
   }
 }
 
@@ -675,7 +719,7 @@ void AnalysisGraph() {
 #endif
   // E <= V * 10 -> 稀疏图
   IfSparseGraph = g_EdgeNum <= 10 * g_NodeNum ? true : false;
-  UnionSet();
+  // UnionSet();
 #ifdef DEBUG
   Color::green();
   std::cerr << "==================================\n";
