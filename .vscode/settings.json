@@ -82,6 +82,7 @@
     "queue": "cpp",
     "hash_map": "cpp",
     "future": "cpp",
-    "list": "cpp"
+    "list": "cpp",
+    "cassert": "cpp"
   }
 }

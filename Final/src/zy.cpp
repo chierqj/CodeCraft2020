@@ -1,3 +1,4 @@
+#include <bits/stdc++.h>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -6,6 +7,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <ext/pb_ds/priority_queue.hpp>
 #include <iostream>
 #include <map>
 #include <queue>
@@ -19,9 +21,13 @@ using namespace std;
 #ifdef LOCAL
 
 #include <sys/time.h>
-#define TESTFILE "../data/gen/test_data.txt"
+
+//#define TESTFILE "/data/onlinedata/data6/test_data.txt"
 //#define TESTFILE "/data/1w/test_data.txt"
-#define RESULT "../data/gen/result.txt"
+//#define TESTFILE "data/newsmall/node1wedge2w.txt"
+#define TESTFILE "../data/std1/test_data.txt"
+//#define TESTFILE "data/oneedge.txt"
+#define RESULT "../data/std1/result.txt"
 #else
 #define TESTFILE "/data/test_data.txt"
 #define RESULT "/projects/student/result.txt"
@@ -32,11 +38,16 @@ using namespace std;
 
 /**全局常量**/
 const uint kMaxE = 3000024;    //最大边数
-const uint kMaxN = 1000024;    //最大点数
+const uint kMaxN = 5000024;    //最大点数
 const uint kThreadNum = 8;     //进程/线程数量
 const uint kMaxIdStrLen = 12;  //整数表示的ID有多长
-
+enum { SPFA, DIJ, DIJHEAP, DIJSEGTREE };
+const int GLOBAL_STRATEGY = DIJSEGTREE;
 /**结构体**/
+// typedef pair<ulong, uint> Pli;
+// typedef __gnu_pbds::priority_queue<Pli, greater<Pli>,
+// __gnu_pbds::pairing_heap_tag> Heap;
+
 class HashMap {
   //优化的unordered map from github
  private:
@@ -95,6 +106,92 @@ class HashMap {
   }
 };
 
+template <class T>
+class Vec {
+  uint elem_cnt;
+  uint elem_capacity;
+  T *elem;
+
+ public:
+  /** Default constructor */
+  explicit Vec<T>(uint s)
+      : elem_cnt(0),
+        elem_capacity(s),
+        elem{static_cast<T *>(::operator new(sizeof(T) * elem_capacity))} {};
+  explicit Vec<T>() : elem_cnt(0), elem_capacity(0), elem(nullptr){};
+  Vec<T>(const Vec<T> &other)
+      : elem_cnt(other.elem_cnt),
+        elem_capacity(other.elem_capacity),
+        elem(new T[elem_cnt]) {
+    for (uint i = 0; i < elem_cnt; ++i) elem[i] = other.elem[i];
+  }
+
+  Vec<T> &operator=(const Vec<T> &other) {
+    for (uint i = 0; i < elem_cnt; ++i) elem[i] = other.elem[i];
+    elem_cnt = other.elem_cnt;
+    elem_capacity = other.elem_capacity;
+    return *this;
+  }
+
+  T *begin() { return elem; }
+
+  T *begin() const { return elem; }
+
+  T *end() { return (elem + elem_cnt); }
+
+  T *end() const { return (elem + elem_cnt); }
+
+  T &operator[](uint n) { return elem[n]; }
+
+  T &operator[](uint n) const { return elem[n]; }
+
+  inline uint size() const { return elem_cnt; }
+
+  template <typename... Args>
+  inline void emplace_back(Args &&... args) noexcept {
+    if (elem_cnt == elem_capacity) {
+      reserve(elem_capacity * 2 + 1);
+    }
+    new (&elem[elem_cnt++]) T(std::forward<Args>(args)...);
+  }
+  void reserve(const uint &n) {
+    /*        if (elem_capacity < n) {
+                T* tmp=static_cast<T*>(realloc(elem,n* sizeof(T)));
+                elem=tmp;
+                elem_capacity = n;
+            }*/
+    if (elem_capacity < n) {
+      elem_capacity = n;
+      T *tmp{static_cast<T *>(::operator new(sizeof(T) * elem_capacity))};
+      memmove(tmp, &elem[0], sizeof(T) * elem_cnt);
+      ::operator delete(elem);
+      elem = tmp;
+    }
+  }
+  inline bool empty() { return elem_cnt == 0; }
+  inline void push_back(T &value) {
+    if (elem_cnt >= elem_capacity) {
+      reserve(elem_capacity * 2 + 1);
+    }
+    elem[elem_cnt++] = value;
+  }
+  inline void push_back(const T &value) {
+    if (elem_cnt >= elem_capacity) {
+      reserve(elem_capacity * 2 + 1);
+    }
+    elem[elem_cnt++] = value;
+  }
+  inline void clear() { elem_cnt = 0; }
+  //只有在第二次改元素才能用
+  inline void reInit(const T &value) {
+    if (elem_cnt >= elem_capacity) {
+      reserve(elem_capacity * 2 + 1);
+    }
+    elem_cnt = 1;
+    elem[0] = value;
+  }
+};
+
 struct RawEdge {
   uint u;
   uint v;
@@ -108,6 +205,50 @@ struct IdString {
   uint len;
   char val[kMaxIdStrLen];
 };
+struct SPPQNode {
+  uint u;
+  ulong dist;
+
+  bool operator<(const SPPQNode &x) const { return dist > x.dist; }
+};
+struct SegmentTree {
+  uint n = 0;
+  uint offset = 1;
+  vector<ulong> min_w;
+  // vector<uint> min_pos;
+  SegmentTree() = default;
+  explicit SegmentTree(uint node_num) {
+    n = node_num;
+    min_w = vector<ulong>(4 * node_num + 4, UINT64_MAX);
+    while (offset < n) offset = offset << 1;
+  }
+
+  void modify(uint pos, ulong w) {
+    // update(1, 0, offset - 1, pos, w);
+    update2(pos, w);
+  }
+
+  void backUpdate(uint at) {
+    min_w[at] = min_w[at << 1] < min_w[at << 1 | 1] ? min_w[at << 1]
+                                                    : min_w[at << 1 | 1];
+    if (at > 1) backUpdate(at >> 1);
+  }
+  void update2(uint pos, ulong w) {
+    min_w[pos + offset] = w;
+    backUpdate((pos + offset) >> 1);
+  }
+
+  uint query(uint at, uint left, uint right) {
+    if (left == right) return left;
+    uint mid = (left + right) >> 1;
+    if (min_w[at << 1] < min_w[at << 1 | 1])
+      return query(at << 1, left, mid);
+    else
+      return query(at << 1 | 1, mid + 1, right);
+  }
+
+  uint top() { return query(1, 0, offset - 1); }
+};
 
 struct WorkerLoadInfo {
   uint node_num = 0;
@@ -116,13 +257,23 @@ struct WorkerLoadInfo {
   // unordered_map<uint, uint> id_map;
   HashMap id_map;
   RawEdge raw_edge[kMaxE];
-  uint mod_edge_num[kThreadNum];
+  uint mod_edge_num[kThreadNum]{};
   RawEdge mod_edge[kThreadNum][kMaxE / kThreadNum + 1];
-  uint mod_y_num[kThreadNum];
-  uint mod_y[kThreadNum][kMaxN / kThreadNum + 1];
+  uint mod_y_num[kThreadNum]{};
+  uint mod_y[kThreadNum][kMaxE / kThreadNum + 1];
 };
+// TODO 连通分量  稠密时用指针++访问
 struct WorkerFindInfo {
-  vector<bool> found;
+  ulong dist[kMaxN];
+
+  Vec<uint> prev[kMaxN];
+  Vec<uint> back[kMaxN];
+  double res[kMaxN];
+  bool vis[kMaxN];
+  uint path_num[kMaxN];
+  uint tp[kMaxN];  //拓扑
+
+  SegmentTree seg_tree;
   vector<double> result;
 };
 
@@ -143,6 +294,10 @@ vector<double> g_result;  //关键中心性
 atomic_flag g_find_lock = ATOMIC_FLAG_INIT;
 uint g_find_num = 0;
 
+uint g_in_list_size[kMaxN];
+uint g_in_list_offset[kMaxN];
+uint g_in_list[kMaxN];
+BriefEdge g_reverse_edge[kMaxE];
 /**读数据*/
 void addEdge(uint x, uint y, ulong w, WorkerLoadInfo &data) {
   if (w == 0) return;
@@ -396,6 +551,7 @@ void buildGraph(uint pid) {
     }
     if (e->v % kThreadNum == pid) {
       // g_in_list_old[e->v].emplace_back(e->u, e->w);
+      g_in_list_size[e->v]++;
       BriefEdge &b = g_edge[i];
       b.v = e->v;
       b.w = e->w;
@@ -413,6 +569,24 @@ void buildGraphFixTail() {
   for (uint i = tail; i > first_unzero; --i) {
     if (g_out_list[i] == 0) {
       g_out_list[i] = g_out_list[i + 1];
+    }
+  }
+}
+void accumulateInListSize() {
+  for (uint i = 1; i < g_node_num; ++i) {  // g_inlist[0]=0
+    g_in_list[i] = g_in_list[i - 1] + g_in_list_size[i - 1];
+    g_in_list_offset[i] = g_in_list[i];
+  }
+  g_in_list[g_node_num] = g_edge_num;
+}
+
+void setInList(uint pid) {
+  for (int i = g_edge_num - 1; i >= 0; --i) {
+    RawEdge &e = g_raw_edge[i];
+    if (e.v % kThreadNum == pid) {
+      g_reverse_edge[g_in_list_offset[e.v]].v = e.u;
+      g_reverse_edge[g_in_list_offset[e.v]].w = e.w;
+      ++g_in_list_offset[e.v];
     }
   }
 }
@@ -461,7 +635,6 @@ void loadData() {
 
   // stage6
   mergeRawEdge();
-  cout << "x1\n";
 
   for (uint i = 0; i < g_edge_num; ++i) {
     // printf("%d %d %d\n",g_raw_edge[i].u,g_raw_edge[i].v,g_raw_edge[i].w);
@@ -473,120 +646,36 @@ void loadData() {
   for (auto &th : pool) th.join();
 
   buildGraphFixTail();
+  accumulateInListSize();
+  for (uint i = 0; i < kThreadNum - 1; ++i) pool[i] = thread(setInList, i);
+  setInList(kThreadNum - 1);
+  for (auto &th : pool) th.join();
 
-#ifdef LOCAL
   printf("N:%d E:%d\n", g_node_num, g_edge_num);
-#endif
 }
 
 // TODO 转账金额为0怎么处理
 // TODO SPFA优化
 // TODO dijkstra
-void findAtSPFA(uint s, WorkerFindInfo &info) {
-  vector<ulong> dist = vector<ulong>(g_node_num, UINT64_MAX);
+/**1.SPFA naive*/
+
+/**2.dij naive*/
+
+// TODO 循环展开
+uint g_one_in[kThreadNum]{0};
+void findAtDijkstra(uint s, WorkerFindInfo &info, uint pid) {
+  ulong(&dist)[kMaxN] = info.dist;
+  Vec<uint>(&prev)[kMaxN] = info.prev;
+  Vec<uint>(&back)[kMaxN] = info.back;
+  double(&res)[kMaxN] = info.res;
+  bool(&vis)[kMaxN] = info.vis;
+
+  uint(&path_num)[kMaxN] = info.path_num;
+  uint(&tp)[kMaxN] = info.tp;
+  int rank = 0;
+  priority_queue<SPPQNode> q;
   dist[s] = 0;
-  vector<vector<uint>> prev = vector<vector<uint>>(g_node_num);
-  vector<vector<uint>> back = vector<vector<uint>>(g_node_num);
-  vector<double> res = vector<double>(g_node_num, 0);
-  queue<uint> q;  //搜索队列
-  q.push(s);
-  vector<bool> in_queue = vector<bool>(g_node_num, false);
-  in_queue[s] = true;
-  vector<uint> path_num = vector<uint>(g_node_num, 0);
-  path_num[s] = 1;
-
-  while (!q.empty()) {
-    const uint u = q.front();
-    q.pop();
-    in_queue[u] = false;
-    for (uint i = g_out_list[u]; i < g_out_list[u + 1]; ++i) {
-      const auto &e = g_edge[i];
-      if (dist[u] + e.w > dist[e.v]) continue;
-      if (dist[u] + e.w == dist[e.v]) {
-        prev[e.v].push_back(u);
-      } else {
-        dist[e.v] = dist[u] + e.w;
-        prev[e.v] = {u};
-        if (!in_queue[e.v]) {
-          q.push(e.v);
-          in_queue[e.v] = true;
-        }
-      }
-    }
-  }
-
-  for (uint i = 0; i < g_node_num; ++i) {
-    if (i == s) continue;
-    for (const auto &v : prev[i]) {
-      back[v].push_back(i);
-    }
-  }
-  vector<uint> vis_num(g_node_num, 0);
-  queue<uint> tmp;
-
-  tmp.push(s);
-  while (!tmp.empty()) {
-    const uint u = tmp.front();
-    tmp.pop();
-    if (vis_num[u] < prev[u].size()) {
-      tmp.push(u);
-      continue;
-    }
-    for (const auto &v : back[u]) {
-      path_num[v] += path_num[u];
-      if (vis_num[v] == 0) tmp.push(v);
-      vis_num[v]++;
-    }
-  }
-
-  for (uint i = 0; i < g_node_num; ++i) {
-    vis_num[i] = 0;
-  }
-
-  for (uint i = 0; i < g_node_num; ++i) {
-    if (i == s) continue;
-    if (back[i].size() == 0) tmp.push(i);
-  }
-  while (!tmp.empty()) {
-    const uint u = tmp.front();
-    tmp.pop();
-    if (vis_num[u] < back[u].size()) {
-      tmp.push(u);
-      continue;
-    }
-    for (const auto &v : prev[u]) {
-      if (v == s) continue;
-      res[v] +=
-          (res[u] + double(1)) * double(path_num[v]) / double(path_num[u]);
-      if (vis_num[v] == 0) tmp.push(v);
-      vis_num[v]++;
-    }
-  }
-  for (uint i = 0; i < g_node_num; ++i) {
-    info.result[i] += res[i];
-  }
-
-  // TODO 分两段可以少一个判断
-}
-
-struct PQNode2 {
-  uint u;
-  ulong dist;
-
-  bool operator<(const PQNode2 &x) const { return dist > x.dist; }
-};
-
-// TODO 用spfa的inqueue优化dij可行吗
-void findAtDijkstra(uint s, WorkerFindInfo &info) {
-  vector<ulong> dist = vector<ulong>(g_node_num, UINT64_MAX);
-  dist[s] = 0;
-  vector<vector<uint>> prev = vector<vector<uint>>(g_node_num);
-  vector<vector<uint>> back = vector<vector<uint>>(g_node_num);
-  vector<double> res = vector<double>(g_node_num, 0);
-  vector<bool> vis(g_node_num, false);
-  priority_queue<PQNode2> q;
   q.push({s, 0});
-  vector<uint> path_num = vector<uint>(g_node_num, 0);
   path_num[s] = 1;
 
   while (!q.empty()) {
@@ -594,6 +683,80 @@ void findAtDijkstra(uint s, WorkerFindInfo &info) {
     q.pop();
     if (vis[u]) continue;
     vis[u] = true;
+    tp[rank++] = u;
+    for (uint i = g_out_list[u]; i < g_out_list[u + 1]; ++i) {
+      const BriefEdge &e = g_edge[i];
+      const uint v = e.v;
+      // const uint w = e.w;
+      ulong new_dist = dist[u] + e.w;
+      if (new_dist < dist[v]) {
+        dist[v] = new_dist;
+        prev[v].reInit(u);
+        q.push({v, new_dist});
+      } else if (new_dist == dist[v]) {
+        prev[v].push_back(u);
+      }
+    }
+  }
+
+  for (uint i = 1; i < rank; ++i) {
+    // if (i == s) continue;
+    for (const auto &v : prev[tp[i]]) {
+      back[v].push_back(tp[i]);
+      path_num[tp[i]] += path_num[v];
+    }
+  }
+
+  for (int i = rank - 1; i >= 1; i--) {
+    for (const auto &v : back[tp[i]]) {
+      res[tp[i]] +=
+          (res[v] + double(1)) * double(path_num[tp[i]]) / double(path_num[v]);
+    }
+  }
+  for (uint i = 1; i < rank; ++i) {
+    info.result[tp[i]] += res[tp[i]];
+  }
+
+  for (uint i = g_in_list[s]; i < g_in_list[s + 1]; ++i) {
+    uint v = g_reverse_edge[i].v;
+    if (g_out_list[v + 1] - g_out_list[v] == 1 && !vis[v]) {
+      g_one_in[pid]++;
+    }
+  }
+
+  for (uint r = 0; r < rank; ++r) {
+    uint i = tp[r];
+    dist[i] = UINT64_MAX;
+    prev[i].clear();
+    back[i].clear();
+    res[i] = 0;
+    vis[i] = false;
+    path_num[i] = 0;
+  }
+}
+
+/**3.dij 配对堆*/
+// TODO 配对堆  斐波那契堆  拓扑排序
+
+// TODO memset
+void findAtDijSegmentTree(uint s, WorkerFindInfo &info) {
+  ulong(&dist)[kMaxN] = info.dist;
+  Vec<uint>(&prev)[kMaxN] = info.prev;
+  Vec<uint>(&back)[kMaxN] = info.back;
+  double(&res)[kMaxN] = info.res;
+  uint(&path_num)[kMaxN] = info.path_num;
+  uint(&tp)[kMaxN] = info.tp;
+  int rank = 0;
+
+  dist[s] = 0;
+  path_num[s] = 1;
+  SegmentTree &q = info.seg_tree;
+  q.modify(s, 0);
+
+  while (q.min_w[1] != UINT64_MAX) {
+    const uint u = q.top();
+    q.modify(u, UINT64_MAX);
+    tp[rank++] = u;
     for (uint i = g_out_list[u]; i < g_out_list[u + 1]; ++i) {
       const BriefEdge &e = g_edge[i];
       const uint v = e.v;
@@ -601,67 +764,78 @@ void findAtDijkstra(uint s, WorkerFindInfo &info) {
       ulong new_dist = dist[u] + w;
       if (new_dist < dist[v]) {
         dist[v] = new_dist;
-        prev[v] = {u};
-        q.push({v, new_dist});
+        prev[v].reInit(u);
+        q.modify(v, new_dist);
       } else if (new_dist == dist[v]) {
         prev[v].push_back(u);
       }
     }
   }
-  for (uint i = 0; i < g_node_num; ++i) {
-    if (i == s) continue;
-    for (const auto &v : prev[i]) {
-      back[v].push_back(i);
-    }
-  }
-  vector<uint> vis_num(g_node_num, 0);
-  queue<uint> tmp;
 
-  tmp.push(s);
-  while (!tmp.empty()) {
-    const uint u = tmp.front();
-    tmp.pop();
-    if (vis_num[u] < prev[u].size()) {
-      tmp.push(u);
-      continue;
-    }
-    for (const auto &v : back[u]) {
-      path_num[v] += path_num[u];
-      if (vis_num[v] == 0) tmp.push(v);
-      vis_num[v]++;
+  for (uint i = 1; i < rank; ++i) {
+    // if (i == s) continue;
+    for (const auto &v : prev[tp[i]]) {
+      back[v].push_back(tp[i]);
+      path_num[tp[i]] += path_num[v];
     }
   }
 
-  for (uint i = 0; i < g_node_num; ++i) {
-    vis_num[i] = 0;
+  for (int i = rank - 1; i >= 1; i--) {
+    for (const auto &v : back[tp[i]]) {
+      res[tp[i]] +=
+          (res[v] + double(1)) * double(path_num[tp[i]]) / double(path_num[v]);
+    }
+  }
+  for (uint i = 1; i < rank; ++i) {
+    info.result[tp[i]] += res[tp[i]];
   }
 
-  for (uint i = 0; i < g_node_num; ++i) {
-    if (i == s) continue;
-    if (back[i].size() == 0) tmp.push(i);
+  for (uint r = 0; r < rank; ++r) {
+    uint i = tp[r];
+    dist[i] = UINT64_MAX;
+    prev[i].clear();
+    back[i].clear();
+    res[i] = 0;
+    path_num[i] = 0;
   }
-  while (!tmp.empty()) {
-    const uint u = tmp.front();
-    tmp.pop();
-    if (vis_num[u] < back[u].size()) {
-      tmp.push(u);
-      continue;
-    }
-    for (const auto &v : prev[u]) {
-      if (v == s) continue;
-      res[v] +=
-          (res[u] + double(1)) * double(path_num[v]) / double(path_num[u]);
-      if (vis_num[v] == 0) tmp.push(v);
-      vis_num[v]++;
-    }
+}
+
+void initInfo(WorkerFindInfo &info) {
+  ulong(&dist)[kMaxN] = info.dist;
+  Vec<uint>(&prev)[kMaxN] = info.prev;
+  Vec<uint>(&back)[kMaxN] = info.back;
+  double(&res)[kMaxN] = info.res;
+  bool(&vis)[kMaxN] = info.vis;
+
+  uint(&path_num)[kMaxN] = info.path_num;
+  uint(&tp)[kMaxN] = info.tp;
+  int rank = 0;
+
+  for (uint i = 0; i < g_node_num; ++i) {
+    dist[i] = UINT64_MAX;
   }
   for (uint i = 0; i < g_node_num; ++i) {
-    info.result[i] += res[i];
+    prev[i].clear();
+    back[i].clear();
+  }
+  for (uint i = 0; i < g_node_num; ++i) {
+    res[i] = 0;
+  }
+  for (uint i = 0; i < g_node_num; ++i) {
+    vis[i] = false;
+  }
+  for (uint i = 0; i < g_node_num; ++i) {
+    path_num[i] = 0;
   }
 }
 
 void findShortestPath(uint pid) {
   w_find_info[pid].result = vector<double>(g_node_num, 0);
+  initInfo(w_find_info[pid]);
+  if (GLOBAL_STRATEGY == DIJSEGTREE) {
+    w_find_info[pid].seg_tree = SegmentTree(g_node_num);
+  }
+
   uint next_node;
   while (true) {
     while (g_find_lock.test_and_set()) {
@@ -669,10 +843,21 @@ void findShortestPath(uint pid) {
     next_node = g_find_num < g_node_num ? g_find_num++ : g_node_num;
     g_find_lock.clear();
     if (next_node >= g_node_num) break;
-    // if (next_node % 1000 == 0)
-    // printf("%d\n", next_node);
-    // findAtSPFA(next_node, w_find_info[pid]);
-    findAtDijkstra(next_node, w_find_info[pid]);
+#ifdef LOCAL
+    if (next_node % 1000 == 0) printf("%d\n", next_node);
+#endif
+    switch (GLOBAL_STRATEGY) {
+      // case SPFA:findAtSPFA(next_node, w_find_info[pid]);break;
+      case DIJ:
+        findAtDijkstra(next_node, w_find_info[pid], pid);
+        break;
+        // case DIJHEAP:findAtDijPairHeap(next_node, w_find_info[pid]);break;
+      case DIJSEGTREE:
+        findAtDijSegmentTree(next_node, w_find_info[pid]);
+        break;
+      default:
+        break;
+    }
   }
 }
 
@@ -698,8 +883,9 @@ void writeResult() {
   for (uint i = 0; i < g_node_num; ++i) arg_list[i] = i;
 
   std::sort(arg_list.begin(), arg_list.end(), [&](int pos1, int pos2) {
-    return g_result[pos1] != g_result[pos2] ? g_result[pos1] > g_result[pos2]
-                                            : pos1 < pos2;
+    return abs(g_result[pos1] - g_result[pos2]) > 0.0001
+               ? g_result[pos1] > g_result[pos2]
+               : pos1 < pos2;
   });
 
   FILE *fd = fopen(RESULT, "w");
