@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -716,6 +717,183 @@ void SPFA(SolverData &Data, const uint &start) {
  * No2. XDUls
  * No3. yangzhi__
  *
+ * [Stragety: SPFA + SLF]
+ *
+ * 这里是一个SPFA + SLF算法，为了看起来好看，我必须加这个注释
+ * 1. 常规队列替换为双端队列, 对于一个要加入的点u
+ *  - 如果dis[v] < dis[q.front()]，u就放入队首
+ *  - 否则放入队尾
+ * 2. 构造拓扑序
+ * 3. 全地球人公用一个更新答案的接口
+ * 4. 全地球人公用一个clear的接口
+ *
+ * 注释不够多，不美观
+ */
+void SPFAAtSLF(SolverData &Data, const uint &start) {
+  uint(&m_points)[MAX_NODE] = Data.points;
+  uint(&m_count)[MAX_NODE] = Data.count;
+  uint(&m_viscount)[MAX_NODE] = Data.viscount;
+  bool(&m_vis)[MAX_NODE] = Data.vis;
+  ulong(&m_dis)[MAX_NODE] = Data.dis;
+  double(&m_ans)[MAX_NODE] = Data.ans;
+  double(&m_g)[MAX_NODE] = Data.g;
+  uint &m_pointNum = Data.pointNum;
+
+  std::deque<uint> q;
+  q.push_back(start);
+  m_vis[start] = true;
+  m_dis[start] = 0;
+
+  while (!q.empty()) {
+    const uint u = q.front();
+    q.pop_front();
+    m_vis[u] = false;
+
+    const DFSEdge *e = &GHead[Head[u]];
+    for (uint i = Head[u]; i < Head[u + 1]; ++i, ++e) {
+      const auto &v = e->idx;
+      const auto &w = e->w;
+      const auto &newdis = m_dis[u] + w;
+      if (newdis < m_dis[v]) {
+        m_dis[v] = newdis;
+        m_viscount[v] = 1;
+        if (!m_vis[v]) {
+          m_vis[v] = true;
+          // SLF
+          if (q.empty() || m_dis[v] > m_dis[q.front()]) {
+            q.push_back(v);
+          } else {
+            q.push_front(v);
+          }
+        }
+      } else if (newdis == m_dis[v]) {
+        ++m_viscount[v];
+      }
+    }
+  }
+
+  // 构造拓扑序
+  uint l = 0;
+  m_points[++m_pointNum] = start;
+  m_count[start] = 1;
+  while (m_pointNum > l) {
+    int u = m_points[++l];
+    for (uint i = Head[u]; i < Head[u + 1]; ++i) {
+      const auto &e = GHead[i];
+      if (m_dis[u] + e.w == m_dis[e.idx]) {
+        if (!--m_viscount[e.idx]) m_points[++m_pointNum] = e.idx;
+        m_count[e.idx] += m_count[u];
+      }
+    }
+  }
+
+  // 更新答案
+  GetAnswer(Data, start);
+  Clear(Data);
+}
+
+/*
+ * Team: 孤芳自赏
+ * No1. chier
+ * No2. XDUls
+ * No3. yangzhi__
+ *
+ * [Stragety: SPFA + SLF + LLL]
+ *
+ * 这里是一个SPFA + SLF + LLL算法，为了看起来好看，我必须加这个注释
+ * 1. 对每个要出队的元素u，比较dis[u]和队列中所有dis值的平均值
+ *  - 如果dis[u]大，那么将它弹出放到队尾
+ *  - 取队首元素再重复判断，直达存在dis[u]小于平均值
+ * 2. 构造拓扑序
+ * 3. 全地球人公用一个更新答案的接口
+ * 4. 全地球人公用一个clear的接口
+ *
+ * 注释不够多，不美观
+ */
+void SPFAAtSLFAndLLL(SolverData &Data, const uint &start) {
+  uint(&m_points)[MAX_NODE] = Data.points;
+  uint(&m_count)[MAX_NODE] = Data.count;
+  uint(&m_viscount)[MAX_NODE] = Data.viscount;
+  bool(&m_vis)[MAX_NODE] = Data.vis;
+  ulong(&m_dis)[MAX_NODE] = Data.dis;
+  double(&m_ans)[MAX_NODE] = Data.ans;
+  double(&m_g)[MAX_NODE] = Data.g;
+  uint &m_pointNum = Data.pointNum;
+
+  std::deque<uint> q;
+  q.push_back(start);
+  m_vis[start] = true;
+  m_dis[start] = 0;
+
+  ulong sum = 0;
+  uint cnt = 1;
+
+  while (!q.empty()) {
+    uint u = q.front();
+
+    // LLL
+    while (cnt * m_dis[u] > sum) {
+      q.pop_front();
+      q.push_back(u);
+      u = q.front();
+    }
+
+    q.pop_front();
+    --cnt;
+    sum -= m_dis[u];
+    m_vis[u] = false;
+
+    const DFSEdge *e = &GHead[Head[u]];
+    for (uint i = Head[u]; i < Head[u + 1]; ++i, ++e) {
+      const auto &v = e->idx;
+      const auto &w = e->w;
+      const auto &newdis = m_dis[u] + w;
+      if (newdis < m_dis[v]) {
+        m_dis[v] = newdis;
+        m_viscount[v] = 1;
+        if (!m_vis[v]) {
+          m_vis[v] = true;
+          ++cnt;
+          sum += newdis;
+          // SLF
+          if (q.empty() || newdis > m_dis[q.front()]) {
+            q.push_back(v);
+          } else {
+            q.push_front(v);
+          }
+        }
+      } else if (newdis == m_dis[v]) {
+        ++m_viscount[v];
+      }
+    }
+  }
+
+  // 构造拓扑序
+  uint l = 0;
+  m_points[++m_pointNum] = start;
+  m_count[start] = 1;
+  while (m_pointNum > l) {
+    int u = m_points[++l];
+    for (uint i = Head[u]; i < Head[u + 1]; ++i) {
+      const auto &e = GHead[i];
+      if (m_dis[u] + e.w == m_dis[e.idx]) {
+        if (!--m_viscount[e.idx]) m_points[++m_pointNum] = e.idx;
+        m_count[e.idx] += m_count[u];
+      }
+    }
+  }
+
+  // 更新答案
+  GetAnswer(Data, start);
+  Clear(Data);
+}
+
+/*
+ * Team: 孤芳自赏
+ * No1. chier
+ * No2. XDUls
+ * No3. yangzhi__
+ *
  * [这里是我Simulation部分]
  *
  * 这里是一个simulation，调度任务，为了看起来好看，我必须加这个注释
@@ -783,22 +961,21 @@ void FindTask(uint pid) {
 
     /*
      * GAY B, GAY wo
-     * 1. Dijkstra 稀疏图
-     * 2. DijkstraAtHeap 稠密图
-     * 3. SPFA 我也不知道能咋
+     *
+     * IfSparseGraph = true 表示稀疏图
+     *
+     * 1. Dijkstra() 稀疏图
+     * 2. DijkstraAtHeap() 稠密图
+     * 3. SPFA() 我也不知道能咋
+     * 4. SPFAAtSLF() magic优化
+     * 5. SPFAAtSLFAndLLL() magic 优化
      */
 
-    int rd = random() % 3;
-    if (rd == 0) {
-      Dijkstra(Data, job);
-    } else if (rd == 1) {
-      DijkstraAtHeap(Data, job);
-    } else {
-      SPFA(Data, job);
-    }
     // Dijkstra(Data, job);
     // DijkstraAtHeap(Data, job);
     // SPFA(Data, job);
+    // SPFAAtSLF(Data, job);
+    SPFAAtSLFAndLLL(Data, job);
 
 #ifdef DEBUG
     printProcess(job);
