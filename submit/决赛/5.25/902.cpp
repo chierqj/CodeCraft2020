@@ -551,13 +551,45 @@ void Dijkstra(SolverData &Data, const uint &start) {
     }
   }
 
-  GetAnswer(Data, start);
+  // GetAnswer(Data, start);
+  double pw = Label[start] + 1;
+  for (uint p = m_pointNum; p > 1; --p) {
+    const uint &u = m_points[p];
+    const DFSEdge *e = &GHead[Head[u]];
+    const auto &l = Head[u], &r = Head[u + 1];
+    for (uint i = l; i < r; ++i, ++e) {
+      const uint &v = e->idx;
+      if (m_dis[u] + e->w == m_dis[v]) {
+        m_g[u] += m_g[v];
+      }
+    }
+    m_ans[u] += (double)(m_g[u] * (double)m_count[u] * pw);
+    m_g[u] += (double)(1.0 / (double)(m_count[u]));
+  }
+
+  if (Label[start] > 0) {
+    m_ans[start] += (double)(m_pointNum - 1) * Label[start];
+    std::queue<std::pair<uint, ulong>> q;
+    q.push(std::make_pair(start, m_pointNum - 1));
+    while (!q.empty()) {
+      auto head = q.front();
+      const uint &u = head.first;
+      const ulong &cnt = head.second;
+      q.pop();
+      for (uint i = Back[u]; i < Back[u + 1]; ++i) {
+        const auto &e = GBack[i];
+        if (Label[e.idx] <= 0 || !Top[e.idx] || HeadLen[e.idx] != 1) continue;
+        double x = Label[e.idx] * (cnt + 1);
+        m_ans[e.idx] += x;
+        q.push(std::make_pair(e.idx, cnt + 1));
+      }
+    }
+  }
 
   for (uint i = 1; i <= m_pointNum; ++i) {
     const uint &v = m_points[i];
     m_dis[v] = UINT64_MAX;
     m_g[v] = 0;
-    m_count[v] = 0;
   }
   m_pointNum = 0;
 }
@@ -639,14 +671,45 @@ void DijkstraAtHeap(SolverData &Data, const uint &start) {
     }
   }
 
-  GetAnswer(Data, start);
+  double pw = Label[start] + 1;
+  for (uint p = m_pointNum; p > 1; --p) {
+    const uint &u = m_points[p];
+    const DFSEdge *e = &GHead[Head[u]];
+    const auto &l = Head[u], &r = Head[u + 1];
+    for (uint i = l; i < r; ++i, ++e) {
+      const uint &v = e->idx;
+      if (m_dis[u] + e->w == m_dis[v]) {
+        m_g[u] += m_g[v];
+      }
+    }
+    m_ans[u] += (double)(m_g[u] * (double)m_count[u] * pw);
+    m_g[u] += (double)(1.0 / (double)(m_count[u]));
+  }
+
+  if (Label[start] > 0) {
+    m_ans[start] += (double)(m_pointNum - 1) * Label[start];
+    std::queue<std::pair<uint, ulong>> q;
+    q.push(std::make_pair(start, m_pointNum - 1));
+    while (!q.empty()) {
+      auto head = q.front();
+      const uint &u = head.first;
+      const ulong &cnt = head.second;
+      q.pop();
+      for (uint i = Back[u]; i < Back[u + 1]; ++i) {
+        const auto &e = GBack[i];
+        if (Label[e.idx] <= 0 || !Top[e.idx] || HeadLen[e.idx] != 1) continue;
+        double x = Label[e.idx] * (cnt + 1);
+        m_ans[e.idx] += x;
+        q.push(std::make_pair(e.idx, cnt + 1));
+      }
+    }
+  }
 
   for (uint i = 1; i <= m_pointNum; ++i) {
     const uint &v = m_points[i];
     m_dis[v] = UINT64_MAX;
     m_g[v] = 0;
     m_id[v] = 0;
-    m_count[v] = 0;
   }
   m_pointNum = 0;
 }
@@ -723,16 +786,7 @@ void SPFA(SolverData &Data, const uint &start) {
 
   // 更新答案
   GetAnswer(Data, start);
-
-  for (uint i = 1; i <= m_pointNum; ++i) {
-    const uint &v = m_points[i];
-    m_dis[v] = UINT64_MAX;
-    m_g[v] = 0;
-    m_vis[v] = false;
-    m_viscount[v] = 0;
-    m_count[v] = 0;
-  }
-  m_pointNum = 0;
+  Clear(Data);
 }
 
 /*
@@ -813,16 +867,7 @@ void SPFAAtSLF(SolverData &Data, const uint &start) {
 
   // 更新答案
   GetAnswer(Data, start);
-
-  for (uint i = 1; i <= m_pointNum; ++i) {
-    const uint &v = m_points[i];
-    m_dis[v] = UINT64_MAX;
-    m_g[v] = 0;
-    m_vis[v] = false;
-    m_viscount[v] = 0;
-    m_count[v] = 0;
-  }
-  m_pointNum = 0;
+  Clear(Data);
 }
 
 /*
@@ -918,16 +963,7 @@ void SPFAAtSLFAndLLL(SolverData &Data, const uint &start) {
 
   // 更新答案
   GetAnswer(Data, start);
-
-  for (uint i = 1; i <= m_pointNum; ++i) {
-    const uint &v = m_points[i];
-    m_dis[v] = UINT64_MAX;
-    m_g[v] = 0;
-    m_vis[v] = false;
-    m_viscount[v] = 0;
-    m_count[v] = 0;
-  }
-  m_pointNum = 0;
+  Clear(Data);
 }
 
 /*
@@ -1013,21 +1049,7 @@ void FindTask(uint pid) {
      * 5. [std2: 58s][std3: 396s] SPFAAtSLFAndLLL()  magic 优化
      */
 
-    // int rd = random() % 5;
-    // if (rd == 0) {
-    //   Dijkstra(Data, job);
-    // } else if (rd == 1) {
-    //   DijkstraAtHeap(Data, job);
-    // } else if (rd == 2) {
-    //   SPFA(Data, job);
-    // } else if (rd == 3) {
-    //   SPFAAtSLF(Data, job);
-    // } else {
-    //   SPFAAtSLFAndLLL(Data, job);
-    // }
-
-    Dijkstra(Data, job);
-    //  DijkstraAtHeap(Data, job);
+    IfSparseGraph ? Dijkstra(Data, job) : DijkstraAtHeap(Data, job);
     // SPFA(Data, job);
     // SPFAAtSLF(Data, job);
     // SPFAAtSLFAndLLL(Data, job);
@@ -1132,7 +1154,7 @@ void AnalysisGraph() {
   // E <= V * 10 -> 稀疏图
   IfSparseGraph = g_EdgeNum <= 10 * g_NodeNum ? true : false;
 
-  // UnionSet();
+  UnionSet();
 
 #ifdef DEBUG
   uint cnt = 0;
