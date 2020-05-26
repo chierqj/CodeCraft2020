@@ -18,10 +18,9 @@ test_file[6]="../data/data6/test_data.txt"
 test_file[7]="../data/data7/test_data.txt"
 test_file[8]="../data/data8/test_data.txt"
 test_file[9]="../data/data9/test_data.txt"
-test_file[10]="../data/data10/test_data.txt"
-test_file[11]="../data/std1/test_data.txt"
-test_file[12]="../data/std2/test_data.txt"
-test_file[13]="../data/std3/test_data.txt"
+test_file[10]="../data/std1/test_data.txt"
+test_file[11]="../data/std2/test_data.txt"
+test_file[12]="../data/std3/test_data.txt"
 
 
 answer_file[0]="../data/data0/answer.txt"
@@ -34,10 +33,9 @@ answer_file[6]="../data/data6/answer.txt"
 answer_file[7]="../data/data7/answer.txt"
 answer_file[8]="../data/data8/answer.txt"
 answer_file[9]="../data/data9/answer.txt"
-answer_file[10]="../data/data10/answer.txt"
-answer_file[11]="../data/std1/answer.txt"
-answer_file[12]="../data/std2/answer.txt"
-answer_file[13]="../data/std3/answer.txt"
+answer_file[10]="../data/std1/answer.txt"
+answer_file[11]="../data/std2/answer.txt"
+answer_file[12]="../data/std3/answer.txt"
 
 
 

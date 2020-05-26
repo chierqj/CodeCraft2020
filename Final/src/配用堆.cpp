@@ -1,49 +1,130 @@
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
-#include <ext/pb_ds/priority_queue.hpp>
-#include <iostream>
+
 using namespace std;
-typedef long long ll;
-int n, m;
-namespace Dijkstra {
-using namespace __gnu_pbds;
-typedef pair<ll, int> pa;
-typedef __gnu_pbds::priority_queue<pa, greater<pa>, pairing_heap_tag> heap;
-const ll INF = 9000000000000000000LL;
-const int MAXN = 1000005;
-const int MAXM = 10000005;
-int cnt, last[MAXN];
-heap::point_iterator id[MAXN];
-ll dis[MAXN];
-struct data {
-  int to, next, v;
-} e[MAXM];
-void addedge(int u, int v, int w) {
-  e[++cnt].to = v;
-  e[cnt].next = last[u];
-  last[u] = cnt;
-  e[cnt].v = w;
+
+#define ll long long
+#define MAXN 1000001
+
+struct edge {
+  edge *next;
+  int t, d;
+} * head[MAXN];
+
+void AddEdge(int s, int t, int d) {
+  edge *p = new (edge);
+  p->t = t, p->d = d, p->next = head[s];
+  head[s] = p;
 }
-void dijkstra(int s) {
-  heap Q;
-  for (int i = 1; i <= n; i++) {
-    dis[i] = INF;
+
+ll dist[MAXN];
+bool f[MAXN];
+const ll inf = (ll)(0x7fffffff) * (ll)(0x7fffffff);
+int n, m;
+ll T, rxa, rxc, rya, ryc, rp;
+
+struct node {
+  int left, right, child;
+  node() { left = right = child; }
+} h[MAXN];
+
+int roof = 0;
+
+int Join(int v, int u) {
+  if (dist[v] < dist[u]) swap(v, u);
+  h[v].left = u, h[v].right = h[u].child, h[h[u].child].left = v;
+  h[u].child = v;
+  return u;
+}
+
+void Push(int v) {
+  if (!roof)
+    roof = v;
+  else
+    roof = Join(roof, v);
+}
+
+int Top() { return roof; }
+
+void Update(int v) {
+  if (v != roof) {
+    if (h[h[v].left].child == v) {
+      h[h[v].left].child = h[v].right;
+    } else {
+      h[h[v].left].right = h[v].right;
+    }
+    if (h[v].right) h[h[v].right].left = h[v].left;
+    h[v].left = h[v].right = 0;
+    roof = Join(roof, v);
   }
-  dis[s] = 0;
-  id[s] = Q.push(make_pair(0, s));
-  while (!Q.empty()) {
-    int now = Q.top().second;
-    Q.pop();
-    for (int i = last[now]; i; i = e[i].next) {
-      if (e[i].v + dis[now] < dis[e[i].to]) {
-        dis[e[i].to] = e[i].v + dis[now];
-        if (id[e[i].to] != 0) {
-          Q.modify(id[e[i].to], make_pair(dis[e[i].to], e[i].to));
-        } else {
-          id[e[i].to] = Q.push(make_pair(dis[e[i].to], e[i].to));
-        }
+}
+
+int sta[MAXN], top;
+
+void Pop() {
+  if (!h[roof].child)
+    roof = 0;
+  else {
+    top = 0;
+    int t = h[roof].child;
+    while (t) {
+      if (h[t].right) {
+        int k = h[h[t].right].right;
+        int v = h[t].right;
+        h[t].left = h[t].right = h[v].left = h[v].right = 0;
+        sta[++top] = Join(v, t);
+        t = k;
+      } else {
+        sta[++top] = t;
+        h[t].left = h[t].right = 0;
+        break;
       }
     }
+    roof = sta[top];
+    for (int i = top - 1; i; --i) roof = Join(roof, sta[i]);
   }
 }
-}  // namespace Dijkstra
+
+void Dijstra() {
+  memset(f, false, sizeof(f));
+  for (int i = 0; i++ < n;) dist[i] = inf;
+  dist[1] = 0, Push(1), f[1] = true;
+  for (int i = 0; i++ < n - 1;) {
+    int v = Top();
+    Pop(), f[v] = false;
+    if (v == n) break;
+    for (edge *p = head[v]; p; p = p->next)
+      if (dist[p->t] > dist[v] + (ll)(p->d)) {
+        dist[p->t] = dist[v] + (ll)(p->d);
+        if (!f[p->t])
+          Push(p->t), f[p->t] = true;
+        else
+          Update(p->t);
+      }
+  }
+}
+
+int main() {
+  scanf("%d%d", &n, &m);
+  scanf("%lld%lld%lld%lld%lld%lld", &T, &rxa, &rxc, &rya, &ryc, &rp);
+  memset(head, 0, sizeof(head));
+  ll x = 0, y = 0, z = 0;
+  for (int i = 0; i++ < T;) {
+    x = (x * rxa + rxc) % rp;
+    y = (y * rya + ryc) % rp;
+    ll a = x % n + 1, b = y % n + 1;
+    if (a > b) swap(a, b);
+    ll d = (ll)(100000000) - 100 * a;
+    AddEdge(a, b, d);
+  }
+  for (int i = 0; i++ < m - T;) {
+    int s, t;
+    ll d;
+    scanf("%d%d%lld", &s, &t, &d);
+    AddEdge(s, t, d);
+  }
+  Dijstra();
+  printf("%lld\n", dist[n]);
+  return 0;
+}
