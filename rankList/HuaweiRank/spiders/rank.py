@@ -40,8 +40,11 @@ Request URL: https://competition.huaweicloud.com/competition/v1/competitions/ran
             it[0], it[1]) for it in nav_list]
         divisions = ["京津东北赛区", "上合赛区", "杭厦赛区", "江山赛区",
                      "成渝赛区", "西北赛区", "武长赛区", "粤港澳赛区", "海外赛区"]
-        for url, division in zip(urls, divisions):
-            yield scrapy.Request(url=url, callback=self.parse, meta={"division": division})
+        # for url, division in zip(urls, divisions):
+        #     yield scrapy.Request(url=url, callback=self.parse, meta={"division": division})
+
+        url = "https://competition.huaweicloud.com/competition/v1/competitions/ranking/1000041223?stage_id=141420&page_no=1&page_size=32&_=1590672936499"
+        yield scrapy.Request(url=url, callback=self.parse, meta={"division": "全国总决赛"})
 
     def parse(self, response):
         division = response.meta.get('division', 'null')
