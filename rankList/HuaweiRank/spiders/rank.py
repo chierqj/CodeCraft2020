@@ -8,18 +8,29 @@ class RankSpider(scrapy.Spider):
     name = 'rank'
     allowed_domains = ['competition.huaweicloud.com']
 
+    '''
+    # 初赛
     def start_requests(self):
-        # nav_list = [
-        #     (1000036574, 136710),
-        #     (1000036576, 136712),
-        #     (1000036577, 136713),
-        #     (1000036578, 136714),
-        #     (1000036579, 136715),
-        #     (1000036580, 136716),
-        #     (1000036581, 136717),
-        #     (1000036582, 136718),
-        #     (1000036583, 136719)
-        # ]
+        nav_list = [
+            (1000036574, 136710),
+            (1000036576, 136712),
+            (1000036577, 136713),
+            (1000036578, 136714),
+            (1000036579, 136715),
+            (1000036580, 136716),
+            (1000036581, 136717),
+            (1000036582, 136718),
+            (1000036583, 136719)
+        ]
+        urls = ['https://competition.huaweicloud.com/competition/v1/competitions/ranking/{0}?stage_id={1}&page_no=1&page_size=64'.format(
+            it[0], it[1]) for it in nav_list]
+        divisions = ["京津东北赛区", "上合赛区", "杭厦赛区", "江山赛区",
+                     "成渝赛区", "西北赛区", "武长赛区", "粤港澳赛区", "海外赛区"]
+        for url, division in zip(urls, divisions):
+            yield scrapy.Request(url=url, callback=self.parse, meta={"division": division})
+
+    # 复赛
+    def start_requests(self):
         nav_list = [
             (1000036574, 141373),
             (1000036576, 141377),
@@ -31,19 +42,22 @@ class RankSpider(scrapy.Spider):
             (1000036582, 141380),
             (1000036583, 141381)
         ]
-
-        '''
-Request URL: https://competition.huaweicloud.com/competition/v1/competitions/ranking/1000036580?stage_id=141379&page_no=1&page_size=10&_=1588731747631
-
-        '''
         urls = ['https://competition.huaweicloud.com/competition/v1/competitions/ranking/{0}?stage_id={1}&page_no=1&page_size=64'.format(
             it[0], it[1]) for it in nav_list]
         divisions = ["京津东北赛区", "上合赛区", "杭厦赛区", "江山赛区",
                      "成渝赛区", "西北赛区", "武长赛区", "粤港澳赛区", "海外赛区"]
-        # for url, division in zip(urls, divisions):
-        #     yield scrapy.Request(url=url, callback=self.parse, meta={"division": division})
+        for url, division in zip(urls, divisions):
+            yield scrapy.Request(url=url, callback=self.parse, meta={"division": division})
 
+    # 决赛练习赛
+    def start_requests(self):
         url = "https://competition.huaweicloud.com/competition/v1/competitions/ranking/1000041223?stage_id=141420&page_no=1&page_size=32&_=1590672936499"
+        yield scrapy.Request(url=url, callback=self.parse, meta={"division": "全国总决赛"})
+    '''
+
+    # 决赛当天
+    def start_requests(self):
+        url = "https://competition.huaweicloud.com/competition/v1/competitions/ranking/1000041223?stage_id=141437&page_no=1&page_size=10&_=1590756673864"
         yield scrapy.Request(url=url, callback=self.parse, meta={"division": "全国总决赛"})
 
     def parse(self, response):

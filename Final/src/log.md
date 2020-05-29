@@ -7,3 +7,6 @@
 - uint16
 - 稀疏图稠密图 if触发条件和顺序
 - stack放到pq.pop()那里
+- 改指针访存优化
+- count可以用ushort
+- 稀疏图，稠密图。Node{dis,count}
