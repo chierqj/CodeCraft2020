@@ -654,13 +654,16 @@ void DijkstraRadix(SolverDataUint &Data, const uint &start) {
       const uint &newdis = udis + w;
       auto &vdis = m_dis[v];
 
+      if (newdis > vdis) continue;
+
+      *++stptr = {u, v, newdis};
+
       if (newdis < vdis) {
         m_count[v] = ucount;
         vdis = newdis;
-        *++stptr = {u, v, newdis};
         pq.push(newdis, v);
-      } else if (newdis == vdis) {
-        *++stptr = {u, v, newdis};
+
+      } else {
         m_count[v] += ucount;  // s到e.idx的最短路条数
       }
     }
@@ -747,13 +750,16 @@ void DijkstraRadix(SolverDataULong &Data, const uint &start) {
       const ulong &newdis = udis + w;
       ulong &vdis = m_dis[v];
 
+      if (newdis > vdis) continue;
+
+      *++stptr = {u, v, newdis};
+
       if (newdis < vdis) {
         m_count[v] = ucount;
         vdis = newdis;
-        *++stptr = {u, v, newdis};
         pq.push(newdis, v);
-      } else if (newdis == vdis) {
-        *++stptr = {u, v, newdis};
+
+      } else {
         m_count[v] += ucount;  // s到e.idx的最短路条数
       }
     }
