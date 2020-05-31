@@ -73,8 +73,8 @@ class Timer {
  * 常量定义
  */
 const uint MAX_EDGE = 2500000 + 7;  // 最多边数目
-const uint MAX_NODE = 5000000 + 7;  // 最多点数目
-const uint T = 8;                   // 线程个数
+const uint MAX_NODE = 2500000 + 7;  // 最多点数目
+const uint T = 16;                  // 线程个数
 
 /************************** LoadData Begin ****************************/
 struct HashTable {
@@ -568,46 +568,6 @@ struct RadixHeapUint {
   }
 };
 
-struct RadixHeapULong {
-  RadixHeapULong() : sz(0), last(0) { std::fill(vm, vm + 65, ulong_max); }
-  typedef std::pair<ulong, uint> Pair;
-  uint sz;
-  ulong last;
-  ulong vm[65];
-  Vec<Pair> v[65];
-
-  inline bool empty() const { return sz == 0; }
-  inline int size() const { return sz; }
-  inline static constexpr int pos(ulong x) {
-    return x == 0 ? 0 : 64 - __builtin_clzll(x);
-  }
-  inline void push(ulong x, uint y) {
-    ++sz;
-    const auto vi = pos(x ^ last);
-    v[vi].emplace_back(x, y);
-    umin(vm[vi], x);
-  }
-  inline void pop() {
-    v[0].pop_back();
-    --sz;
-  }
-  inline Pair top() {
-    if (v[0].empty()) {
-      uint i = 1;
-      while (v[i].empty()) ++i;
-      last = vm[i];
-      for (const auto &p : v[i]) {
-        const auto vi = pos(p.first ^ last);
-        v[vi].emplace_back(p);
-        umin(vm[vi], p.first);
-      }
-      v[i].clear();
-      vm[i] = ulong_max;
-    }
-    return v[0].back();
-  }
-};
-
 struct NodeUShort {
   uint pre, u;
   ushort dis;
@@ -615,10 +575,6 @@ struct NodeUShort {
 struct NodeUint {
   uint pre, u;
   uint dis;
-};
-struct NodeULong {
-  uint pre, u;
-  ulong dis;
 };
 
 struct SolverDataUShort {
@@ -629,6 +585,8 @@ struct SolverDataUShort {
   double g[MAX_NODE];          // gvalue
   NodeUShort Stack[MAX_EDGE];  // 模拟栈
   RadixHeapUShort pq;          // pq
+  uint viscount[MAX_NODE];     // viscount
+  bool vis[MAX_NODE];          // vis
 };
 struct SolverDataUint {
   ushort count[MAX_NODE];    // 最短路径数目
@@ -639,18 +597,9 @@ struct SolverDataUint {
   NodeUint Stack[MAX_EDGE];  // 模拟栈
   RadixHeapUint pq;          // pq
 };
-struct SolverDataULong {
-  ushort count[MAX_NODE];     // 最短路径数目
-  ulong dis[MAX_NODE];        // 最短距离
-  uint points[MAX_NODE];      // 拓扑点
-  double ans[MAX_NODE];       // 保存答案
-  double g[MAX_NODE];         // gvalue
-  NodeULong Stack[MAX_EDGE];  // 模拟栈
-  RadixHeapULong pq;          // pq
-};
+
 SolverDataUShort UShortData[T];
 SolverDataUint UintData[T];
-SolverDataULong ULongData[T];
 
 /*
  * Team: 孤芳自赏
@@ -667,7 +616,7 @@ SolverDataULong ULongData[T];
  *
  * 注释不够多，不美观
  */
-void DijkstraRadix(SolverDataUShort &Data, const uint &start) {
+void DijkstraRadixUShort(SolverDataUShort &Data, const uint &start) {
   uint(&m_points)[MAX_NODE] = Data.points;
   ushort(&m_count)[MAX_NODE] = Data.count;
   ushort(&m_dis)[MAX_NODE] = Data.dis;
@@ -689,6 +638,7 @@ void DijkstraRadix(SolverDataUShort &Data, const uint &start) {
     pq.pop();
     const uint &u = head.second;
     const ushort &udis = head.first;
+
     if (udis > m_dis[u]) continue;
 
     *++pointptr = u;  //拓扑序
@@ -759,7 +709,7 @@ void DijkstraRadix(SolverDataUShort &Data, const uint &start) {
   m_g[start] = 0;
 }
 
-void DijkstraRadix(SolverDataUint &Data, const uint &start) {
+void DijkstraRadixUint(SolverDataUint &Data, const uint &start) {
   uint(&m_points)[MAX_NODE] = Data.points;
   ushort(&m_count)[MAX_NODE] = Data.count;
   uint(&m_dis)[MAX_NODE] = Data.dis;
@@ -851,69 +801,72 @@ void DijkstraRadix(SolverDataUint &Data, const uint &start) {
   m_g[start] = 0;
 }
 
-void DijkstraRadix(SolverDataULong &Data, const uint &start) {
+void DijkstraRadixUShort1(SolverDataUShort &Data, const uint &start) {
   uint(&m_points)[MAX_NODE] = Data.points;
   ushort(&m_count)[MAX_NODE] = Data.count;
-  ulong(&m_dis)[MAX_NODE] = Data.dis;
+  ushort(&m_dis)[MAX_NODE] = Data.dis;
   double(&m_ans)[MAX_NODE] = Data.ans;
   double(&m_g)[MAX_NODE] = Data.g;
-  NodeULong(&st)[MAX_EDGE] = Data.Stack;
+  // NodeUShort(&st)[MAX_EDGE] = Data.Stack;
 
-  RadixHeapULong &pq = Data.pq;
+  RadixHeapUShort &pq = Data.pq;
   pq.push(0, start);
 
   m_dis[start] = 0;
   m_count[start] = 1;
 
   uint *pointptr = m_points;
-  NodeULong *stptr = st;
+  // NodeUShort *stptr = st;
 
   while (!pq.empty()) {
     auto head = pq.top();
     pq.pop();
     const uint &u = head.second;
-    const ulong &udis = head.first;
+    const ushort &udis = head.first;
+
     if (udis > m_dis[u]) continue;
 
     *++pointptr = u;  //拓扑序
 
     // 遍历子结点
-    const uint &ucount = m_count[u];
-    const uint &l = Head[u], &r = Head[u + 1];
+    const ushort &ucount = m_count[u];
+    const auto &l = Head[u], &r = Head[u + 1];
     const DFSEdge *e = &GHead[l];
     for (uint i = l; i < r; ++i, ++e) {
       const uint &v = e->idx;
-      const ulong &w = e->w;
-      const ulong &newdis = udis + w;
-      ulong &vdis = m_dis[v];
+      const ushort &w = e->w;
+      const ushort &newdis = udis + w;
+      ushort &vdis = m_dis[v];
 
       if (newdis < vdis) {
         m_count[v] = ucount;
         vdis = newdis;
-        *++stptr = {u, v, newdis};
         pq.push(newdis, v);
       } else if (newdis == vdis) {
-        *++stptr = {u, v, newdis};
         m_count[v] += ucount;  // s到e.idx的最短路条数
       }
     }
   }
 
   uint m_pointNum = pointptr - m_points;
-  uint top = stptr - st;
 
-  while (top) {
-    const uint &u = st[top].pre;
-    const uint &v = st[top].u;
-    const ulong &d = st[top].dis;
-    if (d == m_dis[v]) {
-      m_g[u] += (1.0 + m_g[v]) * double(m_count[u]) / double(m_count[v]);
+  uint pw = Label[start] + 1;
+  for (uint p = m_pointNum; p > 1; --p) {
+    const uint &u = m_points[p];
+    const DFSEdge *e = &GHead[Head[u]];
+    const auto &l = Head[u], &r = Head[u + 1];
+    for (uint i = l; i < r; ++i, ++e) {
+      const uint &v = e->idx;
+      if (m_dis[u] + e->w == m_dis[v]) {
+        m_g[u] += m_g[v];
+      }
     }
-    --top;
+    m_ans[u] += (double)(m_g[u] * (double)m_count[u] * pw);
+    m_g[u] += (double)(1.0 / (double)(m_count[u]));
   }
 
   if (Label[start] > 0) {
-    m_ans[start] += (double)(m_pointNum - 1) * Label[start];
+    m_ans[start] += (m_pointNum - 1) * Label[start];
     std::queue<std::pair<uint, uint>> q;
     q.push(std::make_pair(start, m_pointNum - 1));
     while (!q.empty()) {
@@ -924,25 +877,109 @@ void DijkstraRadix(SolverDataULong &Data, const uint &start) {
       const uint &l = TopBack[u], &r = TopBack[u + 1];
       for (uint i = l; i < r; ++i) {
         const uint &v = GTopBack[i];
-        double x = Label[v] * (cnt + 1);
+        uint x = Label[v] * (cnt + 1);
         m_ans[v] += x;
         q.push(std::make_pair(v, cnt + 1));
       }
     }
   }
 
-  double pw = Label[start] + 1;
-  for (uint i = 2; i <= m_pointNum; ++i) {
+  for (uint i = 1; i <= m_pointNum; ++i) {
     const uint &v = m_points[i];
-    m_ans[v] += m_g[v] * pw;
-    m_dis[v] = ulong_max;
+    m_dis[v] = ushort_max;
     m_g[v] = 0;
   }
-
-  m_dis[start] = ulong_max;
-  m_g[start] = 0;
 }
 
+void DijkstraRadixUint1(SolverDataUint &Data, const uint &start) {
+  uint(&m_points)[MAX_NODE] = Data.points;
+  ushort(&m_count)[MAX_NODE] = Data.count;
+  uint(&m_dis)[MAX_NODE] = Data.dis;
+  double(&m_ans)[MAX_NODE] = Data.ans;
+  double(&m_g)[MAX_NODE] = Data.g;
+  // NodeUShort(&st)[MAX_EDGE] = Data.Stack;
+
+  RadixHeapUint &pq = Data.pq;
+  pq.push(0, start);
+
+  m_dis[start] = 0;
+  m_count[start] = 1;
+
+  uint *pointptr = m_points;
+  // NodeUShort *stptr = st;
+
+  while (!pq.empty()) {
+    auto head = pq.top();
+    pq.pop();
+    const uint &u = head.second;
+    const ushort &udis = head.first;
+
+    if (udis > m_dis[u]) continue;
+
+    *++pointptr = u;  //拓扑序
+
+    // 遍历子结点
+    const ushort &ucount = m_count[u];
+    const auto &l = Head[u], &r = Head[u + 1];
+    const DFSEdge *e = &GHead[l];
+    for (uint i = l; i < r; ++i, ++e) {
+      const uint &v = e->idx;
+      const uint &w = e->w;
+      const uint &newdis = udis + w;
+      uint &vdis = m_dis[v];
+
+      if (newdis < vdis) {
+        m_count[v] = ucount;
+        vdis = newdis;
+        pq.push(newdis, v);
+      } else if (newdis == vdis) {
+        m_count[v] += ucount;  // s到e.idx的最短路条数
+      }
+    }
+  }
+
+  uint m_pointNum = pointptr - m_points;
+
+  uint pw = Label[start] + 1;
+  for (uint p = m_pointNum; p > 1; --p) {
+    const uint &u = m_points[p];
+    const DFSEdge *e = &GHead[Head[u]];
+    const auto &l = Head[u], &r = Head[u + 1];
+    for (uint i = l; i < r; ++i, ++e) {
+      const uint &v = e->idx;
+      if (m_dis[u] + e->w == m_dis[v]) {
+        m_g[u] += m_g[v];
+      }
+    }
+    m_ans[u] += (double)(m_g[u] * (double)m_count[u] * pw);
+    m_g[u] += (double)(1.0 / (double)(m_count[u]));
+  }
+
+  if (Label[start] > 0) {
+    m_ans[start] += (m_pointNum - 1) * Label[start];
+    std::queue<std::pair<uint, uint>> q;
+    q.push(std::make_pair(start, m_pointNum - 1));
+    while (!q.empty()) {
+      auto head = q.front();
+      const uint &u = head.first;
+      const uint &cnt = head.second;
+      q.pop();
+      const uint &l = TopBack[u], &r = TopBack[u + 1];
+      for (uint i = l; i < r; ++i) {
+        const uint &v = GTopBack[i];
+        uint x = Label[v] * (cnt + 1);
+        m_ans[v] += x;
+        q.push(std::make_pair(v, cnt + 1));
+      }
+    }
+  }
+
+  for (uint i = 1; i <= m_pointNum; ++i) {
+    const uint &v = m_points[i];
+    m_dis[v] = uint_max;
+    m_g[v] = 0;
+  }
+}
 /*
  * Team: 孤芳自赏
  * No1. chier
@@ -969,68 +1006,95 @@ inline void GetJob(uint &job) {
 }
 
 void FindTask(uint pid) {
-  // ushort
-  if (DataClass == 1) {
-    auto &Data = UShortData[pid];
-    for (uint i = 0; i <= g_NodeNum; ++i) {
-      Data.count[i] = 0;
-      Data.ans[i] = 0;
-      Data.dis[i] = ushort_max;
-      Data.g[i] = 0;
-    }
-    uint job = 0;
-    while (true) {
-      GetJob(job);
-      if (job >= g_NodeNum) break;
-      if (NoRun[job]) continue;
-      DijkstraRadix(Data, job);
+  if (IfSparseGraph) {
+    // ushort
+    if (DataClass == 1) {
+      auto &Data = UShortData[pid];
+      for (uint i = 0; i <= g_NodeNum; ++i) {
+        Data.count[i] = 0;
+        Data.ans[i] = 0;
+        Data.dis[i] = ushort_max;
+        Data.g[i] = 0;
+      }
+      uint job = 0;
+      while (true) {
+        GetJob(job);
+        if (job >= g_NodeNum) break;
+        if (NoRun[job]) continue;
+        DijkstraRadixUShort1(Data, job);
 
 #ifdef DEBUG
-      if (job % 1000 == 0) {
-        std::cerr << "[" << job << "/" << g_NodeNum << "]\n";
-      }
+        if (job % 1000 == 0) {
+          std::cerr << "[" << job << "/" << g_NodeNum << "]\n";
+        }
 #endif
-    }
-  } else if (DataClass == 2) {  // uint
-    auto &Data = UintData[pid];
-    for (uint i = 0; i <= g_NodeNum; ++i) {
-      Data.count[i] = 0;
-      Data.ans[i] = 0;
-      Data.dis[i] = uint_max;
-      Data.g[i] = 0;
-    }
-    uint job = 0;
-    while (true) {
-      GetJob(job);
-      if (job >= g_NodeNum) break;
-      if (NoRun[job]) continue;
-      DijkstraRadix(Data, job);
+      }
+    } else {  // uint
+      auto &Data = UintData[pid];
+      for (uint i = 0; i <= g_NodeNum; ++i) {
+        Data.count[i] = 0;
+        Data.ans[i] = 0;
+        Data.dis[i] = uint_max;
+        Data.g[i] = 0;
+      }
+      uint job = 0;
+      while (true) {
+        GetJob(job);
+        if (job >= g_NodeNum) break;
+        if (NoRun[job]) continue;
+        DijkstraRadixUint1(Data, job);
 
 #ifdef DEBUG
-      if (job % 1000 == 0) {
-        std::cerr << "[" << job << "/" << g_NodeNum << "]\n";
-      }
+        if (job % 1000 == 0) {
+          std::cerr << "[" << job << "/" << g_NodeNum << "]\n";
+        }
 #endif
+      }
     }
-  } else {  // ulong
-    auto &Data = ULongData[pid];
-    for (uint i = 0; i <= g_NodeNum; ++i) {
-      Data.count[i] = 0;
-      Data.ans[i] = 0;
-      Data.dis[i] = ulong_max;
-      Data.g[i] = 0;
-    }
-    uint job = 0;
-    while (true) {
-      GetJob(job);
-      if (job >= g_NodeNum) break;
-      if (NoRun[job]) continue;
-      DijkstraRadix(Data, job);
+  } else {
+    // ushort
+    if (DataClass == 1) {
+      auto &Data = UShortData[pid];
+      for (uint i = 0; i <= g_NodeNum; ++i) {
+        Data.count[i] = 0;
+        Data.ans[i] = 0;
+        Data.dis[i] = ushort_max;
+        Data.g[i] = 0;
+      }
+      uint job = 0;
+      while (true) {
+        GetJob(job);
+        if (job >= g_NodeNum) break;
+        if (NoRun[job]) continue;
+        DijkstraRadixUShort(Data, job);
+
 #ifdef DEBUG
-      if (job % 1000 == 0) {
-        std::cerr << "[" << job << "/" << g_NodeNum << "]\n";
-      }
+        if (job % 1000 == 0) {
+          std::cerr << "[" << job << "/" << g_NodeNum << "]\n";
+        }
 #endif
+      }
+    } else {  // uint
+      auto &Data = UintData[pid];
+      for (uint i = 0; i <= g_NodeNum; ++i) {
+        Data.count[i] = 0;
+        Data.ans[i] = 0;
+        Data.dis[i] = uint_max;
+        Data.g[i] = 0;
+      }
+      uint job = 0;
+      while (true) {
+        GetJob(job);
+        if (job >= g_NodeNum) break;
+        if (NoRun[job]) continue;
+        DijkstraRadixUint(Data, job);
+
+#ifdef DEBUG
+        if (job % 1000 == 0) {
+          std::cerr << "[" << job << "/" << g_NodeNum << "]\n";
+        }
+#endif
+      }
     }
   }
 }
@@ -1067,19 +1131,11 @@ void Find() {
         Answer[i].second += data.ans[i];
       }
     }
-  } else if (DataClass == 2) {
-    for (uint i = 0; i < g_NodeNum; ++i) {
-      Answer[i].first = IDDom[i];
-      Answer[i].second = 0;
-      for (const auto &data : UintData) {
-        Answer[i].second += data.ans[i];
-      }
-    }
   } else {
     for (uint i = 0; i < g_NodeNum; ++i) {
       Answer[i].first = IDDom[i];
       Answer[i].second = 0;
-      for (const auto &data : ULongData) {
+      for (const auto &data : UintData) {
         Answer[i].second += data.ans[i];
       }
     }
@@ -1123,29 +1179,18 @@ void SaveAnswer() {
  *
  * 注释不够多，不美观
  */
-uint gcd(uint a, uint b) { return b > 0 ? gcd(b, a % b) : a; }
 void UnionSet() {
-  for (uint i = 0; i <= g_NodeNum; ++i) Fa[i] = i;
-  for (uint i = 0; i < g_EdgeNum; ++i) {
-    auto &e = Edges[i];
-    uint x = getFa(e.u), y = getFa(e.v);
-    Fa[x] = Fa[y];
-  }
-  std::vector<ulong> cnt(g_NodeNum, 0);
   uint maxx = 0;
+
   for (uint i = 0; i < g_EdgeNum; ++i) {
     auto &e = Edges[i];
-    uint x = getFa(e.u);
-    cnt[x] += e.w;
-    maxx = std::max(maxx, e.w);
+    maxx = e.w > maxx ? e.w : maxx;
   }
 
-  if (maxx < 512) {
+  if (maxx < 2000) {
     DataClass = 1;
-  } else if (maxx < 1000000) {
-    DataClass = 2;
   } else {
-    DataClass = 3;
+    DataClass = 2;
   }
 }
 
@@ -1218,128 +1263,7 @@ void TopSort() {
  *
  * 注释不够多，不美观
  */
-uint dfn[MAX_NODE], low[MAX_NODE], times;  //序号及环开头的序号
-uint SK[MAX_NODE], top;                    //手写栈
-uint col[MAX_NODE], numCol;                //染色
-uint colNum[MAX_NODE];                     //每种染色节点数量
-bool ins[MAX_NODE];
-Vec<uint> circle[MAX_NODE];             //每个SCC包含的节点
-uint inDegree[MAX_NODE];                //合并后节点的入度
-uint StackTarjan[MAX_NODE], topTarjan;  //模拟Tarjan递归
-uint newHead[MAX_NODE];                 //当前递归到的边id
 
-void Tarjan(uint u) {
-  dfn[u] = low[u] = ++times;
-  SK[++top] = u;  //进栈
-  ins[u] = true;
-  for (uint i = Head[u]; i < Head[u + 1]; ++i) {
-    const auto &v = GHead[i].idx;
-    if (!dfn[v]) {
-      Tarjan(v);
-      low[u] = std::min(low[u], low[v]);
-    } else if (ins[v]) {
-      low[u] = std::min(low[u], dfn[v]);
-    }
-  }
-  if (dfn[u] == low[u]) {
-    numCol++;
-    while (SK[top + 1] != u) {
-      col[SK[top]] = numCol;  //出栈，染色
-      circle[numCol].emplace_back(SK[top]);
-      ins[SK[top--]] = false;
-      ++colNum[numCol];
-    }
-  }
-}
-struct Stack {
-  uint u, nex, down;
-} sp[MAX_NODE];
-uint tot = 0;
-void TarjanStack(uint u) {
-  uint tp = 0, v;
-  sp[++tp] = {u, Head[u], 0};
-  while (tp) {
-    Stack &cur = sp[tp];
-    u = cur.u;
-    if (cur.nex == Head[u]) {
-      dfn[u] = low[u] = ++times;
-      SK[++top] = u;  //进栈
-    }
-    if (cur.down) {
-      low[u] = std::min(low[u], low[cur.down]);
-    }
-    if (cur.nex >= Head[u + 1]) {
-      if (dfn[u] == low[u]) {
-        numCol++;
-        while (SK[top + 1] != u) {
-          col[SK[top]] = numCol;  //出栈，染色
-          circle[numCol].emplace_back(SK[top]);
-          --top;
-          ++colNum[numCol];
-        }
-      }
-      --tp;
-      continue;
-    }
-
-    v = GHead[cur.nex++].idx;
-    if (!dfn[v]) {
-      cur.down = v;
-      sp[++tp] = {v, Head[v], 0};
-    } else if (!col[v]) {
-      low[u] = std::min(low[u], dfn[v]);
-    }
-  }
-}
-void MergeTopSort() {
-  for (uint i = 0; i < g_EdgeNum; ++i) {
-    const auto &e = Edges[i];
-    if (col[e.u] == 0 || col[e.v] == 0) continue;
-    if (col[e.u] != col[e.v]) {
-      ++inDegree[col[e.v]];
-    }
-  }
-  std::queue<uint> q;
-  for (uint i = 1; i <= numCol; ++i) {
-    if (!inDegree[i]) {
-      q.push(i);
-    }
-  }
-  while (!q.empty()) {
-    uint colId = q.front();
-    q.pop();
-    for (auto &u : circle[colId]) {
-      for (uint i = Head[u]; i < Head[u + 1]; ++i) {
-        const auto &v = GHead[i].idx;
-        if (col[v] == colId) continue;
-        if (colNum[colId] == 1 && HeadLen[u] == 1) {
-          Label[v] += (Label[u] + 1);
-          NoRun[u] = true;
-          TopEdges[TopBackEdgesNum++] = {u, v};
-          ++TopBackLen[v];
-        }
-        if (--inDegree[col[v]] <= 0) q.push(col[v]);
-      }
-    }
-  }
-}
-void MergeCircle() {
-  // if (!IfSparseGraph) return;
-  top = 0;
-  numCol = 0;
-  times = 0;
-  for (uint i = 0; i <= g_NodeNum; ++i) {
-    inDegree[i] = 0;
-    colNum[i] = 0;
-    col[i] = 0;
-    dfn[i] = 0;
-    low[i] = 0;
-  }
-  for (uint i = 0; i < g_NodeNum; ++i) {
-    if (BackLen[i] && !dfn[i]) TarjanStack(i);
-  }
-  MergeTopSort();
-}
 void CreateTopGraph() {
   std::sort(
       TopEdges, TopEdges + TopBackEdgesNum,
@@ -1361,7 +1285,6 @@ int main() {
   LoadData();        // 加载数据
   TopSort();         // 拓扑排序
   AnalysisGraph();   // 分析特征
-  MergeCircle();     // 缩点
   CreateTopGraph();  // 构造Top地图
   Find();            // 找路
   SaveAnswer();      // 存答案

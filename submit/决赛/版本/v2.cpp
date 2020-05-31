@@ -72,7 +72,7 @@ class Timer {
  */
 const uint MAX_EDGE = 2500000 + 7;  // 最多边数目
 const uint MAX_NODE = 5000000 + 7;  // 最多点数目
-const uint T = 8;                   // 线程个数
+const uint T = 12;                  // 线程个数
 
 /************************** LoadData Begin ****************************/
 struct HashTable {

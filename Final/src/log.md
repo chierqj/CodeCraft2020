@@ -10,3 +10,4 @@
 - 改指针访存优化
 - count可以用ushort
 - 稀疏图，稠密图。Node{dis,count}
+- JobTask那里可以先判断能不能跳过，这样就可以少锁几次
